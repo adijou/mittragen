@@ -646,7 +646,7 @@ function TransitionPage({ navigate, sponsors, updateSponsor, addAudit, resetSpon
 
   const applyMapping = (source: string, target: PackageName) => {
     setMapping((current) => ({ ...current, [source]: target }));
-    sponsors.filter((sponsor) => sponsor.before.includes(source)).forEach((sponsor) => updateSponsor(sponsor.id, { proposal: target, status: sponsor.status === "Bestätigt" ? "Bestätigt" : "Vorbereitet" }));
+    sponsors.filter((sponsor) => sponsor.before.includes(source)).forEach((sponsor) => updateSponsor(sponsor.id, { proposal: target, status: sponsor.status === "Bestätigt" ? "Bestätigt" : sponsor.conflict ? "Prüfen" : "Vorbereitet" }));
   };
 
   const applyScenario = (name: string, values: Record<string, PackageName>) => {
