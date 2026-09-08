@@ -1,7 +1,8 @@
 import type { Config, Context } from "@netlify/functions";
 import { AuthError, verifyRequestOrigin } from "@netlify/identity";
-import { isResponse, json, permissionsFor, requireUser, type MembershipRole } from "./_shared/auth.ts";
-import { withSession } from "./_shared/database.ts";
+import { hasPermission, isResponse, json, permissionsFor, requireUser, type MembershipRole } from "./_shared/auth.ts";
+import { isUuid, withSession } from "./_shared/database.ts";
+import { ownerMembershipParams, parseTenantUpdate, tenantKinds } from "./_shared/tenant-input.ts";
 
 type TenantRow = {
   id: string;
@@ -26,7 +27,9 @@ export default async (request: Request, _context: Context) => {
   const user = await requireUser();
   if (isResponse(user)) return user;
 
-  if (request.method === "GET") {
+  const tenantIdFromPath = _context.params.tenantId;
+
+  if (request.method === "GET" && !tenantIdFromPath) {
     const tenants = await withSession(user.id, null, async (client) => {
       const result = await client.query<TenantRow>(`
         SELECT tenant.id, tenant.name, tenant.slug, tenant.kind, tenant.status, membership.role
@@ -41,7 +44,51 @@ export default async (request: Request, _context: Context) => {
     return json({ tenants: tenants.map((tenant) => ({ ...tenant, permissions: permissionsFor(tenant.role) })) });
   }
 
-  if (request.method !== "POST") return json({ error: "method_not_allowed" }, 405);
+  if (request.method === "PATCH") {
+    if (!tenantIdFromPath || !isUuid(tenantIdFromPath)) return json({ error: "invalid_tenant" }, 422);
+    try {
+      verifyRequestOrigin(request);
+    } catch (error) {
+      return json({ error: "invalid_request_origin" }, (error as AuthError).status ?? 403);
+    }
+
+    const parsed = parseTenantUpdate(await request.json().catch(() => null));
+    if (!parsed.ok) return json({ error: parsed.error }, 422);
+
+    try {
+      const result = await withSession(user.id, tenantIdFromPath, async (client) => {
+        const membership = await client.query<{ role: MembershipRole }>(`
+          SELECT role FROM tenant_memberships
+          WHERE tenant_id = $1 AND identity_user_id = $2
+          LIMIT 1
+        `, [tenantIdFromPath, user.id]);
+        const role = membership.rows[0]?.role;
+        if (!role || !hasPermission(role, "tenant:manage")) return null;
+
+        const updated = await client.query<TenantRow>(`
+          UPDATE tenants
+          SET name = $2, kind = $3::tenant_kind, updated_at = now()
+          WHERE id = $1
+          RETURNING id, name, slug, kind, status, $4::membership_role AS role
+        `, [tenantIdFromPath, parsed.value.name, parsed.value.kind, role]);
+        if (!updated.rows[0]) return null;
+
+        await client.query(`
+          INSERT INTO audit_events (tenant_id, actor_user_id, action, object_type, object_id, metadata)
+          VALUES ($1, $2, 'tenant.updated', 'tenant', $1, jsonb_build_object('name', $3::text, 'kind', $4::text))
+        `, [tenantIdFromPath, user.id, parsed.value.name, parsed.value.kind]);
+        return updated.rows[0];
+      });
+
+      if (!result) return json({ error: "permission_denied" }, 403);
+      return json({ tenant: { ...result, permissions: permissionsFor(result.role) } });
+    } catch (error) {
+      console.error("tenant_update_failed", { requestId: _context.requestId, tenantId: tenantIdFromPath, error });
+      return json({ error: "tenant_update_failed" }, 500);
+    }
+  }
+
+  if (request.method !== "POST" || tenantIdFromPath) return json({ error: "method_not_allowed" }, 405);
 
   try {
     verifyRequestOrigin(request);
@@ -58,7 +105,7 @@ export default async (request: Request, _context: Context) => {
 
   if (name.length < 2 || name.length > 120) return json({ error: "invalid_name" }, 422);
   if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)) return json({ error: "invalid_slug" }, 422);
-  if (!["club", "association", "event", "project"].includes(kind)) return json({ error: "invalid_kind" }, 422);
+  if (!tenantKinds.includes(kind as (typeof tenantKinds)[number])) return json({ error: "invalid_kind" }, 422);
 
   const tenantId = crypto.randomUUID();
 
@@ -73,7 +120,7 @@ export default async (request: Request, _context: Context) => {
       await client.query(`
         INSERT INTO tenant_memberships (tenant_id, identity_user_id, email, display_name, role)
         VALUES ($1, $2, $3, $4, 'owner')
-      `, [tenantId, user.id, user.email ?? null, user.name ?? user.email ?? "Owner"]);
+      `, ownerMembershipParams(tenantId, user));
 
       if (includeDemo) {
         for (const sponsor of demoSponsors) {
@@ -102,5 +149,5 @@ export default async (request: Request, _context: Context) => {
 };
 
 export const config: Config = {
-  path: "/api/tenants",
+  path: ["/api/tenants", "/api/tenants/:tenantId"],
 };

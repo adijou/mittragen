@@ -18,6 +18,8 @@ Der erste interaktive Produkt-Slice setzt die ausgewählte visuelle Richtung «K
 - lokale Status-Persistenz und Audit-Protokoll für den vollständigen Prototyp-Test
 - produktiver Zugang mit Netlify Identity: Login, Registrierung, Bestätigung, Wiederherstellung und Einladungsannahme
 - Self-Service-Onboarding für neue Klubs, Vereine, Events und Projekte
+- verständliche Organisationstypen mit «Sportklub» und «Verein / Organisation»
+- Owner-Einstellungen für einen veränderbaren Anzeigenamen bei stabilem technischem Kurzname
 - relationaler PostgreSQL-Kern via Netlify Database
 - serverseitige Rollenprüfung und erzwungene Row-Level Security für alle mandanteneigenen Tabellen
 - geschützte Functions für Mandantenliste, Mandantenerstellung und Workspace
