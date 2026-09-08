@@ -3,7 +3,6 @@ import {
   AuthError,
   MissingIdentityError,
   acceptInvite,
-  getSettings,
   getUser,
   handleAuthCallback,
   login,
@@ -70,10 +69,11 @@ function useIdentitySession() {
     let active = true;
     const load = async () => {
       try {
-        await Promise.race([
-          getSettings(),
-          new Promise<never>((_resolve, reject) => window.setTimeout(() => reject(new MissingIdentityError("Identity settings unavailable")), 4500)),
-        ]);
+        const settingsResponse = await fetch("/.netlify/identity/settings", {
+          headers: { Accept: "application/json" },
+          signal: AbortSignal.timeout(4500),
+        });
+        if (!settingsResponse.ok) throw new MissingIdentityError("Identity settings unavailable");
         if (!active) return;
         setAvailability("ready");
         const callbackResult = await handleAuthCallback();
