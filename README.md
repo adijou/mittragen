@@ -12,10 +12,14 @@ Der erste interaktive Produkt-Slice setzt die ausgewählte visuelle Richtung «K
 - Organisations-Dashboard mit Aufgaben, Kennzahlen und Übergangsstatus
 - Sponsor-Space mit Paketvorschlag, Vergleich, Rechnungen und Dokumenten
 - geführter Überführungsprozess mit Datenbasis, Mapping, Vorschlägen und Versandprüfung
+- sieben fiktive Testszenarien für Doppelsponsoren, Exklusivität, Laufzeit, Rechtsträger, Betragstreue, Sachleistungen und Standardmigration
+- drei Mapping-Simulationen mit dynamischer Wert- und Konfliktanzeige
+- persönliche Paketwahl, Alternative, Beratung oder Ablehnung ohne Sackgasse
+- lokale Status-Persistenz und Audit-Protokoll für den vollständigen Prototyp-Test
 - responsive Darstellung und zugängliche Basisinteraktionen
 - Netlify-Konfiguration für Continuous Deployment aus GitHub
 
-Die dargestellten Daten sind bewusst als Demo-Daten gekennzeichnet. Vertragsbestätigung, Dateiimport und Versand verändern noch keine externen Daten.
+Die dargestellten Daten sind bewusst als Demo-Daten gekennzeichnet. Änderungen bleiben im Browser gespeichert; Vertragsbestätigung, Dateiimport und Versand verändern keine externen Daten.
 
 ## Lokal starten
 
@@ -54,7 +58,7 @@ Der Netlify Vite Plugin ist eingebunden, damit Functions, Blobs, Umgebungsvariab
 
 Die Umsetzung folgt dem Pflichtenheft «Sponsoring-Plattform für die Fusion des FC Bösingen und des FC Wünnewil-Flamatt – mit SaaS-Fähigkeit ab dem ersten Release», Version 1.0 vom 8. September 2026.
 
-Priorisierte nächste Schritte:
+Der Pflichtenheft-Schritt «Klickbarer Prototyp des Sponsor-Überführungswegs mit fünf bis acht realen Szenarien» ist mit sieben fiktiven Szenarien umgesetzt. Der nächste Architekturbaustein ist:
 
 1. Mandanten- und Rollenmodell festlegen.
 2. Relationale Datenbank mit Tenant-Isolation aufsetzen.
