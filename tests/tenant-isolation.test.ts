@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const migrationPath = new URL("../netlify/database/migrations/20260908210000_create_multitenant_core/migration.sql", import.meta.url);
+const teamMigrationPath = new URL("../netlify/database/migrations/20260908223000_team_invitations/migration.sql", import.meta.url);
 
 test("all tenant-owned tables enforce row-level security", async () => {
   const sql = await readFile(migrationPath, "utf8");
@@ -12,6 +13,14 @@ test("all tenant-owned tables enforce row-level security", async () => {
     assert.match(sql, new RegExp(`ALTER TABLE ${table} ENABLE ROW LEVEL SECURITY`, "i"));
     assert.match(sql, new RegExp(`ALTER TABLE ${table} FORCE ROW LEVEL SECURITY`, "i"));
   }
+});
+
+test("pending invitations can only be claimed by the authenticated email", async () => {
+  const sql = await readFile(teamMigrationPath, "utf8");
+  assert.match(sql, /lower\(email\) = app_current_user_email\(\)/i);
+  assert.match(sql, /accepted_at IS NULL/i);
+  assert.match(sql, /expires_at > now\(\)/i);
+  assert.match(sql, /WITH CHECK \(tenant_id = app_current_tenant_id\(\)\)/i);
 });
 
 test("tenant-owned records are checked against the request tenant", async () => {
@@ -24,4 +33,3 @@ test("tenant-owned records are checked against the request tenant", async () => 
     assert.match(block, /WITH CHECK/);
   }
 });
-

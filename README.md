@@ -20,6 +20,8 @@ Der erste interaktive Produkt-Slice setzt die ausgewählte visuelle Richtung «K
 - Self-Service-Onboarding für neue Klubs, Vereine, Events und Projekte
 - verständliche Organisationstypen mit «Sportklub» und «Verein / Organisation»
 - Owner-Einstellungen für einen veränderbaren Anzeigenamen bei stabilem technischem Kurzname
+- Teamverwaltung mit Einladungsversand über Netlify Identity
+- serverseitige Rollenvergabe, automatische Einladungsübernahme und Schutz der letzten Owner-Rolle
 - relationaler PostgreSQL-Kern via Netlify Database
 - serverseitige Rollenprüfung und erzwungene Row-Level Security für alle mandanteneigenen Tabellen
 - geschützte Functions für Mandantenliste, Mandantenerstellung und Workspace
@@ -76,11 +78,9 @@ Netlify Identity ist im Projekt aktiviert. Die Datenbank und Migrationen werden 
 
 Priorisierte nächste Schritte:
 
-1. Erste Owner-Registrierung und Organisation im Live-System abschliessen.
-2. Sichere Team-Einladungen mit serverseitiger Rollenzuweisung fertigstellen.
-3. Import- und Mapping-Persistenz an den relationalen Kern anbinden.
-4. Vertrags-, Dokument- und Audit-Modell erweitern.
-5. E-Mail-, Zahlungs- und Signaturprovider über austauschbare Adapter ergänzen.
+1. Import- und Mapping-Persistenz an den relationalen Kern anbinden.
+2. Vertrags-, Dokument- und Audit-Modell erweitern.
+3. E-Mail-, Zahlungs- und Signaturprovider über austauschbare Adapter ergänzen.
 
 ## Sicherheitsmodell
 
