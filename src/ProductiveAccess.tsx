@@ -70,7 +70,10 @@ function useIdentitySession() {
     let active = true;
     const load = async () => {
       try {
-        await getSettings();
+        await Promise.race([
+          getSettings(),
+          new Promise<never>((_resolve, reject) => window.setTimeout(() => reject(new MissingIdentityError("Identity settings unavailable")), 4500)),
+        ]);
         if (!active) return;
         setAvailability("ready");
         const callbackResult = await handleAuthCallback();
@@ -239,4 +242,3 @@ export function ProductiveAccess({ page, onHome, onLogin, onWorkspace, onPrototy
   if (session.availability === "checking") return <div className="access-page"><main className="access-empty">Zugang wird geprüft …</main></div>;
   return <WorkspacePage user={session.user} setUser={session.setUser} onHome={onHome} onLogin={onLogin} onPrototype={onPrototype}/>;
 }
-
