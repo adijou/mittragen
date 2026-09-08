@@ -13,6 +13,16 @@ type TenantRow = {
   role: MembershipRole;
 };
 
+function databaseCode(error: unknown) {
+  let current = error;
+  for (let depth = 0; depth < 4 && current && typeof current === "object"; depth += 1) {
+    const candidate = current as { code?: unknown; cause?: unknown };
+    if (typeof candidate.code === "string") return candidate.code;
+    current = candidate.cause;
+  }
+  return undefined;
+}
+
 const demoSponsors = [
   ["Bergbau AG", "FC Bösingen", "review", "Gold Plus", 2500000],
   ["Solartec AG", "beide Klubs", "opened", "Gold", 1500000],
@@ -75,8 +85,8 @@ export default async (request: Request, _context: Context) => {
 
         await client.query(`
           INSERT INTO audit_events (tenant_id, actor_user_id, action, object_type, object_id, metadata)
-          VALUES ($1, $2, 'tenant.updated', 'tenant', $1, jsonb_build_object('name', $3::text, 'kind', $4::text))
-        `, [tenantIdFromPath, user.id, parsed.value.name, parsed.value.kind]);
+          VALUES ($1, $2, 'tenant.updated', 'tenant', $3::text, jsonb_build_object('name', $4::text, 'kind', $5::text))
+        `, [tenantIdFromPath, user.id, tenantIdFromPath, parsed.value.name, parsed.value.kind]);
         return updated.rows[0];
       });
 
@@ -84,7 +94,7 @@ export default async (request: Request, _context: Context) => {
       return json({ tenant: { ...result, permissions: permissionsFor(result.role) } });
     } catch (error) {
       console.error("tenant_update_failed", { requestId: _context.requestId, tenantId: tenantIdFromPath, error });
-      return json({ error: "tenant_update_failed" }, 500);
+      return json({ error: "tenant_update_failed", requestId: _context.requestId }, 500);
     }
   }
 
@@ -133,18 +143,17 @@ export default async (request: Request, _context: Context) => {
 
       await client.query(`
         INSERT INTO audit_events (tenant_id, actor_user_id, action, object_type, object_id, metadata)
-        VALUES ($1, $2, 'tenant.created', 'tenant', $1, jsonb_build_object('demo_data', $3::boolean))
-      `, [tenantId, user.id, includeDemo]);
+        VALUES ($1, $2, 'tenant.created', 'tenant', $3::text, jsonb_build_object('demo_data', $4::boolean))
+      `, [tenantId, user.id, tenantId, includeDemo]);
 
       return created.rows[0];
     });
 
     return json({ tenant: { ...tenant, permissions: permissionsFor("owner") } }, 201);
   } catch (error) {
-    const databaseError = error as { code?: string };
-    if (databaseError.code === "23505") return json({ error: "slug_already_exists" }, 409);
+    if (databaseCode(error) === "23505") return json({ error: "slug_already_exists" }, 409);
     console.error("tenant_create_failed", { requestId: _context.requestId, error });
-    return json({ error: "tenant_create_failed" }, 500);
+    return json({ error: "tenant_create_failed", requestId: _context.requestId }, 500);
   }
 };
 

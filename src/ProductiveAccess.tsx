@@ -176,10 +176,20 @@ function AuthPage({ availability, user, callback, setCallback, setUser, onHome, 
   return <div className="access-page"><header className="access-header"><button onClick={onHome} className="access-brand-button"><ProductBrand/></button><button className="access-link" onClick={onHome}>Zur Website</button></header><main className="auth-layout"><section className="auth-story"><p className="eyebrow">Produktiver Zugang</p><h1>Unterstützung sicher organisieren.</h1><p>Mandantengetrennte Daten, klar definierte Rollen und ein persönlicher Workspace für jede Organisation.</p><ul><li>PostgreSQL mit Row-Level Security</li><li>Serverseitige Rollenprüfung</li><li>Sichere Netlify-Identity-Sitzung</li></ul></section><section className="auth-card"><div className="auth-card__heading"><p className="eyebrow">{mode === "signup" ? "Organisation starten" : mode === "invite" ? "Einladung annehmen" : mode === "recovery" ? "Passwort erneuern" : "Willkommen zurück"}</p><h2>{mode === "signup" ? "Konto erstellen" : mode === "invite" ? "Zugang aktivieren" : mode === "recovery" ? "Neues Passwort setzen" : "Bei Mittragen anmelden"}</h2></div>{availability === "checking" ? <div className="auth-state">Anmeldung wird vorbereitet …</div> : availability === "missing" ? <div className="auth-warning"><strong>Identity ist noch nicht aktiviert.</strong><p>Die Anwendung ist vorbereitet. In Netlify muss für das Projekt «mittragen» einmalig Identity aktiviert werden.</p></div> : user && mode === "login" ? <div className="auth-state"><strong>Bereits angemeldet als {user.email}</strong><button className="access-primary" onClick={onWorkspace}>Workspace öffnen</button></div> : <form onSubmit={submit}>{mode === "signup" && <label><span>Name</span><input required autoComplete="name" value={name} onChange={(event) => setName(event.target.value)} placeholder="Vorname Nachname"/></label>}{!['invite', 'recovery'].includes(mode) && <label><span>E-Mail</span><input required type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="name@organisation.ch"/></label>}<label><span>{mode === "recovery" ? "Neues Passwort" : "Passwort"}</span><input required minLength={8} type="password" autoComplete={mode === "login" ? "current-password" : "new-password"} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Mindestens 8 Zeichen"/></label>{error && <p className="form-error" role="alert">{error}</p>}{message && <p className="form-success" role="status">{message}</p>}<button className="access-primary" disabled={busy} type="submit">{busy ? "Bitte warten …" : mode === "signup" ? "Konto erstellen" : mode === "invite" ? "Einladung annehmen" : mode === "recovery" ? "Passwort speichern" : "Anmelden"}</button>{mode === "login" && <><button className="access-secondary" type="button" onClick={() => setMode("signup")}>Neue Organisation starten</button><button className="access-text" type="button" onClick={recover}>Passwort vergessen?</button></>}{mode === "signup" && <button className="access-text" type="button" onClick={() => setMode("login")}>Bereits ein Konto? Anmelden</button>}</form>}</section></main></div>;
 }
 
+class ApiRequestError extends Error {
+  requestId?: string;
+
+  constructor(message: string, requestId?: string) {
+    super(message);
+    this.name = "ApiRequestError";
+    this.requestId = requestId;
+  }
+}
+
 async function api<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(path, { ...options, headers: { "Content-Type": "application/json", ...options?.headers } });
-  const body = await response.json().catch(() => ({})) as T & { error?: string };
-  if (!response.ok) throw new Error(body.error ?? `request_failed_${response.status}`);
+  const body = await response.json().catch(() => ({})) as T & { error?: string; requestId?: string };
+  if (!response.ok) throw new ApiRequestError(body.error ?? `request_failed_${response.status}`, body.requestId);
   return body;
 }
 
@@ -221,7 +231,8 @@ function WorkspacePage({ user, setUser, onHome, onLogin, onPrototype }: { user: 
       setWorkspaceSection("overview");
     } catch (reason) {
       const code = reason instanceof Error ? reason.message : "tenant_create_failed";
-      setError(code === "slug_already_exists" ? "Dieser Kurzname wird bereits verwendet. Bitte wählen Sie einen anderen." : code === "invalid_name" ? "Bitte einen gültigen Organisationsnamen eintragen." : "Die Organisation konnte wegen eines technischen Fehlers nicht erstellt werden.");
+      const reference = reason instanceof ApiRequestError && reason.requestId ? ` Technische Referenz: ${reason.requestId}` : "";
+      setError(code === "slug_already_exists" ? "Dieser Kurzname wird bereits verwendet. Bitte wählen Sie einen anderen." : code === "invalid_name" ? "Bitte einen gültigen Organisationsnamen eintragen." : `Die Organisation konnte wegen eines technischen Fehlers nicht erstellt werden.${reference}`);
     } finally {
       setCreating(false);
     }
