@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
+import { ProductiveAccess } from "./ProductiveAccess";
 
-type Route = "/" | "/admin" | "/space" | "/ueberfuehren";
+type Route = "/" | "/admin" | "/space" | "/ueberfuehren" | "/login" | "/workspace";
 type IconName =
   | "arrow"
   | "bell"
@@ -87,8 +88,9 @@ function usePersistentState<T>(key: string, initialValue: T) {
 }
 
 const routeFromPath = (): Route => {
+  if (/#(?:confirmation_token|invite_token|recovery_token|access_token)=/.test(window.location.hash)) return "/login";
   const path = window.location.pathname.replace(/\/$/, "") || "/";
-  if (path === "/admin" || path === "/space" || path === "/ueberfuehren") return path;
+  if (path === "/admin" || path === "/space" || path === "/ueberfuehren" || path === "/login" || path === "/workspace") return path;
   return "/";
 };
 
@@ -181,7 +183,7 @@ function PublicHeader({ navigate }: { navigate: (route: Route) => void }) {
         <button onClick={() => { navigate("/"); setOpen(false); }}>Produkt</button>
         <button onClick={() => { navigate("/ueberfuehren"); setOpen(false); }}>Überführen</button>
         <button onClick={() => { navigate("/"); setOpen(false); }}>Preise</button>
-        <button onClick={() => { navigate("/space"); setOpen(false); }}>Sponsor-Login</button>
+        <button onClick={() => { navigate("/login"); setOpen(false); }}>Login</button>
       </nav>
       <div className="public-header__actions">
         <Button onClick={() => navigate("/admin")}>Prototyp öffnen</Button>
@@ -706,6 +708,7 @@ export default function App() {
     setAuditEvents([{ id: `${Date.now()}-reset`, time: new Date().toISOString(), action: "Demo-Daten zurückgesetzt", detail: "Sieben Testszenarien auf Ausgangsstand gesetzt" }, ...initialAuditEvents]);
   };
 
+  if (route === "/login" || route === "/workspace") return <ProductiveAccess page={route === "/login" ? "login" : "workspace"} onHome={() => navigate("/")} onLogin={() => navigate("/login")} onWorkspace={() => navigate("/workspace")} onPrototype={() => navigate("/ueberfuehren")}/>;
   if (route === "/admin") return <AdminPage navigate={navigate} sponsors={sponsors} auditEvents={auditEvents}/>;
   if (route === "/space") return <SponsorSpace navigate={navigate} sponsors={sponsors} updateSponsor={updateSponsor} addAudit={addAudit}/>;
   if (route === "/ueberfuehren") return <TransitionPage navigate={navigate} sponsors={sponsors} updateSponsor={updateSponsor} addAudit={addAudit} resetSponsors={resetSponsors}/>;

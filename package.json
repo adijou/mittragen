@@ -5,16 +5,22 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "npm run typecheck && npm run typecheck:functions && vite build",
+    "test": "node --experimental-strip-types --test tests/*.test.ts",
     "typecheck": "tsc -b --pretty false",
+    "typecheck:functions": "tsc --pretty false -p netlify/functions/tsconfig.json",
     "preview": "vite preview"
   },
   "dependencies": {
+    "@netlify/database": "^2.0.1",
+    "@netlify/functions": "^6.0.0",
+    "@netlify/identity": "^2.0.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"
   },
   "devDependencies": {
     "@netlify/vite-plugin": "^2.4.1",
+    "@types/node": "^26.5.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^6.1.1",

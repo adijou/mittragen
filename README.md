@@ -16,6 +16,11 @@ Der erste interaktive Produkt-Slice setzt die ausgewählte visuelle Richtung «K
 - drei Mapping-Simulationen mit dynamischer Wert- und Konfliktanzeige
 - persönliche Paketwahl, Alternative, Beratung oder Ablehnung ohne Sackgasse
 - lokale Status-Persistenz und Audit-Protokoll für den vollständigen Prototyp-Test
+- produktiver Zugang mit Netlify Identity: Login, Registrierung, Bestätigung, Wiederherstellung und Einladungsannahme
+- Self-Service-Onboarding für neue Klubs, Vereine, Events und Projekte
+- relationaler PostgreSQL-Kern via Netlify Database
+- serverseitige Rollenprüfung und erzwungene Row-Level Security für alle mandanteneigenen Tabellen
+- geschützte Functions für Mandantenliste, Mandantenerstellung und Workspace
 - responsive Darstellung und zugängliche Basisinteraktionen
 - Netlify-Konfiguration für Continuous Deployment aus GitHub
 
@@ -42,6 +47,8 @@ npm run build
 - `/admin` – Organisations-Backoffice
 - `/space` – Sponsor-Space
 - `/ueberfuehren` – geführter Überführungsprozess
+- `/login` – produktive Anmeldung und Registrierung
+- `/workspace` – geschützter, mandantengetrennter Workspace
 
 ## Netlify
 
@@ -58,14 +65,27 @@ Der Netlify Vite Plugin ist eingebunden, damit Functions, Blobs, Umgebungsvariab
 
 Die Umsetzung folgt dem Pflichtenheft «Sponsoring-Plattform für die Fusion des FC Bösingen und des FC Wünnewil-Flamatt – mit SaaS-Fähigkeit ab dem ersten Release», Version 1.0 vom 8. September 2026.
 
-Der Pflichtenheft-Schritt «Klickbarer Prototyp des Sponsor-Überführungswegs mit fünf bis acht realen Szenarien» ist mit sieben fiktiven Szenarien umgesetzt. Der nächste Architekturbaustein ist:
+Der Pflichtenheft-Schritt «Klickbarer Prototyp des Sponsor-Überführungswegs mit fünf bis acht realen Szenarien» ist mit sieben fiktiven Szenarien umgesetzt. Das Grundgerüst für Mandanten, Rollen, PostgreSQL und Authentisierung ist ebenfalls implementiert.
 
-1. Mandanten- und Rollenmodell festlegen.
-2. Relationale Datenbank mit Tenant-Isolation aufsetzen.
-3. Authentisierung und sichere Einladungen integrieren.
-4. Import- und Mapping-Persistenz implementieren.
-5. Vertrags-, Dokument- und Audit-Modell anbinden.
-6. E-Mail-, Zahlungs- und Signaturprovider über austauschbare Adapter ergänzen.
+Vor der ersten produktiven Anmeldung muss Netlify Identity für das Projekt aktiviert und auf «Invite only» oder die gewünschte Registrierungsart konfiguriert werden. Die Datenbank und Migration werden durch `@netlify/database` beim Deploy bereitgestellt.
+
+Priorisierte nächste Schritte:
+
+1. Identity im Netlify-Projekt aktivieren und erste Owner-Registrierung testen.
+2. Sichere Team-Einladungen mit serverseitiger Rollenzuweisung fertigstellen.
+3. Import- und Mapping-Persistenz an den relationalen Kern anbinden.
+4. Vertrags-, Dokument- und Audit-Modell erweitern.
+5. E-Mail-, Zahlungs- und Signaturprovider über austauschbare Adapter ergänzen.
+
+## Sicherheitsmodell
+
+Jeder Datenzugriff läuft über eine Netlify Function. Diese prüft zuerst die Identity-Sitzung, danach die Mitgliedschaft und Rolle im angeforderten Mandanten. Erst dann wird innerhalb einer Datenbanktransaktion die Tenant-ID gesetzt. PostgreSQL erzwingt diese Grenze zusätzlich über `FORCE ROW LEVEL SECURITY`.
+
+Automatisierte Tests prüfen die Rollenmatrix sowie die RLS-Abdeckung aller mandanteneigenen Tabellen:
+
+```bash
+npm test
+```
 
 ## Designsystem
 
