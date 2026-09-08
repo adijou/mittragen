@@ -21,10 +21,13 @@ Der erste interaktive Produkt-Slice setzt die ausgewählte visuelle Richtung «K
 - relationaler PostgreSQL-Kern via Netlify Database
 - serverseitige Rollenprüfung und erzwungene Row-Level Security für alle mandanteneigenen Tabellen
 - geschützte Functions für Mandantenliste, Mandantenerstellung und Workspace
+- produktive Sponsoren-Stammdaten mit Suche, Erfassung und Bearbeitung
+- Kontakt-, Adress-, Paket-, Status- und Jahreswertdaten mit serverseitiger Validierung
+- Audit-Ereignisse für neue und geänderte Sponsoren
 - responsive Darstellung und zugängliche Basisinteraktionen
 - Netlify-Konfiguration für Continuous Deployment aus GitHub
 
-Die dargestellten Daten sind bewusst als Demo-Daten gekennzeichnet. Änderungen bleiben im Browser gespeichert; Vertragsbestätigung, Dateiimport und Versand verändern keine externen Daten.
+Die Daten im öffentlichen Überführungs-Prototyp sind bewusst als Demo-Daten gekennzeichnet und bleiben im Browser gespeichert. Änderungen im geschützten Workspace werden dagegen produktiv und mandantengetrennt in PostgreSQL gespeichert. Vertragsbestätigung, Dateiimport und Versand verändern weiterhin keine externen Daten.
 
 ## Lokal starten
 
@@ -65,13 +68,13 @@ Der Netlify Vite Plugin ist eingebunden, damit Functions, Blobs, Umgebungsvariab
 
 Die Umsetzung folgt dem Pflichtenheft «Sponsoring-Plattform für die Fusion des FC Bösingen und des FC Wünnewil-Flamatt – mit SaaS-Fähigkeit ab dem ersten Release», Version 1.0 vom 8. September 2026.
 
-Der Pflichtenheft-Schritt «Klickbarer Prototyp des Sponsor-Überführungswegs mit fünf bis acht realen Szenarien» ist mit sieben fiktiven Szenarien umgesetzt. Das Grundgerüst für Mandanten, Rollen, PostgreSQL und Authentisierung ist ebenfalls implementiert.
+Der Pflichtenheft-Schritt «Klickbarer Prototyp des Sponsor-Überführungswegs mit fünf bis acht realen Szenarien» ist mit sieben fiktiven Szenarien umgesetzt. Das Grundgerüst für Mandanten, Rollen, PostgreSQL und Authentisierung sowie die erste produktive Sponsorenverwaltung sind ebenfalls implementiert.
 
-Vor der ersten produktiven Anmeldung muss Netlify Identity für das Projekt aktiviert und auf «Invite only» oder die gewünschte Registrierungsart konfiguriert werden. Die Datenbank und Migration werden durch `@netlify/database` beim Deploy bereitgestellt.
+Netlify Identity ist im Projekt aktiviert. Die Datenbank und Migrationen werden durch `@netlify/database` beim Deploy bereitgestellt.
 
 Priorisierte nächste Schritte:
 
-1. Identity im Netlify-Projekt aktivieren und erste Owner-Registrierung testen.
+1. Erste Owner-Registrierung und Organisation im Live-System abschliessen.
 2. Sichere Team-Einladungen mit serverseitiger Rollenzuweisung fertigstellen.
 3. Import- und Mapping-Persistenz an den relationalen Kern anbinden.
 4. Vertrags-, Dokument- und Audit-Modell erweitern.
