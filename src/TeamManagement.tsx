@@ -73,7 +73,7 @@ export function TeamManagement({ tenantId }: { tenantId: string }) {
       });
       setMessage(result.delivery === "sent"
         ? `Die Einladung an ${result.invitation.email} wurde dem Maildienst übergeben.`
-        : `${result.invitation.email} besitzt bereits ein Konto. Der Zugang wird beim nächsten Login aktiviert.`);
+        : `${result.invitation.email} besitzt bereits ein Konto. Die Zugangsmail wurde über Resend ausgelöst.`);
       await load();
       return true;
     } catch (reason) {
@@ -84,6 +84,8 @@ export function TeamManagement({ tenantId }: { tenantId: string }) {
             ? "Bitte eine gültige E-Mail-Adresse eintragen."
             : code === "identity_invite_failed"
             ? "Die Einladung konnte dem Maildienst nicht übergeben werden. Sie kann später erneut ausgelöst werden."
+            : code === "existing_user_notification_failed"
+            ? "Das Konto und der Organisationszugang sind vorbereitet, aber die Zugangsmail konnte nicht versandt werden. Bitte die Resend-Konfiguration prüfen."
             : "Die Einladung konnte nicht erstellt werden.");
       await load().catch(() => null);
       return false;
@@ -161,7 +163,7 @@ export function TeamManagement({ tenantId }: { tenantId: string }) {
     {error && <p className="form-error team-feedback" role="alert">{error}</p>}
     {message && <p className="form-success team-feedback" role="status">{message}</p>}
 
-    {invitations.length > 0 && <section className="team-card team-card--pending"><div className="team-card__heading"><div><p className="eyebrow">Noch nicht angenommen</p><h2>Offene Einladungen</h2></div></div><div className="team-invitations">{invitations.map((invitation) => <article key={invitation.id}><div><strong>{invitation.email}</strong><small>{roleLabel(invitation.role)} · gültig bis {new Intl.DateTimeFormat("de-CH", { dateStyle: "medium" }).format(new Date(invitation.expires_at))}</small></div><div className="team-invitation-actions"><span className={`team-delivery team-delivery--${invitation.delivery_status}`}>{invitation.delivery_status === "sent" ? "Übergeben" : invitation.delivery_status === "existing_user" ? "Konto vorhanden" : invitation.delivery_status === "failed" ? "Übergabe fehlgeschlagen" : "Wird übergeben"}</span><button type="button" disabled={resendingId === invitation.id} onClick={() => void resend(invitation)}>{resendingId === invitation.id ? "Wird gesendet …" : "Erneut senden"}</button></div></article>)}</div><p className="team-delivery-note"><strong>Hinweis:</strong> «Übergeben» bestätigt die Annahme durch den Maildienst, nicht die Zustellung im Postfach. Bei Firmenadressen bitte auch Quarantäne und Spamfilter prüfen.</p></section>}
+    {invitations.length > 0 && <section className="team-card team-card--pending"><div className="team-card__heading"><div><p className="eyebrow">Noch nicht angenommen</p><h2>Offene Einladungen</h2></div></div><div className="team-invitations">{invitations.map((invitation) => <article key={invitation.id}><div><strong>{invitation.email}</strong><small>{roleLabel(invitation.role)} · gültig bis {new Intl.DateTimeFormat("de-CH", { dateStyle: "medium" }).format(new Date(invitation.expires_at))}</small></div><div className="team-invitation-actions"><span className={`team-delivery team-delivery--${invitation.delivery_status}`}>{invitation.delivery_status === "sent" ? "Übergeben" : invitation.delivery_status === "existing_user" ? "Zugangsmail übergeben" : invitation.delivery_status === "failed" ? "Übergabe fehlgeschlagen" : "Wird übergeben"}</span><button type="button" disabled={resendingId === invitation.id} onClick={() => void resend(invitation)}>{resendingId === invitation.id ? "Wird gesendet …" : "Erneut senden"}</button></div></article>)}</div><p className="team-delivery-note"><strong>Hinweis:</strong> «Übergeben» bestätigt die Annahme durch den Maildienst, nicht die Zustellung im Postfach. Bei Firmenadressen bitte auch Quarantäne und Spamfilter prüfen.</p></section>}
 
     <section className="team-card team-card--roles" aria-labelledby="team-role-heading">
       <div className="team-card__heading"><div><p className="eyebrow">Orientierung</p><h2 id="team-role-heading">Welche Rolle passt?</h2></div></div>

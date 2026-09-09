@@ -2,7 +2,7 @@
 
 Stand: 9. September 2026
 
-Mittragen verwendet für Benutzerkonten und Einladungen Netlify Identity. Der Versand der Identity-E-Mails wird direkt in Netlify über Resend SMTP konfiguriert. Die Anwendung erhält den Resend-Schlüssel nicht.
+Mittragen verwendet für Benutzerkonten und Einladungen Netlify Identity. Neue Identity-Konten erhalten ihre Einladung über Resend SMTP in Netlify. Für Personen, die bereits ein Identity-Konto besitzen, sendet die Team-Funktion zusätzlich eine gebrandete Zugangsmail direkt über die Resend API.
 
 ## 1. Resend vorbereiten
 
@@ -51,25 +51,23 @@ Die Vorlage ist bereits mit der produktiven Website deployt. Sie führt Einladun
 
 ## 4. Netlify-Umgebungsvariablen
 
-Für den hier beschriebenen Identity-SMTP-Versand werden **keine neuen Netlify Environment Variables** benötigt. Das SMTP-Passwort wird ausschliesslich im geschützten Identity-E-Mail-Bereich gespeichert.
+Für die Zugangsmail an bestehende Identity-Konten benötigt die Team-Funktion einen separaten Resend-Schlüssel. In Resend dafür idealerweise einen zweiten Schlüssel `mittragen-existing-user-mail` mit reiner Versandberechtigung für `news.mittragen.ch` erstellen.
 
 Die bestehende Variable `NETLIFY_IDENTITY_OPERATOR_TOKEN` bleibt unverändert. Sie wird von der geschützten Team-Funktion verwendet, um Identity-Einladungen auszulösen; sie ersetzt den Resend-Schlüssel nicht.
 
-Falls Mittragen später weitere transaktionale Nachrichten direkt aus Functions über die Resend API versendet, werden dafür separat folgende Variablen vorgesehen:
-
 | Variable | Beispiel / Bedeutung | Netlify Scope | Context |
 |---|---|---|---|
-| `RESEND_API_KEY` | separater Resend-Schlüssel für Mittragen-Functions | Functions, als Secret | Production |
+| `RESEND_API_KEY` | Schlüssel `mittragen-existing-user-mail` | Functions, als Secret | Production |
 | `MAIL_FROM` | `Mittragen <noreply@news.mittragen.ch>` | Functions | Production |
-| `MAIL_REPLY_TO` | betreute Antwortadresse, sobald festgelegt | Functions | Production |
+| `MAIL_REPLY_TO` | optionale, betreute Antwortadresse | Functions | Production |
 
-Diese drei Variablen sind für Identity-Einladungen noch nicht erforderlich und sollen erst zusammen mit dem direkten Resend-Adapter aktiviert werden.
+`RESEND_API_KEY` ist für diesen Versandweg erforderlich. `MAIL_FROM` sollte explizit gesetzt werden; ohne Variable verwendet die Funktion denselben Wert als sicheren Standard. `MAIL_REPLY_TO` bleibt optional. Der Schlüssel gehört ausschliesslich ins Netlify-Dashboard und nie ins Repository, in einen Chat oder Screenshot.
 
 ## 5. Funktionsprüfung
 
 1. Eine neue Einladung an eine private Testadresse senden.
 2. Im Resend-Dashboard unter **Emails** prüfen, ob die Nachricht erscheint.
-3. Danach eine neue Einladung an die Corporate-Adresse senden.
+3. Danach bei einer bereits registrierten Corporate-Adresse **Erneut senden** auslösen.
 4. In Resend den Status `Delivered`, `Bounced` oder `Suppressed` prüfen.
 5. Link öffnen, Passwort setzen und kontrollieren, ob die Organisation im Workspace erscheint.
 

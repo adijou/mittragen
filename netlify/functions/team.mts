@@ -3,6 +3,7 @@ import { AuthError, verifyRequestOrigin, type User } from "@netlify/identity";
 import { hasPermission, isResponse, json, requireUser, type MembershipRole } from "./_shared/auth.ts";
 import { isUuid, withSession, type DatabaseClient } from "./_shared/database.ts";
 import { IdentityInvitationError, sendIdentityInvitation, type InvitationDelivery } from "./_shared/identity-invitations.ts";
+import { ResendDeliveryError, sendExistingUserAccessEmail } from "./_shared/resend-access-email.ts";
 import { parseInvitationInput, parseMembershipUpdate } from "./_shared/team-input.ts";
 
 type MembershipRow = {
@@ -23,7 +24,7 @@ type InvitationRow = {
   created_at: string;
 };
 
-type PreparedInvitation = InvitationRow & { state?: "already_member" };
+type PreparedInvitation = (InvitationRow & { tenant_name: string }) | { state: "already_member" };
 
 const routePatterns = {
   tenant: /^\/api\/team\/([0-9a-f-]+)$/i,
@@ -132,7 +133,12 @@ async function prepareInvitation(tenantId: string, userId: string, email: string
       WHERE tenant_id = $1 AND lower(email) = lower($2)
       LIMIT 1
     `, [tenantId, email]);
-    if (existingMember.rows[0]) return { state: "already_member" } as PreparedInvitation;
+    if (existingMember.rows[0]) return { state: "already_member" };
+
+    const tenant = await client.query<{ name: string }>(`
+      SELECT name FROM tenants WHERE id = $1 LIMIT 1
+    `, [tenantId]);
+    if (!tenant.rows[0]) return null;
 
     const existing = await client.query<{ id: string }>(`
       SELECT id FROM tenant_invitations
@@ -158,8 +164,31 @@ async function prepareInvitation(tenantId: string, userId: string, email: string
           RETURNING id, email, role, delivery_status, expires_at::text, identity_invited_at::text, created_at::text
         `, [tenantId, email, role, crypto.randomUUID(), userId]);
 
-    return invitation.rows[0];
+    return { ...invitation.rows[0], tenant_name: tenant.rows[0].name };
   });
+}
+
+const invitationRoleLabels: Record<MembershipRole, string> = {
+  owner: "Owner",
+  sponsoring_admin: "Sponsoring-Admin",
+  finance: "Finanzen",
+  fulfillment: "Sponsoringleistungen",
+  viewer: "Lesen",
+};
+
+function getResendConfig() {
+  const apiKey = Netlify.env.get("RESEND_API_KEY")?.trim();
+  if (!apiKey) throw new ResendDeliveryError("resend_not_configured");
+  return {
+    apiKey,
+    from: Netlify.env.get("MAIL_FROM")?.trim() || "Mittragen <noreply@news.mittragen.ch>",
+    replyTo: Netlify.env.get("MAIL_REPLY_TO")?.trim() || undefined,
+  };
+}
+
+function getLoginUrl(request: Request) {
+  const siteUrl = Netlify.env.get("URL")?.trim() || new URL(request.url).origin;
+  return new URL("/login", siteUrl).toString();
 }
 
 async function recordDelivery(tenantId: string, userId: string, invitationId: string, email: string, role: MembershipRole, delivery: InvitationDelivery | "failed", deliveryError?: string) {
@@ -266,10 +295,27 @@ export default async (request: Request, context: Context) => {
     try {
       const prepared = await prepareInvitation(tenantId, user.id, parsed.value.email, parsed.value.role);
       if (!prepared) return json({ error: "permission_denied" }, 403);
-      if (prepared.state === "already_member") return json({ error: "already_member" }, 409);
+      if ("state" in prepared) return json({ error: "already_member" }, 409);
 
       try {
         const delivery = await sendIdentityInvitation(parsed.value.email);
+
+        if (delivery === "existing_user") {
+          try {
+            await sendExistingUserAccessEmail({
+              email: parsed.value.email,
+              organizationName: prepared.tenant_name,
+              roleLabel: invitationRoleLabels[parsed.value.role],
+              loginUrl: getLoginUrl(request),
+            }, getResendConfig());
+          } catch (error) {
+            const detail = error instanceof ResendDeliveryError ? `${error.status ?? error.message}` : "resend_error";
+            await recordDelivery(tenantId, user.id, prepared.id, parsed.value.email, parsed.value.role, "failed", detail).catch(() => null);
+            console.error("existing_user_notification_failed", { requestId: context.requestId, tenantId, invitationId: prepared.id, error });
+            return json({ error: "existing_user_notification_failed", requestId: context.requestId }, 502);
+          }
+        }
+
         const invitation = await recordDelivery(tenantId, user.id, prepared.id, parsed.value.email, parsed.value.role, delivery);
         if (!invitation) return json({ error: "permission_denied" }, 403);
         return json({ invitation, delivery }, 201);
