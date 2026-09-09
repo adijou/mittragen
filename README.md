@@ -24,6 +24,7 @@ Der erste interaktive Produkt-Slice setzt die ausgewählte visuelle Richtung «K
 - Gebrandete Identity-Einladung unter `/emails/invitation.html` (in Netlify als Einladungsvorlage hinterlegen)
 - Produktive CSV-Datenübernahme mit persistierten Importläufen, Feldzuordnung, Vorprüfung und atomarem Sponsorimport
 - Produktive Überführungskampagnen mit eingefrorener Ausgangslage, Paket-Mapping, persönlichen Vorschlägen, Ausnahmen und Fortschrittskennzahlen
+- Produktiver Paketkatalog mit unveränderlichen Versionen, strukturierten Rechten, Kapazitäten, Exklusivitätsregeln und transaktionalem Reservierungsschutz
 
 Die SMTP- und Template-Konfiguration für Identity ist in [`docs/email-delivery.md`](docs/email-delivery.md) dokumentiert. Secrets werden ausschliesslich in den geschützten Netlify-/Resend-Einstellungen gespeichert.
 - serverseitige Rollenvergabe, automatische Einladungsübernahme und Schutz der letzten Owner-Rolle
@@ -83,10 +84,9 @@ Netlify Identity ist im Projekt aktiviert. Die Datenbank und Migrationen werden 
 
 Priorisierte nächste Schritte:
 
-1. Pakete und Sponsoringrechte mit Versionen, Inventar und Exklusivität produktiv modellieren.
-2. Sponsorwahl und Kampagnenversand an die produktive Überführung anbinden.
-3. Vertrags-, Dokument- und Audit-Modell erweitern.
-4. Zahlungs- und Signaturprovider über austauschbare Adapter ergänzen.
+1. Sponsorwahl und Kampagnenversand an veröffentlichte Paketversionen anbinden.
+2. Vertrags-, Dokument- und Audit-Modell erweitern.
+3. Zahlungs- und Signaturprovider über austauschbare Adapter ergänzen.
 
 ## Sicherheitsmodell
 

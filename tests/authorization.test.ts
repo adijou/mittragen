@@ -17,9 +17,17 @@ test("finance and fulfillment rights remain separated", () => {
   assert.equal(hasPermission("fulfillment", "finance:write"), false);
 });
 
+test("package publishing belongs to owners and sponsoring admins", () => {
+  assert.equal(hasPermission("owner", "packages:write"), true);
+  assert.equal(hasPermission("sponsoring_admin", "packages:write"), true);
+  for (const role of ["finance", "fulfillment", "viewer"] satisfies MembershipRole[]) {
+    assert.equal(hasPermission(role, "packages:read"), true);
+    assert.equal(hasPermission(role, "packages:write"), false);
+  }
+});
+
 test("returned permission arrays cannot mutate the role matrix", () => {
   const ownerPermissions = permissionsFor("owner");
   ownerPermissions.length = 0;
   assert.equal(hasPermission("owner", "tenant:manage"), true);
 });
-

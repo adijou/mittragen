@@ -6,6 +6,7 @@ const migrationPath = new URL("../netlify/database/migrations/20260908210000_cre
 const teamMigrationPath = new URL("../netlify/database/migrations/20260908223000_team_invitations/migration.sql", import.meta.url);
 const importMigrationPath = new URL("../netlify/database/migrations/20260909054000_sponsor_imports/migration.sql", import.meta.url);
 const transitionMigrationPath = new URL("../netlify/database/migrations/20260909070000_transition_campaigns/migration.sql", import.meta.url);
+const packageMigrationPath = new URL("../netlify/database/migrations/20260909073000_sponsorship_packages/migration.sql", import.meta.url);
 
 test("all tenant-owned tables enforce row-level security", async () => {
   const sql = await readFile(migrationPath, "utf8");
@@ -64,4 +65,19 @@ test("transition campaigns, mappings and sponsor proposals enforce tenant isolat
     assert.match(block, /tenant_id = app_current_tenant_id\(\)/);
     assert.match(block, /WITH CHECK/);
   }
+});
+
+test("packages, immutable versions, rights and reservations enforce tenant isolation", async () => {
+  const sql = await readFile(packageMigrationPath, "utf8");
+  const tables = ["sponsorship_packages", "sponsorship_package_versions", "sponsorship_rights", "sponsorship_package_reservations"];
+  for (const table of tables) {
+    assert.match(sql, new RegExp(`ALTER TABLE ${table} ENABLE ROW LEVEL SECURITY`, "i"));
+    assert.match(sql, new RegExp(`ALTER TABLE ${table} FORCE ROW LEVEL SECURITY`, "i"));
+  }
+  assert.match(sql, /published_package_version_is_immutable/i);
+  assert.match(sql, /FOR UPDATE/i);
+  assert.match(sql, /pg_advisory_xact_lock/i);
+  assert.match(sql, /package_capacity_exceeded/i);
+  assert.match(sql, /package_exclusivity_conflict/i);
+  assert.match(sql, /override_reason IS NULL OR NEW\.override_approved_by IS NULL/i);
 });
