@@ -625,6 +625,12 @@ td small { margin-top: 3px; color: var(--ink-3); }
 .team-delivery--sent { background: var(--blue-soft); color: var(--blue); }
 .team-delivery--existing_user { background: var(--green-soft); color: var(--green); }
 .team-delivery--failed { background: var(--red-soft); color: var(--red); }
+.team-card--roles { margin-top: 15px; }
+.team-role-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.team-role { min-height: 145px; padding: 20px; border-right: 1px solid var(--line); }
+.team-role:last-child { border-right: 0; }
+.team-role strong { color: var(--blue); font-size: 11px; }
+.team-role p { margin: 9px 0 0; color: var(--ink-2); font-size: 10px; line-height: 1.55; }
 
 @media (max-width: 1200px) {
   .hero { grid-template-columns: 1fr; padding-top: 65px; }
@@ -673,6 +679,10 @@ td small { margin-top: 3px; color: var(--ink-3); }
   .workspace-sidebar nav { flex-direction: row; justify-self: end; }
   .workspace-logout { margin: 0; border: 0; }
   .onboarding-card { grid-template-columns: 1fr; gap: 30px; }
+  .team-role-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .team-role { min-height: 0; border-bottom: 1px solid var(--line); }
+  .team-role:nth-child(2n) { border-right: 0; }
+  .team-role:last-child { border-bottom: 0; }
 }
 
 @media (max-width: 720px) {
@@ -796,6 +806,8 @@ td small { margin-top: 3px; color: var(--ink-3); }
   .team-member { grid-template-columns: 42px 1fr; }
   .team-member label, .team-member .team-save { grid-column: 2; }
   .team-invitations article { align-items: flex-start; flex-direction: column; gap: 10px; }
+  .team-role-grid { grid-template-columns: 1fr; }
+  .team-role { border-right: 0; border-bottom: 1px solid var(--line); }
 }
 
 @media (prefers-reduced-motion: reduce) {

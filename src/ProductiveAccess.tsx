@@ -43,7 +43,7 @@ const roleLabels: Record<string, string> = {
   owner: "Owner",
   sponsoring_admin: "Sponsoring-Admin",
   finance: "Finanzen",
-  fulfillment: "Leistungserfüllung",
+  fulfillment: "Sponsoringleistungen",
   viewer: "Lesen",
 };
 
@@ -54,7 +54,7 @@ const permissionLabels: Record<string, string> = {
   "sponsors:write": "Sponsoren bearbeiten",
   "finance:read": "Finanzen lesen",
   "finance:write": "Finanzen bearbeiten",
-  "fulfillment:write": "Leistungen bearbeiten",
+  "fulfillment:write": "Sponsoringleistungen bearbeiten",
 };
 
 const formatChf = (cents: number) => new Intl.NumberFormat("de-CH", { style: "currency", currency: "CHF", maximumFractionDigits: 0 }).format(cents / 100);

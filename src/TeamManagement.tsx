@@ -21,11 +21,11 @@ type TeamInvitation = {
 };
 
 const roles: Array<{ value: MembershipRole; label: string; description: string }> = [
-  { value: "owner", label: "Owner", description: "Organisation, Team und alle Fachbereiche" },
-  { value: "sponsoring_admin", label: "Sponsoring-Admin", description: "Sponsoren, Angebote und Leistungen" },
-  { value: "finance", label: "Finanzen", description: "Rechnungen und Finanzdaten" },
-  { value: "fulfillment", label: "Leistungserfüllung", description: "Vereinbarte Leistungen bearbeiten" },
-  { value: "viewer", label: "Lesen", description: "Sponsoren und Finanzen ansehen" },
+  { value: "owner", label: "Owner", description: "Vollzugriff auf Organisation, Team, Sponsoren, Finanzen und Leistungen." },
+  { value: "sponsoring_admin", label: "Sponsoring-Admin", description: "Pflegt Sponsoren, Angebote und Sponsoringleistungen; sieht Finanzdaten." },
+  { value: "finance", label: "Finanzen", description: "Bearbeitet Rechnungen, Zahlungen und Finanzdaten; sieht Sponsoren." },
+  { value: "fulfillment", label: "Sponsoringleistungen", description: "Plant und dokumentiert zugesagte Leistungen wie Banden, Inserate, Matchball-, Event- und Hospitality-Leistungen." },
+  { value: "viewer", label: "Lesen", description: "Kann Sponsoren und Finanzübersichten ansehen, aber nichts verändern." },
 ];
 
 const roleLabel = (role: MembershipRole) => roles.find((item) => item.value === role)?.label ?? role;
@@ -132,7 +132,7 @@ export function TeamManagement({ tenantId }: { tenantId: string }) {
       </section>
 
       <aside className="team-card team-card--invite">
-        <div><p className="eyebrow">Person hinzufügen</p><h2>Einladung senden</h2><p>Die Person setzt ihr Passwort über den sicheren Link von Netlify Identity.</p></div>
+        <div><p className="eyebrow">Person hinzufügen</p><h2>Einladung senden</h2><p>Die Person setzt ihr Passwort über einen sicheren, persönlichen Link.</p></div>
         <form onSubmit={invite}>
           <label><span>E-Mail-Adresse</span><input required type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="name@organisation.ch"/></label>
           <label><span>Rolle</span><select value={role} onChange={(event) => setRole(event.target.value as MembershipRole)}>{roles.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select><small>{roles.find((item) => item.value === role)?.description}</small></label>
@@ -145,5 +145,10 @@ export function TeamManagement({ tenantId }: { tenantId: string }) {
     {message && <p className="form-success team-feedback" role="status">{message}</p>}
 
     {invitations.length > 0 && <section className="team-card team-card--pending"><div className="team-card__heading"><div><p className="eyebrow">Noch nicht angenommen</p><h2>Offene Einladungen</h2></div></div><div className="team-invitations">{invitations.map((invitation) => <article key={invitation.id}><div><strong>{invitation.email}</strong><small>{roleLabel(invitation.role)} · gültig bis {new Intl.DateTimeFormat("de-CH", { dateStyle: "medium" }).format(new Date(invitation.expires_at))}</small></div><span className={`team-delivery team-delivery--${invitation.delivery_status}`}>{invitation.delivery_status === "sent" ? "Versandt" : invitation.delivery_status === "existing_user" ? "Konto vorhanden" : invitation.delivery_status === "failed" ? "Versand fehlgeschlagen" : "Wird versandt"}</span></article>)}</div></section>}
+
+    <section className="team-card team-card--roles" aria-labelledby="team-role-heading">
+      <div className="team-card__heading"><div><p className="eyebrow">Orientierung</p><h2 id="team-role-heading">Welche Rolle passt?</h2></div></div>
+      <div className="team-role-grid">{roles.map((item) => <article className="team-role" key={item.value}><strong>{item.label}</strong><p>{item.description}</p></article>)}</div>
+    </section>
   </section>;
 }

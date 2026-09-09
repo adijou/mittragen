@@ -21,6 +21,7 @@ Der erste interaktive Produkt-Slice setzt die ausgewählte visuelle Richtung «K
 - verständliche Organisationstypen mit «Sportklub» und «Verein / Organisation»
 - Owner-Einstellungen für einen veränderbaren Anzeigenamen bei stabilem technischem Kurzname
 - Teamverwaltung mit Einladungsversand über Netlify Identity
+- Gebrandete Identity-Einladung unter `/emails/invitation.html` (in Netlify als Einladungsvorlage hinterlegen)
 - serverseitige Rollenvergabe, automatische Einladungsübernahme und Schutz der letzten Owner-Rolle
 - relationaler PostgreSQL-Kern via Netlify Database
 - serverseitige Rollenprüfung und erzwungene Row-Level Security für alle mandanteneigenen Tabellen
