@@ -7,6 +7,7 @@ const teamMigrationPath = new URL("../netlify/database/migrations/20260908223000
 const importMigrationPath = new URL("../netlify/database/migrations/20260909054000_sponsor_imports/migration.sql", import.meta.url);
 const transitionMigrationPath = new URL("../netlify/database/migrations/20260909070000_transition_campaigns/migration.sql", import.meta.url);
 const packageMigrationPath = new URL("../netlify/database/migrations/20260909073000_sponsorship_packages/migration.sql", import.meta.url);
+const sponsorPortalMigrationPath = new URL("../netlify/database/migrations/20260909080000_sponsor_portal/migration.sql", import.meta.url);
 
 test("all tenant-owned tables enforce row-level security", async () => {
   const sql = await readFile(migrationPath, "utf8");
@@ -16,6 +17,17 @@ test("all tenant-owned tables enforce row-level security", async () => {
     assert.match(sql, new RegExp(`ALTER TABLE ${table} ENABLE ROW LEVEL SECURITY`, "i"));
     assert.match(sql, new RegExp(`ALTER TABLE ${table} FORCE ROW LEVEL SECURITY`, "i"));
   }
+});
+
+test("sponsor portal access is identity-bound and invitations are email-bound", async () => {
+  const sql = await readFile(sponsorPortalMigrationPath, "utf8");
+  for (const table of ["sponsor_portal_invitations", "sponsor_portal_access"]) {
+    assert.match(sql, new RegExp(`ALTER TABLE ${table} ENABLE ROW LEVEL SECURITY`, "i"));
+    assert.match(sql, new RegExp(`ALTER TABLE ${table} FORCE ROW LEVEL SECURITY`, "i"));
+  }
+  assert.match(sql, /lower\(email\) = app_current_user_email\(\)/i);
+  assert.match(sql, /identity_user_id = app_current_user_id\(\)/i);
+  assert.match(sql, /transition_sponsor_id/i);
 });
 
 test("pending invitations can only be claimed by the authenticated email", async () => {

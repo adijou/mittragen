@@ -25,6 +25,8 @@ Der erste interaktive Produkt-Slice setzt die ausgewählte visuelle Richtung «K
 - Produktive CSV-Datenübernahme mit persistierten Importläufen, Feldzuordnung, Vorprüfung und atomarem Sponsorimport
 - Produktive Überführungskampagnen mit eingefrorener Ausgangslage, Paket-Mapping, persönlichen Vorschlägen, Ausnahmen und Fortschrittskennzahlen
 - Produktiver Paketkatalog mit unveränderlichen Versionen, strukturierten Rechten, Kapazitäten, Exklusivitätsregeln und transaktionalem Reservierungsschutz
+- Expliziter Kampagnenversand über Resend mit persönlichen, 14 Tage gültigen Sponsorzugängen
+- Geschützter Sponsorbereich mit Paketvergleich, verbindlicher Wahl, Alternative, Beratung und Ablehnung
 
 Die SMTP- und Template-Konfiguration für Identity ist in [`docs/email-delivery.md`](docs/email-delivery.md) dokumentiert. Secrets werden ausschliesslich in den geschützten Netlify-/Resend-Einstellungen gespeichert.
 - serverseitige Rollenvergabe, automatische Einladungsübernahme und Schutz der letzten Owner-Rolle
@@ -37,7 +39,7 @@ Die SMTP- und Template-Konfiguration für Identity ist in [`docs/email-delivery.
 - responsive Darstellung und zugängliche Basisinteraktionen
 - Netlify-Konfiguration für Continuous Deployment aus GitHub
 
-Die Daten im öffentlichen Überführungs-Prototyp sind bewusst als Demo-Daten gekennzeichnet und bleiben im Browser gespeichert. Änderungen im geschützten Workspace werden dagegen produktiv und mandantengetrennt in PostgreSQL gespeichert. Vertragsbestätigung, Dateiimport und Versand verändern weiterhin keine externen Daten.
+Die Daten im öffentlichen Überführungs-Prototyp sind bewusst als Demo-Daten gekennzeichnet und bleiben im Browser gespeichert. Änderungen im geschützten Workspace werden dagegen produktiv und mandantengetrennt in PostgreSQL gespeichert. Ein Kampagnenversand erfolgt ausschliesslich nach einer ausdrücklichen Bestätigung im Adminbereich; Deployments lösen keine E-Mail aus.
 
 ## Lokal starten
 
@@ -59,6 +61,7 @@ npm run build
 - `/` – öffentliche Produktseite
 - `/admin` – Organisations-Backoffice
 - `/space` – Sponsor-Space
+- `/sponsor` – produktiver, geschützter Sponsorbereich
 - `/ueberfuehren` – geführter Überführungsprozess
 - `/login` – produktive Anmeldung und Registrierung
 - `/workspace` – geschützter, mandantengetrennter Workspace
@@ -84,9 +87,9 @@ Netlify Identity ist im Projekt aktiviert. Die Datenbank und Migrationen werden 
 
 Priorisierte nächste Schritte:
 
-1. Sponsorwahl und Kampagnenversand an veröffentlichte Paketversionen anbinden.
-2. Vertrags-, Dokument- und Audit-Modell erweitern.
-3. Zahlungs- und Signaturprovider über austauschbare Adapter ergänzen.
+1. Vertrags-, Dokument- und Audit-Modell erweitern.
+2. Rechnungsübersicht und Zahlungsstatus für Sponsoren ergänzen.
+3. Zahlungs- und Signaturprovider über austauschbare Adapter anbinden.
 
 ## Sicherheitsmodell
 

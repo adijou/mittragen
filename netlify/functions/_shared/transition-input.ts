@@ -18,6 +18,13 @@ function amount(value: unknown) {
     : null;
 }
 
+function optionalUuid(value: unknown) {
+  if (value === null || value === undefined || value === "") return null;
+  return typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
+    ? value
+    : undefined;
+}
+
 export function parseCampaignInput(body: unknown): Result<{ name: string; targetPeriod: string; responseDeadline: string | null }> {
   if (!body || typeof body !== "object" || Array.isArray(body)) return { ok: false, error: "invalid_body" };
   const record = body as Record<string, unknown>;
@@ -40,23 +47,27 @@ export function parseCampaignInput(body: unknown): Result<{ name: string; target
   return { ok: true, value: { name, targetPeriod, responseDeadline } };
 }
 
-export function parseMappingInput(body: unknown): Result<{ targetPackage: string; targetValueCents: number }> {
+export function parseMappingInput(body: unknown): Result<{ targetPackage: string; targetValueCents: number; targetPackageVersionId: string | null }> {
   if (!body || typeof body !== "object" || Array.isArray(body)) return { ok: false, error: "invalid_body" };
   const record = body as Record<string, unknown>;
   const targetPackage = normalizedText(record.targetPackage, 1, 160);
   const targetValueCents = amount(record.targetValueCents);
+  const targetPackageVersionId = optionalUuid(record.targetPackageVersionId);
   if (!targetPackage) return { ok: false, error: "invalid_target_package" };
   if (targetValueCents === null) return { ok: false, error: "invalid_target_value" };
-  return { ok: true, value: { targetPackage, targetValueCents } };
+  if (targetPackageVersionId === undefined) return { ok: false, error: "invalid_package_version" };
+  return { ok: true, value: { targetPackage, targetValueCents, targetPackageVersionId } };
 }
 
-export function parseTransitionSponsorInput(body: unknown): Result<{ proposedPackage: string; proposedValueCents: number; status: TransitionSponsorStatus; exceptionNote: string | null }> {
+export function parseTransitionSponsorInput(body: unknown): Result<{ proposedPackage: string; proposedValueCents: number; proposedPackageVersionId: string | null; status: TransitionSponsorStatus; exceptionNote: string | null }> {
   if (!body || typeof body !== "object" || Array.isArray(body)) return { ok: false, error: "invalid_body" };
   const record = body as Record<string, unknown>;
   const proposedPackage = normalizedText(record.proposedPackage, 1, 160);
   const proposedValueCents = amount(record.proposedValueCents);
+  const proposedPackageVersionId = optionalUuid(record.proposedPackageVersionId);
   if (!proposedPackage) return { ok: false, error: "invalid_proposed_package" };
   if (proposedValueCents === null) return { ok: false, error: "invalid_proposed_value" };
+  if (proposedPackageVersionId === undefined) return { ok: false, error: "invalid_package_version" };
   if (typeof record.status !== "string" || !transitionSponsorStatuses.includes(record.status as TransitionSponsorStatus)) {
     return { ok: false, error: "invalid_transition_status" };
   }
@@ -66,7 +77,7 @@ export function parseTransitionSponsorInput(body: unknown): Result<{ proposedPac
     if (!exceptionNote) return { ok: false, error: "invalid_exception_note" };
   }
   if (record.status === "exception" && !exceptionNote) return { ok: false, error: "exception_note_required" };
-  return { ok: true, value: { proposedPackage, proposedValueCents, status: record.status as TransitionSponsorStatus, exceptionNote } };
+  return { ok: true, value: { proposedPackage, proposedValueCents, proposedPackageVersionId, status: record.status as TransitionSponsorStatus, exceptionNote } };
 }
 
 export function parseCampaignStatusInput(body: unknown): Result<{ status: TransitionCampaignStatus }> {

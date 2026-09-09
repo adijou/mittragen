@@ -163,6 +163,30 @@ async function listPackages(client: DatabaseClient, tenantId: string) {
   return result.rows;
 }
 
+async function publicCatalog(client: DatabaseClient, tenantId: string) {
+  const versions = await client.query<VersionRow>(`
+    SELECT ${versionColumns}
+    FROM sponsorship_package_versions version
+    JOIN sponsorship_packages package ON package.id = version.package_id AND package.tenant_id = version.tenant_id
+    WHERE version.tenant_id = $1 AND version.status = 'published' AND version.visibility = 'public'
+      AND package.status = 'active'
+      AND (version.valid_from IS NULL OR version.valid_from <= CURRENT_DATE)
+      AND (version.valid_until IS NULL OR version.valid_until >= CURRENT_DATE)
+    ORDER BY version.price_cents, lower(version.name), version.version_number DESC
+  `, [tenantId]);
+  const rights = await client.query<RightRow>(`
+    SELECT ${rightReturningColumns}
+    FROM sponsorship_rights
+    WHERE tenant_id = $1 AND package_version_id = ANY($2::uuid[])
+    ORDER BY package_version_id, created_at, id
+  `, [tenantId, versions.rows.map((version) => version.id)]);
+  return versions.rows.map((version) => ({
+    ...version,
+    available_quantity: version.capacity === null ? null : Math.max(0, version.capacity - Number(version.reserved_quantity)),
+    rights: rights.rows.filter((right) => right.package_version_id === version.id),
+  }));
+}
+
 const versionValues = (input: PackageVersionInput) => [
   input.name, input.description, input.priceCents, input.durationMonths, input.paymentPlan,
   input.paymentTerms, input.validFrom, input.validUntil, input.visibility, input.capacity,
@@ -202,7 +226,7 @@ export default async (request: Request, context: Context) => {
         if (!role || !hasPermission(role, "packages:read")) return { denied: true as const };
         return packageId
           ? { detail: await packageDetail(client, tenantId, packageId) }
-          : { packages: await listPackages(client, tenantId) };
+          : { packages: await listPackages(client, tenantId), catalog: await publicCatalog(client, tenantId) };
       });
       if ("denied" in result) return json({ error: "permission_denied" }, 403);
       if ("detail" in result && !result.detail) return json({ error: "package_not_found" }, 404);

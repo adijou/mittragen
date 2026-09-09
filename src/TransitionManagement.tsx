@@ -25,6 +25,7 @@ type Mapping = {
   source_package: string;
   target_package: string;
   target_value_cents: number;
+  target_package_version_id: string | null;
   sponsor_count: string;
   source_value_cents: string;
 };
@@ -39,11 +40,19 @@ type TransitionSponsor = {
   source_value_cents: number;
   proposed_package: string;
   proposed_value_cents: number;
+  proposed_package_version_id: string | null;
   status: ProposalStatus;
   exception_note: string | null;
 };
 
-type CampaignDetail = { campaign: Campaign; summary: CampaignSummary; mappings: Mapping[]; sponsors: TransitionSponsor[] };
+type PackageVersion = { id: string; name: string; price_cents: number; capacity: number | null; available_quantity: number | null; version_number: number };
+type CampaignDetail = {
+  campaign: Campaign;
+  summary: CampaignSummary;
+  dispatch: { missing_email_count: string; missing_package_count: string };
+  mappings: Mapping[];
+  sponsors: TransitionSponsor[];
+};
 
 const campaignStatusLabels: Record<CampaignStatus, string> = {
   draft: "Entwurf",
@@ -86,7 +95,8 @@ export function TransitionManagement({ tenantId, canWrite }: { tenantId: string;
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [selectedCampaignId, setSelectedCampaignId] = useState("");
   const [detail, setDetail] = useState<CampaignDetail | null>(null);
-  const [mappingDrafts, setMappingDrafts] = useState<Record<string, { targetPackage: string; targetValue: string }>>({});
+  const [catalog, setCatalog] = useState<PackageVersion[]>([]);
+  const [mappingDrafts, setMappingDrafts] = useState<Record<string, { packageVersionId: string; targetPackage: string; targetValue: string }>>({});
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
@@ -100,6 +110,7 @@ export function TransitionManagement({ tenantId, canWrite }: { tenantId: string;
   const [editing, setEditing] = useState<TransitionSponsor | null>(null);
   const [proposalPackage, setProposalPackage] = useState("");
   const [proposalValue, setProposalValue] = useState("");
+  const [proposalPackageVersionId, setProposalPackageVersionId] = useState("");
   const [proposalStatus, setProposalStatus] = useState<ProposalStatus>("review");
   const [exceptionNote, setExceptionNote] = useState("");
 
@@ -107,13 +118,18 @@ export function TransitionManagement({ tenantId, canWrite }: { tenantId: string;
     setDetail(next);
     setSelectedCampaignId(next.campaign.id);
     setMappingDrafts(Object.fromEntries(next.mappings.map((mapping) => [mapping.id, {
+      packageVersionId: mapping.target_package_version_id ?? "",
       targetPackage: mapping.target_package,
       targetValue: centsToInput(mapping.target_value_cents),
     }])));
   };
 
   const loadCampaigns = async (preferredId?: string) => {
-    const result = await request<{ campaigns: Campaign[] }>(`/api/transitions/${tenantId}`);
+    const [result, packageResult] = await Promise.all([
+      request<{ campaigns: Campaign[] }>(`/api/transitions/${tenantId}`),
+      request<{ catalog: PackageVersion[] }>(`/api/packages/${tenantId}`),
+    ]);
+    setCatalog(packageResult.catalog);
     setCampaigns(result.campaigns);
     const nextId = preferredId || selectedCampaignId || result.campaigns[0]?.id || "";
     if (!nextId) {
@@ -184,7 +200,7 @@ export function TransitionManagement({ tenantId, canWrite }: { tenantId: string;
     try {
       const result = await request<{ detail: CampaignDetail }>(`/api/transitions/${tenantId}/${detail?.campaign.id}/mappings/${mapping.id}`, {
         method: "PATCH",
-        body: JSON.stringify({ targetPackage: draft.targetPackage, targetValueCents }),
+        body: JSON.stringify({ targetPackage: draft.targetPackage, targetValueCents, targetPackageVersionId: draft.packageVersionId || null }),
       });
       applyDetail(result.detail);
       setMessage(`Mapping «${mapping.source_package}» wurde aktualisiert.`);
@@ -200,6 +216,7 @@ export function TransitionManagement({ tenantId, canWrite }: { tenantId: string;
     setEditing(sponsor);
     setProposalPackage(sponsor.proposed_package);
     setProposalValue(centsToInput(sponsor.proposed_value_cents));
+    setProposalPackageVersionId(sponsor.proposed_package_version_id ?? "");
     setProposalStatus(sponsor.status);
     setExceptionNote(sponsor.exception_note ?? "");
     setError("");
@@ -223,7 +240,7 @@ export function TransitionManagement({ tenantId, canWrite }: { tenantId: string;
     try {
       const result = await request<{ detail: CampaignDetail }>(`/api/transitions/${tenantId}/${detail.campaign.id}/sponsors/${editing.id}`, {
         method: "PATCH",
-        body: JSON.stringify({ proposedPackage: proposalPackage, proposedValueCents, status: proposalStatus, exceptionNote }),
+        body: JSON.stringify({ proposedPackage: proposalPackage, proposedValueCents, proposedPackageVersionId: proposalPackageVersionId || null, status: proposalStatus, exceptionNote }),
       });
       applyDetail(result.detail);
       setEditing(null);
@@ -231,7 +248,11 @@ export function TransitionManagement({ tenantId, canWrite }: { tenantId: string;
       await loadCampaigns(result.detail.campaign.id);
     } catch (reason) {
       const code = reason instanceof Error ? reason.message : "transition_sponsor_failed";
-      setError(code === "exception_note_required" ? "Für eine Ausnahme ist eine Begründung erforderlich." : "Der Vorschlag konnte nicht gespeichert werden.");
+      setError(code === "exception_note_required"
+        ? "Für eine Ausnahme ist eine Begründung erforderlich."
+        : code === "proposal_package_version_required"
+          ? "Ein freigegebener Vorschlag muss mit einem veröffentlichten Paket verknüpft sein."
+          : "Der Vorschlag konnte nicht gespeichert werden.");
     } finally {
       setBusy("");
     }
@@ -252,9 +273,26 @@ export function TransitionManagement({ tenantId, canWrite }: { tenantId: string;
       await loadCampaigns(result.detail.campaign.id);
     } catch (reason) {
       const code = reason instanceof Error ? reason.message : "transition_status_failed";
-      setError(code === "campaign_has_open_reviews"
-        ? "Die Kampagne ist noch nicht versandbereit. Bitte alle offenen Vorschläge freigeben oder als Ausnahme markieren."
+      setError(code === "campaign_not_dispatchable"
+        ? "Noch nicht versandbereit: Bitte offene Vorschläge abschliessen sowie E-Mail-Adresse und veröffentlichtes Paket bei allen Freigaben ergänzen."
         : "Der Kampagnenstatus konnte nicht geändert werden.");
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const dispatchCampaign = async () => {
+    if (!detail || !window.confirm(`Jetzt ${detail.summary.ready_count} persönliche Einladungen über Resend versenden?`)) return;
+    setBusy("dispatch");
+    setError("");
+    setMessage("");
+    try {
+      const result = await request<{ sent: number; failed: number }>(`/api/transitions/${tenantId}/${detail.campaign.id}/dispatch`, { method: "POST", body: "{}" });
+      setMessage(`${result.sent} Einladungen versandt${result.failed ? `, ${result.failed} fehlgeschlagen` : ""}.`);
+      await loadCampaigns(detail.campaign.id);
+    } catch (reason) {
+      const code = reason instanceof Error ? reason.message : "transition_dispatch_failed";
+      setError(code === "resend_not_configured" ? "Resend ist noch nicht vollständig konfiguriert." : "Der Versand konnte nicht abgeschlossen werden.");
     } finally {
       setBusy("");
     }
@@ -313,8 +351,15 @@ export function TransitionManagement({ tenantId, canWrite }: { tenantId: string;
           return <article key={mapping.id}>
             <div><span>Bisher</span><strong>{mapping.source_package}</strong><small>{mapping.sponsor_count} Sponsorings · {formatChf(Number(mapping.source_value_cents))}</small></div>
             <span className="transition-arrow" aria-hidden="true">→</span>
-            <label><span>Zielpaket</span><input disabled={!canWrite} value={draft?.targetPackage ?? mapping.target_package} onChange={(event) => setMappingDrafts((current) => ({ ...current, [mapping.id]: { targetPackage: event.target.value, targetValue: current[mapping.id]?.targetValue ?? centsToInput(mapping.target_value_cents) } }))}/></label>
-            <label><span>Zielbetrag pro Sponsor in CHF</span><input disabled={!canWrite} inputMode="decimal" value={draft?.targetValue ?? centsToInput(mapping.target_value_cents)} onChange={(event) => setMappingDrafts((current) => ({ ...current, [mapping.id]: { targetPackage: current[mapping.id]?.targetPackage ?? mapping.target_package, targetValue: event.target.value } }))}/></label>
+            <label><span>Veröffentlichtes Zielpaket</span><select disabled={!canWrite} value={draft?.packageVersionId ?? ""} onChange={(event) => {
+              const selected = catalog.find((version) => version.id === event.target.value);
+              setMappingDrafts((current) => ({ ...current, [mapping.id]: {
+                packageVersionId: event.target.value,
+                targetPackage: selected?.name ?? mapping.target_package,
+                targetValue: selected ? centsToInput(selected.price_cents) : centsToInput(mapping.target_value_cents),
+              } }));
+            }}><option value="">Noch nicht verknüpft</option>{catalog.map((version) => <option value={version.id} key={version.id}>{version.name} · {formatChf(version.price_cents)}</option>)}</select></label>
+            <label><span>Zielbetrag pro Sponsor</span><input disabled readOnly value={draft?.targetValue ?? centsToInput(mapping.target_value_cents)}/></label>
             {canWrite && <button className="transition-save" disabled={busy === mapping.id} onClick={() => void saveMapping(mapping)}>{busy === mapping.id ? "Speichert …" : "Mapping speichern"}</button>}
           </article>;
         })}</div>
@@ -325,10 +370,10 @@ export function TransitionManagement({ tenantId, canWrite }: { tenantId: string;
         <div className="transition-section__heading"><div><p className="eyebrow">Schritt 2</p><h2>Vorschläge und Ausnahmen</h2><p>Persönliche Abweichungen prüfen und intern freigeben.</p></div><span>{visibleSponsors.length} von {detail.sponsors.length}</span></div>
         <div className="transition-toolbar"><label><span>Suche</span><input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Sponsor, Herkunft oder Paket"/></label><label><span>Status</span><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="">Alle Status</option>{Object.entries(proposalStatusLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label></div>
         <div className="transition-table-wrap"><table><thead><tr><th>Sponsor</th><th>Herkunft</th><th>Bisher</th><th>Vorschlag</th><th>Zielwert</th><th>Status</th><th></th></tr></thead><tbody>{visibleSponsors.map((sponsor) => <tr key={sponsor.id}><td><strong>{sponsor.legal_name}</strong><small>{sponsor.contact_email || "Kein E-Mail-Kontakt"}</small></td><td>{sponsor.source_organization || "–"}</td><td><strong>{sponsor.source_package}</strong><small>{formatChf(sponsor.source_value_cents)}</small></td><td>{sponsor.proposed_package}</td><td>{formatChf(sponsor.proposed_value_cents)}</td><td><span className={`proposal-status proposal-status--${sponsor.status}`}>{proposalStatusLabels[sponsor.status]}</span></td><td>{canWrite && <button onClick={() => openSponsor(sponsor)}>Bearbeiten</button>}</td></tr>)}</tbody></table></div>
-        {detail.campaign.status === "ready" && <p className="transition-ready"><strong>Interne Prüfung abgeschlossen.</strong> Der echte Versand wird im nächsten Ausbau an diese freigegebene Kampagne angebunden.</p>}
+        {detail.campaign.status === "ready" && <div className="transition-ready"><strong>Interne Prüfung abgeschlossen.</strong><p>Der Versand erstellt persönliche, 14 Tage gültige Sponsorzugänge. Es wird erst nach Ihrer Bestätigung versendet.</p><button className="access-primary" disabled={busy === "dispatch"} onClick={() => void dispatchCampaign()}>{busy === "dispatch" ? "Wird versandt …" : `${detail.summary.ready_count} Einladungen versenden`}</button></div>}
       </section>
     </>}
 
-    {editing && <div className="transition-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) setEditing(null); }}><section className="transition-dialog" role="dialog" aria-modal="true" aria-labelledby="transition-dialog-title"><header><div><p className="eyebrow">Persönlicher Vorschlag</p><h2 id="transition-dialog-title">{editing.legal_name}</h2></div><button type="button" aria-label="Schliessen" onClick={() => setEditing(null)}>×</button></header><form onSubmit={saveSponsor}><div className="transition-dialog__origin"><span>Bisher: <strong>{editing.source_package}</strong></span><span>{formatChf(editing.source_value_cents)}</span></div><label><span>Vorgeschlagenes Paket</span><input required maxLength={160} value={proposalPackage} onChange={(event) => setProposalPackage(event.target.value)}/></label><label><span>Zielbetrag in CHF</span><input required inputMode="decimal" value={proposalValue} onChange={(event) => setProposalValue(event.target.value)}/></label><label><span>Bearbeitungsstatus</span><select value={proposalStatus} onChange={(event) => setProposalStatus(event.target.value as ProposalStatus)}>{editableProposalStatuses.map((status) => <option value={status} key={status}>{proposalStatusLabels[status]}</option>)}</select></label><label><span>Ausnahme / interne Begründung</span><textarea maxLength={2000} required={proposalStatus === "exception"} value={exceptionNote} onChange={(event) => setExceptionNote(event.target.value)} placeholder="z. B. bestehende Laufzeit, Doppelsponsoring oder individuelle Absprache"/></label>{error && <p className="form-error" role="alert">{error}</p>}<footer><button className="access-secondary" type="button" onClick={() => setEditing(null)}>Abbrechen</button><button className="access-primary" disabled={busy === editing.id}>{busy === editing.id ? "Speichert …" : "Vorschlag speichern"}</button></footer></form></section></div>}
+    {editing && <div className="transition-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) setEditing(null); }}><section className="transition-dialog" role="dialog" aria-modal="true" aria-labelledby="transition-dialog-title"><header><div><p className="eyebrow">Persönlicher Vorschlag</p><h2 id="transition-dialog-title">{editing.legal_name}</h2></div><button type="button" aria-label="Schliessen" onClick={() => setEditing(null)}>×</button></header><form onSubmit={saveSponsor}><div className="transition-dialog__origin"><span>Bisher: <strong>{editing.source_package}</strong></span><span>{formatChf(editing.source_value_cents)}</span></div><label><span>Veröffentlichtes Paket</span><select value={proposalPackageVersionId} onChange={(event) => { const selected = catalog.find((version) => version.id === event.target.value); setProposalPackageVersionId(event.target.value); if (selected) { setProposalPackage(selected.name); setProposalValue(centsToInput(selected.price_cents)); } }}><option value="">Individuelle Ausnahme</option>{catalog.map((version) => <option value={version.id} key={version.id}>{version.name} · {formatChf(version.price_cents)}</option>)}</select></label><label><span>Vorgeschlagenes Paket</span><input required maxLength={160} readOnly={Boolean(proposalPackageVersionId)} value={proposalPackage} onChange={(event) => setProposalPackage(event.target.value)}/></label><label><span>Zielbetrag in CHF</span><input required inputMode="decimal" readOnly={Boolean(proposalPackageVersionId)} value={proposalValue} onChange={(event) => setProposalValue(event.target.value)}/></label><label><span>Bearbeitungsstatus</span><select value={proposalStatus} onChange={(event) => setProposalStatus(event.target.value as ProposalStatus)}>{editableProposalStatuses.map((status) => <option value={status} key={status}>{proposalStatusLabels[status]}</option>)}</select></label><label><span>Ausnahme / interne Begründung</span><textarea maxLength={2000} required={proposalStatus === "exception"} value={exceptionNote} onChange={(event) => setExceptionNote(event.target.value)} placeholder="z. B. bestehende Laufzeit, Doppelsponsoring oder individuelle Absprache"/></label>{error && <p className="form-error" role="alert">{error}</p>}<footer><button className="access-secondary" type="button" onClick={() => setEditing(null)}>Abbrechen</button><button className="access-primary" disabled={busy === editing.id}>{busy === editing.id ? "Speichert …" : "Vorschlag speichern"}</button></footer></form></section></div>}
   </section>;
 }
