@@ -625,6 +625,11 @@ td small { margin-top: 3px; color: var(--ink-3); }
 .team-delivery--sent { background: var(--blue-soft); color: var(--blue); }
 .team-delivery--existing_user { background: var(--green-soft); color: var(--green); }
 .team-delivery--failed { background: var(--red-soft); color: var(--red); }
+.team-invitation-actions { display: flex; align-items: center; gap: 10px; }
+.team-invitation-actions button { padding: 5px 0; border: 0; border-bottom: 1px solid currentColor; background: none; color: var(--blue); font-size: 9px; font-weight: 800; cursor: pointer; white-space: nowrap; }
+.team-invitation-actions button:disabled { color: var(--ink-3); cursor: default; }
+.team-delivery-note { margin: 0; padding: 13px 20px; border-top: 1px solid var(--line); background: var(--surface-2); color: var(--ink-3); font-size: 9px; line-height: 1.55; }
+.team-delivery-note strong { display: inline; color: var(--ink-2); }
 .team-card--roles { margin-top: 15px; }
 .team-role-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); }
 .team-role { min-height: 145px; padding: 20px; border-right: 1px solid var(--line); }
@@ -869,6 +874,7 @@ td small { margin-top: 3px; color: var(--ink-3); }
   .team-member { grid-template-columns: 42px 1fr; }
   .team-member label, .team-member .team-save { grid-column: 2; }
   .team-invitations article { align-items: flex-start; flex-direction: column; gap: 10px; }
+  .team-invitation-actions { width: 100%; justify-content: space-between; }
   .team-role-grid { grid-template-columns: 1fr; }
   .team-role { border-right: 0; border-bottom: 1px solid var(--line); }
   .data-import { width: calc(100% - 28px); margin-top: 28px; }

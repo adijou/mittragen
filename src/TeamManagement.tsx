@@ -45,6 +45,7 @@ export function TeamManagement({ tenantId }: { tenantId: string }) {
   const [role, setRole] = useState<MembershipRole>("sponsoring_admin");
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
+  const [resendingId, setResendingId] = useState("");
   const [savingMemberId, setSavingMemberId] = useState("");
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
@@ -62,33 +63,49 @@ export function TeamManagement({ tenantId }: { tenantId: string }) {
     void load().catch(() => setError("Das Team konnte nicht geladen werden.")).finally(() => setLoading(false));
   }, [tenantId]);
 
-  const invite = async (event: React.FormEvent) => {
-    event.preventDefault();
-    setSending(true);
+  const sendInvitation = async (targetEmail: string, targetRole: MembershipRole) => {
     setError("");
     setMessage("");
     try {
       const result = await request<{ invitation: TeamInvitation; delivery: "sent" | "existing_user" }>(`/api/team/${tenantId}/invitations`, {
         method: "POST",
-        body: JSON.stringify({ email, role }),
+        body: JSON.stringify({ email: targetEmail, role: targetRole }),
       });
-      setEmail("");
       setMessage(result.delivery === "sent"
-        ? `Die Einladung wurde an ${result.invitation.email} versandt.`
+        ? `Die Einladung an ${result.invitation.email} wurde dem Maildienst übergeben.`
         : `${result.invitation.email} besitzt bereits ein Konto. Der Zugang wird beim nächsten Login aktiviert.`);
       await load();
+      return true;
     } catch (reason) {
       const code = reason instanceof Error ? reason.message : "team_invitation_failed";
       setError(code === "already_member"
         ? "Diese Person ist bereits Mitglied der Organisation."
         : code === "invalid_email"
-          ? "Bitte eine gültige E-Mail-Adresse eintragen."
-          : code === "identity_invite_failed"
-            ? "Die Einladung konnte von Netlify Identity nicht versandt werden. Sie kann später erneut ausgelöst werden."
+            ? "Bitte eine gültige E-Mail-Adresse eintragen."
+            : code === "identity_invite_failed"
+            ? "Die Einladung konnte dem Maildienst nicht übergeben werden. Sie kann später erneut ausgelöst werden."
             : "Die Einladung konnte nicht erstellt werden.");
       await load().catch(() => null);
+      return false;
+    }
+  };
+
+  const invite = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setSending(true);
+    try {
+      if (await sendInvitation(email, role)) setEmail("");
     } finally {
       setSending(false);
+    }
+  };
+
+  const resend = async (invitation: TeamInvitation) => {
+    setResendingId(invitation.id);
+    try {
+      await sendInvitation(invitation.email, invitation.role);
+    } finally {
+      setResendingId("");
     }
   };
 
@@ -144,7 +161,7 @@ export function TeamManagement({ tenantId }: { tenantId: string }) {
     {error && <p className="form-error team-feedback" role="alert">{error}</p>}
     {message && <p className="form-success team-feedback" role="status">{message}</p>}
 
-    {invitations.length > 0 && <section className="team-card team-card--pending"><div className="team-card__heading"><div><p className="eyebrow">Noch nicht angenommen</p><h2>Offene Einladungen</h2></div></div><div className="team-invitations">{invitations.map((invitation) => <article key={invitation.id}><div><strong>{invitation.email}</strong><small>{roleLabel(invitation.role)} · gültig bis {new Intl.DateTimeFormat("de-CH", { dateStyle: "medium" }).format(new Date(invitation.expires_at))}</small></div><span className={`team-delivery team-delivery--${invitation.delivery_status}`}>{invitation.delivery_status === "sent" ? "Versandt" : invitation.delivery_status === "existing_user" ? "Konto vorhanden" : invitation.delivery_status === "failed" ? "Versand fehlgeschlagen" : "Wird versandt"}</span></article>)}</div></section>}
+    {invitations.length > 0 && <section className="team-card team-card--pending"><div className="team-card__heading"><div><p className="eyebrow">Noch nicht angenommen</p><h2>Offene Einladungen</h2></div></div><div className="team-invitations">{invitations.map((invitation) => <article key={invitation.id}><div><strong>{invitation.email}</strong><small>{roleLabel(invitation.role)} · gültig bis {new Intl.DateTimeFormat("de-CH", { dateStyle: "medium" }).format(new Date(invitation.expires_at))}</small></div><div className="team-invitation-actions"><span className={`team-delivery team-delivery--${invitation.delivery_status}`}>{invitation.delivery_status === "sent" ? "Übergeben" : invitation.delivery_status === "existing_user" ? "Konto vorhanden" : invitation.delivery_status === "failed" ? "Übergabe fehlgeschlagen" : "Wird übergeben"}</span><button type="button" disabled={resendingId === invitation.id} onClick={() => void resend(invitation)}>{resendingId === invitation.id ? "Wird gesendet …" : "Erneut senden"}</button></div></article>)}</div><p className="team-delivery-note"><strong>Hinweis:</strong> «Übergeben» bestätigt die Annahme durch den Maildienst, nicht die Zustellung im Postfach. Bei Firmenadressen bitte auch Quarantäne und Spamfilter prüfen.</p></section>}
 
     <section className="team-card team-card--roles" aria-labelledby="team-role-heading">
       <div className="team-card__heading"><div><p className="eyebrow">Orientierung</p><h2 id="team-role-heading">Welche Rolle passt?</h2></div></div>
