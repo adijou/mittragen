@@ -8,6 +8,7 @@ import {
   login,
   logout,
   onAuthChange,
+  refreshSession,
   requestPasswordRecovery,
   signup,
   updateUser,
@@ -80,6 +81,8 @@ function useIdentitySession() {
         if (!active) return;
         setAvailability("ready");
         const callbackResult = await handleAuthCallback();
+        if (!active) return;
+        if (!callbackResult) await refreshSession();
         if (!active) return;
         setCallback(callbackResult);
         setUser(callbackResult?.user ?? await getUser());
@@ -212,13 +215,29 @@ function WorkspacePage({ user, setUser, onHome, onLogin, onPrototype }: { user: 
     api<{ claimed: number; tenantIds: string[] }>("/api/team/claim", { method: "POST" }).then(() => api<{ tenants: Tenant[] }>("/api/tenants")).then((result) => {
       setTenants(result.tenants);
       setSelectedTenantId((current) => current || result.tenants[0]?.id || "");
-    }).catch((reason) => setError(reason.message)).finally(() => setLoading(false));
+    }).catch(async (reason) => {
+      if (reason instanceof Error && reason.message === "authentication_required") {
+        await logout().catch(() => null);
+        setUser(null);
+        onLogin();
+        return;
+      }
+      setError(reason instanceof Error ? reason.message : "workspace_load_failed");
+    }).finally(() => setLoading(false));
   }, [user]);
 
   useEffect(() => {
     if (!selectedTenantId) { setWorkspace(null); return; }
     setLoading(true);
-    api<{ workspace: WorkspaceData }>(`/api/workspace/${selectedTenantId}`).then((result) => setWorkspace(result.workspace)).catch((reason) => setError(reason.message)).finally(() => setLoading(false));
+    api<{ workspace: WorkspaceData }>(`/api/workspace/${selectedTenantId}`).then((result) => setWorkspace(result.workspace)).catch(async (reason) => {
+      if (reason instanceof Error && reason.message === "authentication_required") {
+        await logout().catch(() => null);
+        setUser(null);
+        onLogin();
+        return;
+      }
+      setError(reason instanceof Error ? reason.message : "workspace_load_failed");
+    }).finally(() => setLoading(false));
   }, [selectedTenantId]);
 
   const createTenant = async (event: React.FormEvent) => {

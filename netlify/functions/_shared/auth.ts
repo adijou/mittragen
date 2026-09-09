@@ -1,7 +1,12 @@
-import { getUser, type User } from "@netlify/identity";
+import { getUser, refreshSession, type User } from "@netlify/identity";
 export { hasPermission, permissionsFor, type MembershipRole, type Permission } from "./permissions.ts";
 
 export async function requireUser(): Promise<User | Response> {
+  try {
+    await refreshSession();
+  } catch (error) {
+    console.error("identity_session_refresh_failed", error);
+  }
   const user = await getUser();
   if (!user) return json({ error: "authentication_required" }, 401);
   return user;
