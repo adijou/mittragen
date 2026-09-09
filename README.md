@@ -23,6 +23,8 @@ Der erste interaktive Produkt-Slice setzt die ausgewählte visuelle Richtung «K
 - Teamverwaltung mit Einladungsversand über Netlify Identity
 - Gebrandete Identity-Einladung unter `/emails/invitation.html` (in Netlify als Einladungsvorlage hinterlegen)
 - Produktive CSV-Datenübernahme mit persistierten Importläufen, Feldzuordnung, Vorprüfung und atomarem Sponsorimport
+
+Die SMTP- und Template-Konfiguration für Identity ist in [`docs/email-delivery.md`](docs/email-delivery.md) dokumentiert. Secrets werden ausschliesslich in den geschützten Netlify-/Resend-Einstellungen gespeichert.
 - serverseitige Rollenvergabe, automatische Einladungsübernahme und Schutz der letzten Owner-Rolle
 - relationaler PostgreSQL-Kern via Netlify Database
 - serverseitige Rollenprüfung und erzwungene Row-Level Security für alle mandanteneigenen Tabellen
