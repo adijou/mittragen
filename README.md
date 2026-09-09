@@ -27,6 +27,10 @@ Der erste interaktive Produkt-Slice setzt die ausgewählte visuelle Richtung «K
 - Produktiver Paketkatalog mit unveränderlichen Versionen, strukturierten Rechten, Kapazitäten, Exklusivitätsregeln und transaktionalem Reservierungsschutz
 - Expliziter Kampagnenversand über Resend mit persönlichen, 14 Tage gültigen Sponsorzugängen
 - Geschützter Sponsorbereich mit Paketvergleich, verbindlicher Wahl, Alternative, Beratung und Ablehnung
+- Vertragscenter mit organisationsspezifischen Absender- und Laufzeitregeln
+- gebrandete, durchsuchbare Vertrags-PDFs aus einem unveränderlichen Paket- und Stammdatensnapshot
+- protokollierte Klickbestätigung im Sponsorbereich mit Identität, E-Mail, Funktion, Zeitpunkt und Dokument-Fingerabdruck
+- unveränderliches Ereignisprotokoll sowie Row-Level Security für Verträge und Nachweise
 
 Die SMTP- und Template-Konfiguration für Identity ist in [`docs/email-delivery.md`](docs/email-delivery.md) dokumentiert. Secrets werden ausschliesslich in den geschützten Netlify-/Resend-Einstellungen gespeichert.
 - serverseitige Rollenvergabe, automatische Einladungsübernahme und Schutz der letzten Owner-Rolle
@@ -81,14 +85,22 @@ Der Netlify Vite Plugin ist eingebunden, damit Functions, Blobs, Umgebungsvariab
 
 Die Umsetzung folgt dem Pflichtenheft «Sponsoring-Plattform für die Fusion des FC Bösingen und des FC Wünnewil-Flamatt – mit SaaS-Fähigkeit ab dem ersten Release», Version 1.0 vom 8. September 2026.
 
+Für den Vertragsausbau wurden der bisherige Bronzesponsor-Vertrag und das Sponsoringkonzept des FC Bösingen fachlich modernisiert. Die öffentlich dokumentierte Gestaltungsgrundlage ist:
+
+- [`docs/document-style-mittragen.md`](docs/document-style-mittragen.md) – auf Mittragen angepasster Dokumentenstil
+
+Der bereitgestellte Altvertrag und das Sponsoringkonzept mit konkreten rechtlichen sowie kommerziellen Inhalten werden als interne fachliche Quellen behandelt und nicht als Dokumente im öffentlichen Repository veröffentlicht.
+
+Die Referenzwerte werden nicht ungefragt in bestehende Mandanten geschrieben. Produktive Verträge entstehen ausschliesslich aus einer bestätigten Paketwahl. Vor der Freigabe verlangt das Vertragscenter eine explizite fachliche und rechtliche Prüfung. Die aktuell umgesetzte Klickbestätigung eignet sich für formfreie Vereinbarungen; fortgeschrittene und qualifizierte Signaturen bleiben als Provider-Adapter vorbereitet.
+
 Der Pflichtenheft-Schritt «Klickbarer Prototyp des Sponsor-Überführungswegs mit fünf bis acht realen Szenarien» ist mit sieben fiktiven Szenarien umgesetzt. Das Grundgerüst für Mandanten, Rollen, PostgreSQL und Authentisierung sowie die erste produktive Sponsorenverwaltung sind ebenfalls implementiert.
 
 Netlify Identity ist im Projekt aktiviert. Die Datenbank und Migrationen werden durch `@netlify/database` beim Deploy bereitgestellt.
 
 Priorisierte nächste Schritte:
 
-1. Vertrags-, Dokument- und Audit-Modell erweitern.
-2. Rechnungsübersicht und Zahlungsstatus für Sponsoren ergänzen.
+1. Rechnungsübersicht und Zahlungsstatus für Sponsoren ergänzen.
+2. Dokumentablage, Versionierung und geschützte Downloads ausbauen.
 3. Zahlungs- und Signaturprovider über austauschbare Adapter anbinden.
 
 ## Sicherheitsmodell

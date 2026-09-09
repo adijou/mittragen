@@ -102,11 +102,25 @@ async function loadSpace(client: DatabaseClient, tenantId: string, sponsorId: st
     FROM sponsorship_rights WHERE tenant_id = $1 AND package_version_id = ANY($2::uuid[])
     ORDER BY package_version_id, created_at, id
   `, [tenantId, versions.rows.map((version) => version.id)]);
+  const contracts = await client.query<{
+    id: string; contract_number: string; title: string; status: "released" | "confirmed";
+    package_name: string; price_cents: string; snapshot_hash: string;
+    released_at: string | null; confirmed_at: string | null;
+  }>(`
+    SELECT id, contract_number, title, status,
+           package_snapshot->>'name' AS package_name,
+           package_snapshot->>'priceCents' AS price_cents,
+           snapshot_hash, released_at::text, confirmed_at::text
+    FROM sponsorship_contracts
+    WHERE tenant_id = $1 AND sponsor_id = $2 AND status IN ('released', 'confirmed')
+    ORDER BY created_at DESC
+  `, [tenantId, sponsorId]);
 
   return {
     tenantId,
     sponsor: sponsor.rows[0],
     proposal: current,
+    contracts: contracts.rows.map((contract) => ({ ...contract, price_cents: Number(contract.price_cents) })),
     catalog: versions.rows.map((version) => ({
       ...version,
       available_quantity: version.capacity === null ? null : Math.max(0, version.capacity - Number(version.reserved_quantity)),
