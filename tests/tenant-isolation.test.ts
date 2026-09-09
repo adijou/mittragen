@@ -4,6 +4,7 @@ import test from "node:test";
 
 const migrationPath = new URL("../netlify/database/migrations/20260908210000_create_multitenant_core/migration.sql", import.meta.url);
 const teamMigrationPath = new URL("../netlify/database/migrations/20260908223000_team_invitations/migration.sql", import.meta.url);
+const importMigrationPath = new URL("../netlify/database/migrations/20260909054000_sponsor_imports/migration.sql", import.meta.url);
 
 test("all tenant-owned tables enforce row-level security", async () => {
   const sql = await readFile(migrationPath, "utf8");
@@ -26,6 +27,21 @@ test("pending invitations can only be claimed by the authenticated email", async
 test("tenant-owned records are checked against the request tenant", async () => {
   const sql = await readFile(migrationPath, "utf8");
   for (const policy of ["sponsors_isolated", "invitations_isolated", "audit_events_isolated"]) {
+    const start = sql.indexOf(`CREATE POLICY ${policy}`);
+    assert.notEqual(start, -1);
+    const block = sql.slice(start, sql.indexOf(";", start) + 1);
+    assert.match(block, /tenant_id = app_current_tenant_id\(\)/);
+    assert.match(block, /WITH CHECK/);
+  }
+});
+
+test("import batches and source rows enforce tenant isolation", async () => {
+  const sql = await readFile(importMigrationPath, "utf8");
+  for (const table of ["sponsor_import_batches", "sponsor_import_rows"]) {
+    assert.match(sql, new RegExp(`ALTER TABLE ${table} ENABLE ROW LEVEL SECURITY`, "i"));
+    assert.match(sql, new RegExp(`ALTER TABLE ${table} FORCE ROW LEVEL SECURITY`, "i"));
+  }
+  for (const policy of ["sponsor_import_batches_isolated", "sponsor_import_rows_isolated"]) {
     const start = sql.indexOf(`CREATE POLICY ${policy}`);
     assert.notEqual(start, -1);
     const block = sql.slice(start, sql.indexOf(";", start) + 1);
