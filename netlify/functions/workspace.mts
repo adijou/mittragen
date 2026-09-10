@@ -57,6 +57,12 @@ export default async (request: Request, context: Context) => {
       ORDER BY status
     `, [tenantId]);
 
+    const demoSponsorSummary = await client.query<{ count: string }>(`
+      SELECT count(*)::text AS count
+      FROM sponsors
+      WHERE tenant_id = $1 AND is_demo_data = true
+    `, [tenantId]);
+
     const auditResult = await client.query<{ action: string; created_at: string; metadata: Record<string, unknown> }>(`
       SELECT action, created_at::text, metadata
       FROM audit_events
@@ -69,6 +75,7 @@ export default async (request: Request, context: Context) => {
       tenant: tenantResult.rows[0],
       membership: { ...membership, permissions: permissionsFor(membership.role) },
       sponsorSummary: sponsorSummary.rows,
+      demoSponsorCount: Number(demoSponsorSummary.rows[0]?.count ?? 0),
       auditEvents: auditResult.rows,
     };
   });
@@ -80,4 +87,3 @@ export default async (request: Request, context: Context) => {
 export const config: Config = {
   path: "/api/workspace/:tenantId",
 };
-

@@ -40,8 +40,18 @@ type WorkspaceData = {
   tenant: Tenant & { default_currency: string };
   membership: { tenant_id: string; role: string; display_name: string | null; permissions: string[] };
   sponsorSummary: Array<{ status: string; count: string; annual_value_cents: string }>;
+  demoSponsorCount: number;
   auditEvents: Array<{ action: string; created_at: string; metadata: Record<string, unknown> }>;
 };
+
+type WorkspaceSection = "overview" | "sponsors" | "packages" | "transitions" | "contracts" | "imports" | "team" | "settings";
+
+const activeTenantStorageKey = "mittragen-active-tenant";
+
+const slugFromName = (value: string) => value.toLowerCase().normalize("NFD")
+  .replace(/[\u0300-\u036f]/g, "")
+  .replace(/[^a-z0-9]+/g, "-")
+  .replace(/^-|-$/g, "");
 
 const roleLabels: Record<string, string> = {
   owner: "Owner",
@@ -214,19 +224,26 @@ function WorkspacePage({ user, setUser, onHome, onLogin, onPrototype }: { user: 
   const [selectedTenantId, setSelectedTenantId] = useState("");
   const [workspace, setWorkspace] = useState<WorkspaceData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const [workspaceError, setWorkspaceError] = useState("");
+  const [createError, setCreateError] = useState("");
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
   const [kind, setKind] = useState("club");
-  const [includeDemo, setIncludeDemo] = useState(true);
+  const [includeDemo, setIncludeDemo] = useState(false);
   const [creating, setCreating] = useState(false);
-  const [workspaceSection, setWorkspaceSection] = useState<"overview" | "sponsors" | "packages" | "transitions" | "contracts" | "imports" | "team" | "settings">("overview");
+  const [createOpen, setCreateOpen] = useState(false);
+  const [workspaceSection, setWorkspaceSection] = useState<WorkspaceSection>("overview");
 
   useEffect(() => {
     if (!user) { setLoading(false); return; }
     api<{ claimed: number; tenantIds: string[] }>("/api/team/claim", { method: "POST" }).then(() => api<{ tenants: Tenant[] }>("/api/tenants")).then((result) => {
       setTenants(result.tenants);
-      setSelectedTenantId((current) => current || result.tenants[0]?.id || "");
+      setSelectedTenantId((current) => {
+        const stored = localStorage.getItem(activeTenantStorageKey) ?? "";
+        return result.tenants.some((tenant) => tenant.id === current) ? current
+          : result.tenants.some((tenant) => tenant.id === stored) ? stored
+            : result.tenants[0]?.id ?? "";
+      });
     }).catch(async (reason) => {
       if (reason instanceof Error && reason.message === "authentication_required") {
         await logout().catch(() => null);
@@ -234,13 +251,16 @@ function WorkspacePage({ user, setUser, onHome, onLogin, onPrototype }: { user: 
         onLogin();
         return;
       }
-      setError(reason instanceof Error ? reason.message : "workspace_load_failed");
+      setWorkspaceError(reason instanceof Error ? reason.message : "workspace_load_failed");
     }).finally(() => setLoading(false));
   }, [user]);
 
   useEffect(() => {
     if (!selectedTenantId) { setWorkspace(null); return; }
     setLoading(true);
+    setWorkspace(null);
+    setWorkspaceError("");
+    localStorage.setItem(activeTenantStorageKey, selectedTenantId);
     api<{ workspace: WorkspaceData }>(`/api/workspace/${selectedTenantId}`).then((result) => setWorkspace(result.workspace)).catch(async (reason) => {
       if (reason instanceof Error && reason.message === "authentication_required") {
         await logout().catch(() => null);
@@ -248,23 +268,40 @@ function WorkspacePage({ user, setUser, onHome, onLogin, onPrototype }: { user: 
         onLogin();
         return;
       }
-      setError(reason instanceof Error ? reason.message : "workspace_load_failed");
+      setWorkspaceError(reason instanceof Error ? reason.message : "workspace_load_failed");
     }).finally(() => setLoading(false));
   }, [selectedTenantId]);
+
+  const reloadWorkspace = async () => {
+    if (!selectedTenantId) return;
+    const result = await api<{ workspace: WorkspaceData }>(`/api/workspace/${selectedTenantId}`);
+    setWorkspace(result.workspace);
+  };
 
   const createTenant = async (event: React.FormEvent) => {
     event.preventDefault();
     setCreating(true);
-    setError("");
+    setCreateError("");
     try {
       const result = await api<{ tenant: Tenant }>("/api/tenants", { method: "POST", body: JSON.stringify({ name, slug, kind, includeDemo }) });
-      setTenants((current) => [...current, result.tenant]);
+      setTenants((current) => [...current, result.tenant].sort((a, b) => a.name.localeCompare(b.name, "de-CH")));
       setSelectedTenantId(result.tenant.id);
       setWorkspaceSection("overview");
+      setName("");
+      setSlug("");
+      setKind("club");
+      setIncludeDemo(false);
+      setCreateOpen(false);
     } catch (reason) {
       const code = reason instanceof Error ? reason.message : "tenant_create_failed";
       const reference = reason instanceof ApiRequestError && reason.requestId ? ` Technische Referenz: ${reason.requestId}` : "";
-      setError(code === "slug_already_exists" ? "Dieser Kurzname wird bereits verwendet. Bitte wählen Sie einen anderen." : code === "invalid_name" ? "Bitte einen gültigen Organisationsnamen eintragen." : `Die Organisation konnte wegen eines technischen Fehlers nicht erstellt werden.${reference}`);
+      const labels: Record<string, string> = {
+        slug_already_exists: "Dieser Kurzname wird bereits verwendet. Bitte wählen Sie einen anderen.",
+        invalid_name: "Bitte einen gültigen Organisationsnamen eintragen.",
+        invalid_slug: "Der technische Kurzname darf nur Kleinbuchstaben, Zahlen und Bindestriche enthalten.",
+        invalid_kind: "Bitte einen gültigen Organisationstyp auswählen.",
+      };
+      setCreateError(labels[code] ?? `Die Organisation konnte wegen eines technischen Fehlers nicht erstellt werden.${reference}`);
     } finally {
       setCreating(false);
     }
@@ -279,9 +316,68 @@ function WorkspacePage({ user, setUser, onHome, onLogin, onPrototype }: { user: 
   const totalSponsors = useMemo(() => workspace?.sponsorSummary.reduce((sum, item) => sum + Number(item.count), 0) ?? 0, [workspace]);
   const totalValue = useMemo(() => workspace?.sponsorSummary.reduce((sum, item) => sum + Number(item.annual_value_cents), 0) ?? 0, [workspace]);
 
+  const tenantForm = <form onSubmit={createTenant}>
+    <label><span>Name der Organisation</span><input required value={name} onChange={(event) => { const next = event.target.value; setName(next); setSlug(slugFromName(next)); }} placeholder="FC Muster"/></label>
+    <label><span>Technischer Kurzname</span><input required pattern="[a-z0-9]+(?:-[a-z0-9]+)*" value={slug} onChange={(event) => setSlug(event.target.value.toLowerCase())} placeholder="fc-muster"/><small>Bleibt auch bei einer späteren Umbenennung stabil.</small></label>
+    <label><span>Organisationstyp</span><select value={kind} onChange={(event) => setKind(event.target.value)}><option value="club">Sportklub</option><option value="association">Verein / Organisation</option><option value="event">Event</option><option value="project">Projekt</option></select></label>
+    <label className="onboarding-check"><input type="checkbox" checked={includeDemo} onChange={(event) => setIncludeDemo(event.target.checked)}/><span>Sieben Beispiel-Sponsoren zum Kennenlernen übernehmen</span></label>
+    {createError && <p className="form-error" role="alert">{createError}</p>}
+    <button className="access-primary" disabled={creating}>{creating ? "Organisation wird erstellt …" : "Organisation erstellen"}</button>
+  </form>;
+
   if (!user) return <div className="access-page"><header className="access-header"><button onClick={onHome} className="access-brand-button"><ProductBrand/></button></header><main className="access-empty"><h1>Anmeldung erforderlich</h1><p>Der produktive Workspace ist nur für angemeldete Benutzer zugänglich.</p><button className="access-primary" onClick={onLogin}>Zur Anmeldung</button></main></div>;
 
-  return <div className="workspace-page"><aside className="workspace-sidebar"><button onClick={onHome} className="access-brand-button"><ProductBrand/></button><div className="workspace-user"><span>{(user.name ?? user.email ?? "M").slice(0, 2).toUpperCase()}</span><div><strong>{user.name ?? "Mittragen User"}</strong><small>{user.email}</small></div></div><nav><button className={workspaceSection === "overview" ? "active" : ""} onClick={() => setWorkspaceSection("overview")}>Übersicht</button><button className={workspaceSection === "sponsors" ? "active" : ""} onClick={() => setWorkspaceSection("sponsors")}>Sponsoren</button><button className={workspaceSection === "packages" ? "active" : ""} onClick={() => setWorkspaceSection("packages")}>Pakete</button><button className={workspaceSection === "transitions" ? "active" : ""} onClick={() => setWorkspaceSection("transitions")}>Überführung</button><button className={workspaceSection === "contracts" ? "active" : ""} onClick={() => setWorkspaceSection("contracts")}>Verträge</button>{workspace?.membership.permissions.includes("sponsors:write") && <button className={workspaceSection === "imports" ? "active" : ""} onClick={() => setWorkspaceSection("imports")}>Datenübernahme</button>}{workspace?.membership.permissions.includes("members:manage") && <button className={workspaceSection === "team" ? "active" : ""} onClick={() => setWorkspaceSection("team")}>Team</button>}<button className={workspaceSection === "settings" ? "active" : ""} onClick={() => setWorkspaceSection("settings")}>Organisation</button><button onClick={onPrototype}>Überführungs-Prototyp</button></nav><button className="workspace-logout" onClick={signOut}>Abmelden</button></aside><main className="workspace-main"><header className="workspace-topbar"><div><p className="eyebrow">Produktiver Workspace</p><strong>Mandantengetrennte Datenbasis</strong></div>{tenants.length > 0 && <label><span>Organisation</span><select value={selectedTenantId} onChange={(event) => setSelectedTenantId(event.target.value)}>{tenants.map((tenant) => <option value={tenant.id} key={tenant.id}>{tenant.name}</option>)}</select></label>}</header>{loading ? <div className="workspace-loading">Workspace wird geladen …</div> : error ? <div className="workspace-error"><strong>Der Workspace konnte nicht geladen werden.</strong><p>{error}</p></div> : tenants.length === 0 ? <section className="onboarding-card"><div><p className="eyebrow">Schritt 1 von 3</p><h1>Organisation einrichten</h1><p>Mittragen erstellt einen isolierten Mandanten und weist Ihnen die Owner-Rolle zu.</p></div><form onSubmit={createTenant}><label><span>Name der Organisation</span><input required value={name} onChange={(event) => { const next = event.target.value; setName(next); setSlug(next.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")); }} placeholder="Fusion FC Bösingen & FC Wünnewil-Flamatt"/></label><label><span>Technischer Kurzname</span><input required pattern="[a-z0-9]+(?:-[a-z0-9]+)*" value={slug} onChange={(event) => setSlug(event.target.value.toLowerCase())} placeholder="fusion-sense-unterland"/><small>Bleibt auch bei einer späteren Umbenennung stabil.</small></label><label><span>Organisationstyp</span><select value={kind} onChange={(event) => setKind(event.target.value)}><option value="club">Sportklub</option><option value="association">Verein / Organisation</option><option value="event">Event</option><option value="project">Projekt</option></select></label><label className="onboarding-check"><input type="checkbox" checked={includeDemo} onChange={(event) => setIncludeDemo(event.target.checked)}/><span>Sieben Überführungs-Szenarien als Demodaten übernehmen</span></label><button className="access-primary" disabled={creating}>{creating ? "Organisation wird erstellt …" : "Organisation erstellen"}</button></form></section> : workspaceSection === "sponsors" && workspace ? <SponsorDirectory tenantId={selectedTenantId} canWrite={workspace.membership.permissions.includes("sponsors:write")} onChanged={() => { void api<{ workspace: WorkspaceData }>(`/api/workspace/${selectedTenantId}`).then((result) => setWorkspace(result.workspace)); }}/> : workspaceSection === "packages" && workspace ? <PackageManagement tenantId={selectedTenantId} canWrite={workspace.membership.permissions.includes("packages:write")}/> : workspaceSection === "transitions" && workspace ? <TransitionManagement tenantId={selectedTenantId} canWrite={workspace.membership.permissions.includes("sponsors:write")}/> : workspaceSection === "contracts" && workspace ? <ContractManagement tenantId={selectedTenantId} canWrite={workspace.membership.permissions.includes("packages:write")} canManage={workspace.membership.permissions.includes("tenant:manage")}/> : workspaceSection === "imports" && workspace ? <ImportManagement tenantId={selectedTenantId} onImported={() => { void api<{ workspace: WorkspaceData }>(`/api/workspace/${selectedTenantId}`).then((result) => setWorkspace(result.workspace)); }}/> : workspaceSection === "team" && workspace ? <TeamManagement tenantId={selectedTenantId}/> : workspaceSection === "settings" && workspace ? <OrganizationSettings tenant={workspace.tenant as OrganizationTenant} canManage={workspace.membership.permissions.includes("tenant:manage")} onSaved={(updated) => { setTenants((current) => current.map((tenant) => tenant.id === updated.id ? updated : tenant)); setWorkspace((current) => current ? { ...current, tenant: { ...current.tenant, ...updated } } : current); }}/> : workspace && <><section className="workspace-heading"><div><p className="eyebrow">{roleLabels[workspace.membership.role] ?? workspace.membership.role}</p><h1>{workspace.tenant.name}</h1><p>Die Daten werden serverseitig auf den Mandanten <code>{workspace.tenant.slug}</code> begrenzt.</p></div><span className="workspace-status">{workspace.tenant.status}</span></section><section className="workspace-metrics"><article><span>Sponsoren</span><strong>{totalSponsors}</strong><small>im relationalen Kern</small></article><article><span>Jährlicher Zielwert</span><strong>{formatChf(totalValue)}</strong><small>aus allen Status</small></article><article><span>Ihre Rolle</span><strong>{roleLabels[workspace.membership.role] ?? workspace.membership.role}</strong><small>serverseitig geprüft</small></article></section><div className="workspace-grid"><section className="workspace-panel"><div className="workspace-panel__heading"><p className="eyebrow">Rollenmodell</p><h2>Ihre Berechtigungen</h2></div><div className="permission-list">{workspace.membership.permissions.map((permission) => <span key={permission}>✓ {permissionLabels[permission] ?? permission}</span>)}</div></section><section className="workspace-panel"><div className="workspace-panel__heading"><p className="eyebrow">Datenisolation</p><h2>Aktive Schutzschichten</h2></div><ul className="security-list"><li><strong>Identity</strong><span>Sitzung und Benutzeridentität</span></li><li><strong>Functions</strong><span>Mitgliedschaft und Rolle</span></li><li><strong>PostgreSQL RLS</strong><span>Tenant-ID auf jeder Abfrage</span></li></ul></section></div></>}</main></div>;
+  return <div className="workspace-page">
+    <aside className="workspace-sidebar">
+      <button onClick={onHome} className="access-brand-button"><ProductBrand/></button>
+      <div className="workspace-user"><span>{(user.name ?? user.email ?? "M").slice(0, 2).toUpperCase()}</span><div><strong>{user.name ?? "Mittragen User"}</strong><small>{user.email}</small></div></div>
+      <nav>
+        <button className={workspaceSection === "overview" ? "active" : ""} onClick={() => setWorkspaceSection("overview")}>Übersicht</button>
+        <button className={workspaceSection === "sponsors" ? "active" : ""} onClick={() => setWorkspaceSection("sponsors")}>Sponsoren</button>
+        <button className={workspaceSection === "packages" ? "active" : ""} onClick={() => setWorkspaceSection("packages")}>Pakete</button>
+        <button className={workspaceSection === "transitions" ? "active" : ""} onClick={() => setWorkspaceSection("transitions")}>Überführung</button>
+        <button className={workspaceSection === "contracts" ? "active" : ""} onClick={() => setWorkspaceSection("contracts")}>Verträge</button>
+        {workspace?.membership.permissions.includes("sponsors:write") && <button className={workspaceSection === "imports" ? "active" : ""} onClick={() => setWorkspaceSection("imports")}>Datenübernahme</button>}
+        {workspace?.membership.permissions.includes("members:manage") && <button className={workspaceSection === "team" ? "active" : ""} onClick={() => setWorkspaceSection("team")}>Team</button>}
+        <button className={workspaceSection === "settings" ? "active" : ""} onClick={() => setWorkspaceSection("settings")}>Organisation</button>
+        <button onClick={onPrototype}>Überführungs-Prototyp</button>
+      </nav>
+      <button className="workspace-logout" onClick={signOut}>Abmelden</button>
+    </aside>
+
+    <main className="workspace-main">
+      <header className="workspace-topbar">
+        <div><p className="eyebrow">Produktiver Workspace</p><strong>Mandantengetrennte Datenbasis</strong></div>
+        {tenants.length > 0 && <div className="workspace-tenant-tools">
+          <label><span>Organisation</span><select value={selectedTenantId} onChange={(event) => setSelectedTenantId(event.target.value)}>{tenants.map((tenant) => <option value={tenant.id} key={tenant.id}>{tenant.name}</option>)}</select></label>
+          <button className="access-secondary" type="button" onClick={() => { setCreateError(""); setCreateOpen(true); }}>Neue Organisation</button>
+        </div>}
+      </header>
+
+      {loading ? <div className="workspace-loading">Workspace wird geladen …</div>
+        : workspaceError ? <div className="workspace-error"><strong>Der Workspace konnte nicht geladen werden.</strong><p>{workspaceError}</p></div>
+          : tenants.length === 0 ? <section className="onboarding-card"><div><p className="eyebrow">Schritt 1 von 3</p><h1>Organisation einrichten</h1><p>Mittragen erstellt einen isolierten Mandanten und weist Ihnen die Owner-Rolle zu.</p></div>{tenantForm}</section>
+            : workspaceSection === "sponsors" && workspace ? <SponsorDirectory tenantId={selectedTenantId} canWrite={workspace.membership.permissions.includes("sponsors:write")} onChanged={() => { void reloadWorkspace(); }}/>
+              : workspaceSection === "packages" && workspace ? <PackageManagement tenantId={selectedTenantId} canWrite={workspace.membership.permissions.includes("packages:write")}/>
+                : workspaceSection === "transitions" && workspace ? <TransitionManagement tenantId={selectedTenantId} canWrite={workspace.membership.permissions.includes("sponsors:write")}/>
+                  : workspaceSection === "contracts" && workspace ? <ContractManagement tenantId={selectedTenantId} canWrite={workspace.membership.permissions.includes("packages:write")} canManage={workspace.membership.permissions.includes("tenant:manage")}/>
+                    : workspaceSection === "imports" && workspace ? <ImportManagement tenantId={selectedTenantId} tenantName={workspace.tenant.name} demoSponsorCount={workspace.demoSponsorCount} canDeleteDemo={workspace.membership.permissions.includes("tenant:manage")} onChanged={() => { void reloadWorkspace(); }}/>
+                      : workspaceSection === "team" && workspace ? <TeamManagement tenantId={selectedTenantId}/>
+                        : workspaceSection === "settings" && workspace ? <OrganizationSettings tenant={workspace.tenant as OrganizationTenant} canManage={workspace.membership.permissions.includes("tenant:manage")} onSaved={(updated) => { setTenants((current) => current.map((tenant) => tenant.id === updated.id ? updated : tenant)); setWorkspace((current) => current ? { ...current, tenant: { ...current.tenant, ...updated } } : current); }}/>
+                          : workspace && <>
+                            <section className="workspace-heading"><div><p className="eyebrow">{roleLabels[workspace.membership.role] ?? workspace.membership.role}</p><h1>{workspace.tenant.name}</h1><p>Die Daten werden serverseitig auf den Mandanten <code>{workspace.tenant.slug}</code> begrenzt.</p></div><span className="workspace-status">{workspace.tenant.status}</span></section>
+                            <section className="workspace-metrics"><article><span>Sponsoren</span><strong>{totalSponsors}</strong><small>im relationalen Kern</small></article><article><span>Jährlicher Zielwert</span><strong>{formatChf(totalValue)}</strong><small>aus allen Status</small></article><article><span>Ihre Rolle</span><strong>{roleLabels[workspace.membership.role] ?? workspace.membership.role}</strong><small>serverseitig geprüft</small></article></section>
+                            <div className="workspace-grid"><section className="workspace-panel"><div className="workspace-panel__heading"><p className="eyebrow">Rollenmodell</p><h2>Ihre Berechtigungen</h2></div><div className="permission-list">{workspace.membership.permissions.map((permission) => <span key={permission}>✓ {permissionLabels[permission] ?? permission}</span>)}</div></section><section className="workspace-panel"><div className="workspace-panel__heading"><p className="eyebrow">Datenisolation</p><h2>Aktive Schutzschichten</h2></div><ul className="security-list"><li><strong>Identity</strong><span>Sitzung und Benutzeridentität</span></li><li><strong>Functions</strong><span>Mitgliedschaft und Rolle</span></li><li><strong>PostgreSQL RLS</strong><span>Tenant-ID auf jeder Abfrage</span></li></ul></section></div>
+                          </>}
+    </main>
+
+    {createOpen && tenants.length > 0 && <div className="sponsor-form-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !creating) setCreateOpen(false); }}>
+      <section className="sponsor-form tenant-create-dialog" role="dialog" aria-modal="true" aria-labelledby="tenant-create-title">
+        <header><div><p className="eyebrow">Weiteren Mandanten anlegen</p><h2 id="tenant-create-title">Neue Organisation</h2><p>Die neue Organisation erhält einen vollständig getrennten Datenraum. Sie werden automatisch Owner.</p></div><button type="button" aria-label="Schliessen" onClick={() => setCreateOpen(false)} disabled={creating}>×</button></header>
+        {tenantForm}
+      </section>
+    </div>}
+  </div>;
 }
 
 export function ProductiveAccess({ page, onHome, onLogin, onWorkspace, onSponsor, onPrototype }: { page: ProductivePage; onHome: () => void; onLogin: () => void; onWorkspace: () => void; onSponsor: () => void; onPrototype: () => void }) {

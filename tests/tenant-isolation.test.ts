@@ -9,6 +9,7 @@ const transitionMigrationPath = new URL("../netlify/database/migrations/20260909
 const packageMigrationPath = new URL("../netlify/database/migrations/20260909073000_sponsorship_packages/migration.sql", import.meta.url);
 const sponsorPortalMigrationPath = new URL("../netlify/database/migrations/20260909080000_sponsor_portal/migration.sql", import.meta.url);
 const contractMigrationPath = new URL("../netlify/database/migrations/20260909090000_contracts/migration.sql", import.meta.url);
+const demoSponsorMigrationPath = new URL("../netlify/database/migrations/20260910090000_mark-demo-sponsors/migration.sql", import.meta.url);
 
 test("all tenant-owned tables enforce row-level security", async () => {
   const sql = await readFile(migrationPath, "utf8");
@@ -106,4 +107,12 @@ test("contracts and their evidence are tenant-isolated and immutable after relea
   assert.match(sql, /confirmed_contract_is_immutable/i);
   assert.match(sql, /contract_events_are_immutable/i);
   assert.match(sql, /identity_user_id = app_current_user_id\(\)/i);
+});
+
+test("only exact onboarding seed rows are marked as example sponsors", async () => {
+  const sql = await readFile(demoSponsorMigrationPath, "utf8");
+  assert.match(sql, /ADD COLUMN is_demo_data BOOLEAN NOT NULL DEFAULT false/i);
+  assert.match(sql, /event\.metadata @> '\{"demo_data": true\}'::jsonb/i);
+  assert.match(sql, /sponsor\.legal_name = seed\.legal_name/i);
+  assert.match(sql, /sponsor\.annual_value_cents = seed\.annual_value_cents/i);
 });

@@ -2,7 +2,7 @@ import type { Config, Context } from "@netlify/functions";
 import { AuthError, verifyRequestOrigin } from "@netlify/identity";
 import { hasPermission, isResponse, json, permissionsFor, requireUser, type MembershipRole } from "./_shared/auth.ts";
 import { isUuid, withSession } from "./_shared/database.ts";
-import { ownerMembershipParams, parseTenantUpdate, tenantKinds } from "./_shared/tenant-input.ts";
+import { isDemoDataDeletionConfirmed, ownerMembershipParams, parseTenantCreate, parseTenantUpdate } from "./_shared/tenant-input.ts";
 
 type TenantRow = {
   id: string;
@@ -38,6 +38,7 @@ export default async (request: Request, _context: Context) => {
   if (isResponse(user)) return user;
 
   const tenantIdFromPath = _context.params.tenantId;
+  const isDemoCleanup = Boolean(tenantIdFromPath) && new URL(request.url).pathname.endsWith("/demo-data");
 
   if (request.method === "GET" && !tenantIdFromPath) {
     const tenants = await withSession(user.id, null, async (client) => {
@@ -54,7 +55,66 @@ export default async (request: Request, _context: Context) => {
     return json({ tenants: tenants.map((tenant) => ({ ...tenant, permissions: permissionsFor(tenant.role) })) });
   }
 
-  if (request.method === "PATCH") {
+  if (request.method === "DELETE" && isDemoCleanup) {
+    if (!tenantIdFromPath || !isUuid(tenantIdFromPath)) return json({ error: "invalid_tenant" }, 422);
+    try {
+      verifyRequestOrigin(request);
+    } catch (error) {
+      return json({ error: "invalid_request_origin" }, (error as AuthError).status ?? 403);
+    }
+
+    const body = await request.json().catch(() => null);
+    try {
+      const result = await withSession(user.id, tenantIdFromPath, async (client) => {
+        const membership = await client.query<{ role: MembershipRole }>(`
+          SELECT role FROM tenant_memberships
+          WHERE tenant_id = $1 AND identity_user_id = $2
+          LIMIT 1
+        `, [tenantIdFromPath, user.id]);
+        const role = membership.rows[0]?.role;
+        if (!role || !hasPermission(role, "tenant:manage")) return { state: "denied" as const };
+
+        const tenant = await client.query<{ name: string }>(`
+          SELECT name FROM tenants WHERE id = $1 LIMIT 1
+        `, [tenantIdFromPath]);
+        const tenantName = tenant.rows[0]?.name;
+        if (!tenantName) return { state: "not_found" as const };
+        if (!isDemoDataDeletionConfirmed(body, tenantName)) return { state: "confirmation_mismatch" as const };
+
+        const contractUsage = await client.query<{ count: string }>(`
+          SELECT count(*)::text AS count
+          FROM sponsorship_contracts contract
+          JOIN sponsors sponsor ON sponsor.id = contract.sponsor_id AND sponsor.tenant_id = contract.tenant_id
+          WHERE sponsor.tenant_id = $1 AND sponsor.is_demo_data = true
+        `, [tenantIdFromPath]);
+        if (Number(contractUsage.rows[0]?.count ?? 0) > 0) return { state: "in_use" as const };
+
+        const deleted = await client.query<{ id: string }>(`
+          DELETE FROM sponsors
+          WHERE tenant_id = $1 AND is_demo_data = true
+          RETURNING id
+        `, [tenantIdFromPath]);
+
+        await client.query(`
+          INSERT INTO audit_events (tenant_id, actor_user_id, action, object_type, object_id, metadata)
+          VALUES ($1, $2, 'demo_data.deleted', 'tenant', $3::text, jsonb_build_object('sponsors_deleted', $4::integer))
+        `, [tenantIdFromPath, user.id, tenantIdFromPath, deleted.rowCount ?? deleted.rows.length]);
+
+        return { state: "deleted" as const, deletedCount: deleted.rowCount ?? deleted.rows.length };
+      });
+
+      if (result.state === "denied") return json({ error: "permission_denied" }, 403);
+      if (result.state === "not_found") return json({ error: "tenant_not_found" }, 404);
+      if (result.state === "confirmation_mismatch") return json({ error: "confirmation_mismatch" }, 422);
+      if (result.state === "in_use") return json({ error: "demo_data_in_use" }, 409);
+      return json({ deletedCount: result.deletedCount });
+    } catch (error) {
+      console.error("demo_data_delete_failed", { requestId: _context.requestId, tenantId: tenantIdFromPath, error });
+      return json({ error: "demo_data_delete_failed", requestId: _context.requestId }, 500);
+    }
+  }
+
+  if (request.method === "PATCH" && !isDemoCleanup) {
     if (!tenantIdFromPath || !isUuid(tenantIdFromPath)) return json({ error: "invalid_tenant" }, 422);
     try {
       verifyRequestOrigin(request);
@@ -107,15 +167,9 @@ export default async (request: Request, _context: Context) => {
     return json({ error: "invalid_request_origin" }, authError.status ?? 403);
   }
 
-  const body = await request.json().catch(() => null) as null | { name?: unknown; slug?: unknown; kind?: unknown; includeDemo?: unknown };
-  const name = typeof body?.name === "string" ? body.name.trim() : "";
-  const slug = typeof body?.slug === "string" ? body.slug.trim().toLowerCase() : "";
-  const kind = typeof body?.kind === "string" ? body.kind : "club";
-  const includeDemo = body?.includeDemo !== false;
-
-  if (name.length < 2 || name.length > 120) return json({ error: "invalid_name" }, 422);
-  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)) return json({ error: "invalid_slug" }, 422);
-  if (!tenantKinds.includes(kind as (typeof tenantKinds)[number])) return json({ error: "invalid_kind" }, 422);
+  const parsed = parseTenantCreate(await request.json().catch(() => null));
+  if (!parsed.ok) return json({ error: parsed.error }, 422);
+  const { name, slug, kind, includeDemo } = parsed.value;
 
   const tenantId = crypto.randomUUID();
 
@@ -135,8 +189,8 @@ export default async (request: Request, _context: Context) => {
       if (includeDemo) {
         for (const sponsor of demoSponsors) {
           await client.query(`
-            INSERT INTO sponsors (tenant_id, legal_name, source_organization, status, proposal_package, annual_value_cents)
-            VALUES ($1, $2, $3, $4, $5, $6)
+            INSERT INTO sponsors (tenant_id, legal_name, source_organization, status, proposal_package, annual_value_cents, is_demo_data)
+            VALUES ($1, $2, $3, $4, $5, $6, true)
           `, [tenantId, ...sponsor]);
         }
       }
@@ -158,5 +212,5 @@ export default async (request: Request, _context: Context) => {
 };
 
 export const config: Config = {
-  path: ["/api/tenants", "/api/tenants/:tenantId"],
+  path: ["/api/tenants", "/api/tenants/:tenantId", "/api/tenants/:tenantId/demo-data"],
 };

@@ -83,7 +83,13 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   return body;
 }
 
-export function ImportManagement({ tenantId, onImported }: { tenantId: string; onImported: () => void }) {
+export function ImportManagement({ tenantId, tenantName, demoSponsorCount, canDeleteDemo, onChanged }: {
+  tenantId: string;
+  tenantName: string;
+  demoSponsorCount: number;
+  canDeleteDemo: boolean;
+  onChanged: () => void;
+}) {
   const [batches, setBatches] = useState<ImportBatch[]>([]);
   const [detail, setDetail] = useState<ImportDetail | null>(null);
   const [mapping, setMapping] = useState<Record<string, string>>({});
@@ -92,6 +98,9 @@ export function ImportManagement({ tenantId, onImported }: { tenantId: string; o
   const [importName, setImportName] = useState("");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [deletingDemo, setDeletingDemo] = useState(false);
+  const [cleanupOpen, setCleanupOpen] = useState(false);
+  const [cleanupConfirmation, setCleanupConfirmation] = useState("");
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
 
@@ -207,7 +216,7 @@ export function ImportManagement({ tenantId, onImported }: { tenantId: string; o
       setDetail(loaded);
       setMessage(`${result.importedCount} Sponsoren wurden übernommen und als Entwurf angelegt.`);
       await loadBatches();
-      onImported();
+      onChanged();
     } catch (reason) {
       const code = reason instanceof Error ? reason.message : "import_commit_failed";
       setError(code === "import_not_ready" ? "Vor der Übernahme müssen alle Zeilen gültig sein." : "Die Sponsoren konnten nicht übernommen werden.");
@@ -216,10 +225,42 @@ export function ImportManagement({ tenantId, onImported }: { tenantId: string; o
     }
   };
 
+  const deleteDemoData = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setDeletingDemo(true);
+    setError("");
+    setMessage("");
+    try {
+      const result = await request<{ deletedCount: number }>(`/api/tenants/${tenantId}/demo-data`, {
+        method: "DELETE",
+        body: JSON.stringify({ confirmation: cleanupConfirmation }),
+      });
+      setCleanupOpen(false);
+      setCleanupConfirmation("");
+      setMessage(`${result.deletedCount} Beispiel-Sponsoren wurden gelöscht. Der Importverlauf und Ihre eigenen Daten bleiben unverändert.`);
+      onChanged();
+    } catch (reason) {
+      const code = reason instanceof Error ? reason.message : "demo_data_delete_failed";
+      const labels: Record<string, string> = {
+        confirmation_mismatch: `Bitte geben Sie «${tenantName}» exakt ein.`,
+        demo_data_in_use: "Mindestens ein Beispiel-Sponsor wird bereits in einem Vertrag verwendet und kann deshalb nicht automatisch gelöscht werden.",
+        permission_denied: "Nur Owner können Beispieldaten löschen.",
+      };
+      setError(labels[code] ?? "Die Beispieldaten konnten nicht gelöscht werden.");
+    } finally {
+      setDeletingDemo(false);
+    }
+  };
+
   const preview = useMemo(() => detail?.rows.slice(0, 12) ?? [], [detail]);
 
   return <section className="data-import">
     <header><div><p className="eyebrow">Bestehende Daten übernehmen</p><h1>Datenimport</h1><p>CSV hochladen, Felder zuordnen, vollständig prüfen und erst dann als Sponsoren übernehmen.</p></div><span className="import-limit">max. 1'000 Zeilen</span></header>
+
+    {demoSponsorCount > 0 && <section className="import-demo-cleanup">
+      <div><p className="eyebrow">Vor dem Echtimport</p><h2>{demoSponsorCount} Beispiel-Sponsoren vorhanden</h2><p>Sie können ausschliesslich die beim Onboarding angelegten Beispieldaten entfernen. Eigene und bereits importierte Sponsoren bleiben erhalten.</p></div>
+      {canDeleteDemo ? !cleanupOpen ? <button className="access-secondary danger-button" type="button" onClick={() => { setCleanupOpen(true); setError(""); setMessage(""); }}>Beispieldaten löschen</button> : <form onSubmit={deleteDemoData}><label><span>Zur Bestätigung «{tenantName}» eingeben</span><input required value={cleanupConfirmation} onChange={(event) => setCleanupConfirmation(event.target.value)} autoComplete="off"/></label><div><button className="access-text" type="button" disabled={deletingDemo} onClick={() => { setCleanupOpen(false); setCleanupConfirmation(""); }}>Abbrechen</button><button className="access-primary danger-button" disabled={deletingDemo || cleanupConfirmation.trim() !== tenantName}>{deletingDemo ? "Wird gelöscht …" : `${demoSponsorCount} Beispieldaten endgültig löschen`}</button></div></form> : <small>Nur ein Owner kann die Beispieldaten entfernen.</small>}
+    </section>}
 
     <div className="import-top-grid">
       <form className="import-card import-upload" onSubmit={createImport}>
