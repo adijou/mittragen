@@ -17,6 +17,7 @@ export const importTargets = [
 
 export type ImportTarget = typeof importTargets[number];
 export type ImportMapping = Partial<Record<ImportTarget, string>>;
+export type ImportPackageMapping = Record<string, string | null>;
 export type ImportRawRow = Record<string, string>;
 
 type Result<T> = { ok: true; value: T } | { ok: false; error: string };
@@ -63,7 +64,10 @@ export function parseImportBatchInput(body: unknown): Result<{
   return { ok: true, value: { name, sourceFilename, sourceColumns: columns, rows } };
 }
 
-export function parseImportMappingInput(body: unknown, sourceColumns: string[]): Result<ImportMapping> {
+export function parseImportMappingInput(body: unknown, sourceColumns: string[]): Result<{
+  mapping: ImportMapping;
+  packageMapping: ImportPackageMapping | null;
+}> {
   if (!body || typeof body !== "object" || Array.isArray(body)) return { ok: false, error: "invalid_body" };
   const rawMapping = (body as Record<string, unknown>).mapping;
   if (!rawMapping || typeof rawMapping !== "object" || Array.isArray(rawMapping)) return { ok: false, error: "invalid_mapping" };
@@ -77,7 +81,26 @@ export function parseImportMappingInput(body: unknown, sourceColumns: string[]):
     mapping[target as ImportTarget] = source;
   }
   if (!mapping.legal_name) return { ok: false, error: "legal_name_mapping_required" };
-  return { ok: true, value: mapping };
+
+  let packageMapping: ImportPackageMapping | null = null;
+  if (Object.prototype.hasOwnProperty.call(body, "packageMapping")) {
+    const rawPackageMapping = (body as Record<string, unknown>).packageMapping;
+    if (!rawPackageMapping || typeof rawPackageMapping !== "object" || Array.isArray(rawPackageMapping)) {
+      return { ok: false, error: "invalid_package_mapping" };
+    }
+    const entries = Object.entries(rawPackageMapping as Record<string, unknown>);
+    if (entries.length > 100) return { ok: false, error: "invalid_package_mapping" };
+    packageMapping = {};
+    for (const [rawLabel, rawVersionId] of entries) {
+      const label = rawLabel.trim();
+      if (!label || label.length > 160) return { ok: false, error: "invalid_package_mapping_label" };
+      if (rawVersionId === null || rawVersionId === "") packageMapping[label] = null;
+      else if (typeof rawVersionId === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(rawVersionId)) {
+        packageMapping[label] = rawVersionId;
+      } else return { ok: false, error: "invalid_package_mapping_version" };
+    }
+  }
+  return { ok: true, value: { mapping, packageMapping } };
 }
 
 export function parseSwissFrancs(value: string): number | null {

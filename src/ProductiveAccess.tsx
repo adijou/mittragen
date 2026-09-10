@@ -22,6 +22,7 @@ import { ImportManagement } from "./ImportManagement";
 import { TransitionManagement } from "./TransitionManagement";
 import { PackageManagement } from "./PackageManagement";
 import { ContractManagement } from "./ContractManagement";
+import { SponsoringDossier } from "./SponsoringDossier";
 
 type ProductivePage = "login" | "workspace";
 type Availability = "checking" | "ready" | "missing";
@@ -44,7 +45,7 @@ type WorkspaceData = {
   auditEvents: Array<{ action: string; created_at: string; metadata: Record<string, unknown> }>;
 };
 
-type WorkspaceSection = "overview" | "sponsors" | "packages" | "transitions" | "contracts" | "imports" | "team" | "settings";
+type WorkspaceSection = "overview" | "sponsors" | "packages" | "dossier" | "transitions" | "contracts" | "imports" | "team" | "settings";
 
 const activeTenantStorageKey = "mittragen-active-tenant";
 
@@ -335,6 +336,7 @@ function WorkspacePage({ user, setUser, onHome, onLogin, onPrototype }: { user: 
         <button className={workspaceSection === "overview" ? "active" : ""} onClick={() => setWorkspaceSection("overview")}>Übersicht</button>
         <button className={workspaceSection === "sponsors" ? "active" : ""} onClick={() => setWorkspaceSection("sponsors")}>Sponsoren</button>
         <button className={workspaceSection === "packages" ? "active" : ""} onClick={() => setWorkspaceSection("packages")}>Pakete</button>
+        <button className={workspaceSection === "dossier" ? "active" : ""} onClick={() => setWorkspaceSection("dossier")}>Dossier</button>
         <button className={workspaceSection === "transitions" ? "active" : ""} onClick={() => setWorkspaceSection("transitions")}>Überführung</button>
         <button className={workspaceSection === "contracts" ? "active" : ""} onClick={() => setWorkspaceSection("contracts")}>Verträge</button>
         {workspace?.membership.permissions.includes("sponsors:write") && <button className={workspaceSection === "imports" ? "active" : ""} onClick={() => setWorkspaceSection("imports")}>Datenübernahme</button>}
@@ -359,11 +361,12 @@ function WorkspacePage({ user, setUser, onHome, onLogin, onPrototype }: { user: 
           : tenants.length === 0 ? <section className="onboarding-card"><div><p className="eyebrow">Schritt 1 von 3</p><h1>Organisation einrichten</h1><p>Mittragen erstellt einen isolierten Mandanten und weist Ihnen die Owner-Rolle zu.</p></div>{tenantForm}</section>
             : workspaceSection === "sponsors" && workspace ? <SponsorDirectory tenantId={selectedTenantId} canWrite={workspace.membership.permissions.includes("sponsors:write")} onChanged={() => { void reloadWorkspace(); }}/>
               : workspaceSection === "packages" && workspace ? <PackageManagement tenantId={selectedTenantId} canWrite={workspace.membership.permissions.includes("packages:write")}/>
-                : workspaceSection === "transitions" && workspace ? <TransitionManagement tenantId={selectedTenantId} canWrite={workspace.membership.permissions.includes("sponsors:write")}/>
-                  : workspaceSection === "contracts" && workspace ? <ContractManagement tenantId={selectedTenantId} canWrite={workspace.membership.permissions.includes("packages:write")} canManage={workspace.membership.permissions.includes("tenant:manage")}/>
-                    : workspaceSection === "imports" && workspace ? <ImportManagement tenantId={selectedTenantId} tenantName={workspace.tenant.name} demoSponsorCount={workspace.demoSponsorCount} canDeleteDemo={workspace.membership.permissions.includes("tenant:manage")} onChanged={() => { void reloadWorkspace(); }}/>
-                      : workspaceSection === "team" && workspace ? <TeamManagement tenantId={selectedTenantId}/>
-                        : workspaceSection === "settings" && workspace ? <OrganizationSettings tenant={workspace.tenant as OrganizationTenant} canManage={workspace.membership.permissions.includes("tenant:manage")} onSaved={(updated) => { setTenants((current) => current.map((tenant) => tenant.id === updated.id ? updated : tenant)); setWorkspace((current) => current ? { ...current, tenant: { ...current.tenant, ...updated } } : current); }}/>
+                : workspaceSection === "dossier" && workspace ? <SponsoringDossier tenantId={selectedTenantId} canManage={workspace.membership.permissions.includes("tenant:manage")}/>
+                  : workspaceSection === "transitions" && workspace ? <TransitionManagement tenantId={selectedTenantId} canWrite={workspace.membership.permissions.includes("sponsors:write")}/>
+                    : workspaceSection === "contracts" && workspace ? <ContractManagement tenantId={selectedTenantId} canWrite={workspace.membership.permissions.includes("packages:write")} canManage={workspace.membership.permissions.includes("tenant:manage")}/>
+                      : workspaceSection === "imports" && workspace ? <ImportManagement tenantId={selectedTenantId} tenantName={workspace.tenant.name} demoSponsorCount={workspace.demoSponsorCount} canDeleteDemo={workspace.membership.permissions.includes("tenant:manage")} onChanged={() => { void reloadWorkspace(); }}/>
+                        : workspaceSection === "team" && workspace ? <TeamManagement tenantId={selectedTenantId}/>
+                          : workspaceSection === "settings" && workspace ? <OrganizationSettings tenant={workspace.tenant as OrganizationTenant} canManage={workspace.membership.permissions.includes("tenant:manage")} onSaved={(updated) => { setTenants((current) => current.map((tenant) => tenant.id === updated.id ? updated : tenant)); setWorkspace((current) => current ? { ...current, tenant: { ...current.tenant, ...updated } } : current); }}/>
                           : workspace && <>
                             <section className="workspace-heading"><div><p className="eyebrow">{roleLabels[workspace.membership.role] ?? workspace.membership.role}</p><h1>{workspace.tenant.name}</h1><p>Die Daten werden serverseitig auf den Mandanten <code>{workspace.tenant.slug}</code> begrenzt.</p></div><span className="workspace-status">{workspace.tenant.status}</span></section>
                             <section className="workspace-metrics"><article><span>Sponsoren</span><strong>{totalSponsors}</strong><small>im relationalen Kern</small></article><article><span>Jährlicher Zielwert</span><strong>{formatChf(totalValue)}</strong><small>aus allen Status</small></article><article><span>Ihre Rolle</span><strong>{roleLabels[workspace.membership.role] ?? workspace.membership.role}</strong><small>serverseitig geprüft</small></article></section>

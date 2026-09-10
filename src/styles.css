@@ -1254,3 +1254,51 @@ td small { margin-top: 3px; color: var(--ink-3); }
   .contract-detail-header, .sponsor-contracts > header { align-items: stretch; flex-direction: column; }
   .sponsor-contracts > header { gap: 10px; }
 }
+
+.import-package-mapping { padding: 24px; border-top: 1px solid var(--line); background: var(--surface-2); }
+.import-package-mapping .import-mapping__heading > span { padding: 7px 10px; border-radius: 999px; background: var(--blue-soft); color: var(--blue); font-size: 12px; font-weight: 800; white-space: nowrap; }
+.import-package-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 18px; }
+.import-package-grid label { display: grid; gap: 7px; padding: 13px; background: white; border: 1px solid var(--line); border-radius: 9px; }
+.import-package-grid label > span { overflow: hidden; color: var(--ink-2); font-size: 12px; font-weight: 800; text-overflow: ellipsis; white-space: nowrap; }
+.import-package-grid select { width: 100%; }
+.import-package-note { margin: 16px 0 0; padding: 12px 14px; border: 1px solid #efd79d; border-radius: 8px; background: var(--gold-soft); color: #735100; font-size: 13px; }
+
+.dossier-management { width: min(1260px, calc(100% - 56px)); margin: 42px auto 72px; }
+.dossier-management > header { display: flex; align-items: flex-end; justify-content: space-between; gap: 28px; margin-bottom: 24px; }
+.dossier-management > header h1 { margin: 6px 0 10px; font-size: clamp(34px, 4vw, 48px); letter-spacing: -.045em; }
+.dossier-management > header p:last-child { max-width: 720px; margin-bottom: 0; }
+.dossier-readiness { margin-bottom: 18px; padding: 17px 19px; border: 1px solid #efd79d; border-radius: 12px; background: var(--gold-soft); }
+.dossier-readiness p { margin: 4px 0 0; color: var(--ink-2); }
+.dossier-feedback { margin-bottom: 18px; }
+.dossier-layout { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(320px, .65fr); gap: 18px; align-items: start; }
+.dossier-profile, .dossier-packages { padding: 26px; border: 1px solid var(--line); border-radius: 16px; background: white; box-shadow: 0 14px 42px rgba(11,33,68,.07); }
+.dossier-profile { display: grid; gap: 18px; }
+.dossier-profile h2, .dossier-packages h2 { margin: 5px 0 7px; }
+.dossier-profile > label, .dossier-contact-grid label { display: grid; gap: 7px; color: var(--ink-2); font-size: 13px; font-weight: 700; }
+.dossier-profile label span em { margin-left: 5px; color: var(--blue); font-size: 10px; font-style: normal; text-transform: uppercase; }
+.dossier-profile input, .dossier-profile textarea { width: 100%; min-height: 46px; padding: 10px 12px; border: 1px solid var(--line-strong); border-radius: 7px; background: white; color: var(--navy); }
+.dossier-profile textarea { min-height: 112px; resize: vertical; line-height: 1.5; }
+.dossier-profile input:disabled, .dossier-profile textarea:disabled { border-color: var(--line); background: var(--surface-2); color: var(--ink-2); opacity: 1; }
+.dossier-profile > .access-primary { justify-self: start; }
+.dossier-contact-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.dossier-packages { position: sticky; top: 22px; }
+.dossier-packages > div:last-child { display: grid; gap: 10px; margin-top: 20px; }
+.dossier-packages article { padding: 16px; border: 1px solid var(--line); border-radius: 11px; background: var(--surface-2); }
+.dossier-packages article > span { color: var(--blue); font-size: 10px; font-weight: 800; text-transform: uppercase; }
+.dossier-packages article h3 { margin: 7px 0 3px; font-size: 18px; }
+.dossier-packages article > strong { color: var(--navy); font-size: 15px; }
+.dossier-packages article p { margin: 10px 0 7px; color: var(--ink-3); font-size: 12px; line-height: 1.5; }
+.dossier-packages article small { color: var(--ink-3); }
+
+@media (max-width: 900px) {
+  .dossier-management { width: calc(100% - 28px); margin-top: 28px; }
+  .dossier-management > header { align-items: stretch; flex-direction: column; }
+  .dossier-layout { grid-template-columns: 1fr; }
+  .dossier-packages { position: static; }
+}
+
+@media (max-width: 620px) {
+  .import-package-grid, .dossier-contact-grid { grid-template-columns: 1fr; }
+  .dossier-profile, .dossier-packages { padding: 20px 17px; }
+  .dossier-profile > .access-primary { width: 100%; }
+}

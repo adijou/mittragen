@@ -14,6 +14,7 @@ export type SponsorInput = {
   source_organization: string | null;
   status: SponsorStatus;
   proposal_package: string | null;
+  assigned_package_version_id: string | null;
   annual_value_cents: number;
   notes: string | null;
 };
@@ -80,6 +81,14 @@ export function parseSponsorInput(body: unknown, mode: "create" | "update"): Spo
   } else if (mode === "create") {
     value.status = "draft";
   }
+
+  if ("assigned_package_version_id" in record) {
+    const packageVersionId = record.assigned_package_version_id;
+    if (packageVersionId === null || packageVersionId === "") value.assigned_package_version_id = null;
+    else if (typeof packageVersionId === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(packageVersionId)) {
+      value.assigned_package_version_id = packageVersionId;
+    } else return { ok: false, error: "invalid_assigned_package" };
+  } else if (mode === "create") value.assigned_package_version_id = null;
 
   if ("annual_value_cents" in record) {
     const amount = record.annual_value_cents;

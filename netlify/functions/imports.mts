@@ -2,7 +2,7 @@ import type { Config, Context } from "@netlify/functions";
 import { AuthError, verifyRequestOrigin } from "@netlify/identity";
 import { hasPermission, isResponse, json, requireUser, type MembershipRole } from "./_shared/auth.ts";
 import { isUuid, withSession, type DatabaseClient } from "./_shared/database.ts";
-import { mapImportRow, parseImportBatchInput, parseImportMappingInput, type ImportMapping, type ImportRawRow } from "./_shared/import-input.ts";
+import { mapImportRow, parseImportBatchInput, parseImportMappingInput, type ImportMapping, type ImportPackageMapping, type ImportRawRow } from "./_shared/import-input.ts";
 
 type ImportStatus = "draft" | "mapped" | "imported";
 type BatchRow = {
@@ -13,6 +13,8 @@ type BatchRow = {
   status: ImportStatus;
   source_columns: string[];
   mapping: ImportMapping;
+  package_mapping: ImportPackageMapping;
+  package_mapping_complete: boolean;
   row_count: number;
   valid_count: number;
   error_count: number;
@@ -30,7 +32,7 @@ type ImportRow = {
 };
 
 const batchColumns = `
-  id, tenant_id, name, source_filename, status, source_columns, mapping,
+  id, tenant_id, name, source_filename, status, source_columns, mapping, package_mapping, package_mapping_complete,
   row_count, valid_count, error_count, imported_count,
   created_at::text, updated_at::text, imported_at::text
 `;
@@ -74,7 +76,26 @@ async function batchDetail(client: DatabaseClient, tenantId: string, batchId: st
     ORDER BY row_number
     LIMIT 50
   `, [tenantId, batchId]);
-  return { batch: batch.rows[0], rows: rows.rows };
+  const packageValues = await client.query<{ value: string }>(`
+    SELECT DISTINCT mapped_data->>'proposal_package' AS value
+    FROM sponsor_import_rows
+    WHERE tenant_id = $1 AND batch_id = $2
+      AND NULLIF(btrim(mapped_data->>'proposal_package'), '') IS NOT NULL
+    ORDER BY value
+    LIMIT 100
+  `, [tenantId, batchId]);
+  return { batch: batch.rows[0], rows: rows.rows, packageValues: packageValues.rows.map((item) => item.value) };
+}
+
+async function packageOptions(client: DatabaseClient, tenantId: string) {
+  const result = await client.query<{ id: string; name: string; price_cents: number }>(`
+    SELECT version.id, version.name, version.price_cents
+    FROM sponsorship_package_versions version
+    JOIN sponsorship_packages package ON package.id = version.package_id AND package.tenant_id = version.tenant_id
+    WHERE version.tenant_id = $1 AND version.status = 'published' AND package.status = 'active'
+    ORDER BY lower(version.name), version.version_number DESC
+  `, [tenantId]);
+  return result.rows;
 }
 
 export default async (request: Request, context: Context) => {
@@ -93,18 +114,19 @@ export default async (request: Request, context: Context) => {
     try {
       const result = await withSession(user.id, tenantId, async (client) => {
         if (!await canImport(client, tenantId, user.id)) return { denied: true as const };
-        if (batchId) return { detail: await batchDetail(client, tenantId, batchId) };
+        if (batchId) return { detail: await batchDetail(client, tenantId, batchId), packageOptions: await packageOptions(client, tenantId) };
         const batches = await client.query<BatchRow>(`
           SELECT ${batchColumns}
           FROM sponsor_import_batches
           WHERE tenant_id = $1
           ORDER BY created_at DESC
         `, [tenantId]);
-        return { batches: batches.rows };
+        return { batches: batches.rows, packageOptions: await packageOptions(client, tenantId) };
       });
       if ("denied" in result) return json({ error: "permission_denied" }, 403);
       if ("detail" in result && !result.detail) return json({ error: "import_not_found" }, 404);
-      return json(result.detail ?? { batches: result.batches });
+      if ("detail" in result) return json({ ...result.detail, packageOptions: result.packageOptions });
+      return json({ batches: result.batches, packageOptions: result.packageOptions });
     } catch (error) {
       console.error("imports_load_failed", { requestId: context.requestId, tenantId, batchId, error });
       return json({ error: "imports_load_failed", requestId: context.requestId }, 500);
@@ -167,13 +189,61 @@ export default async (request: Request, context: Context) => {
           WHERE tenant_id = $1 AND batch_id = $2
           ORDER BY row_number
         `, [tenantId, batchId]);
-        const validated = sourceRows.rows.map((row) => {
-          const validation = mapImportRow(row.raw_data, parsed.value);
+        const mappedRows = sourceRows.rows.map((row) => {
+          const validation = mapImportRow(row.raw_data, parsed.value.mapping);
           return {
             row_number: row.row_number,
             mapped_data: validation.mappedData,
             validation_errors: validation.errors,
             status: validation.errors.length ? "invalid" : "valid",
+          };
+        });
+        const packageValues = [...new Set(mappedRows.flatMap((row) => {
+          const value = row.mapped_data.proposal_package;
+          return typeof value === "string" && value.trim() ? [value.trim()] : [];
+        }))].sort((left, right) => left.localeCompare(right, "de-CH"));
+        let packageMapping: ImportPackageMapping = {};
+        let packageMappingComplete = packageValues.length === 0;
+        let optionById = new Map<string, { id: string; name: string; price_cents: number }>();
+
+        const submittedPackageMapping = parsed.value.packageMapping;
+        if (submittedPackageMapping !== null) {
+          if (packageValues.some((value) => !Object.prototype.hasOwnProperty.call(submittedPackageMapping, value))) {
+            return { state: "invalid" as const, error: "package_mapping_incomplete" };
+          }
+          const requestedIds = [...new Set(Object.values(submittedPackageMapping).filter((value): value is string => Boolean(value)))];
+          if (requestedIds.length) {
+            const available = await client.query<{ id: string; name: string; price_cents: number }>(`
+              SELECT version.id, version.name, version.price_cents
+              FROM sponsorship_package_versions version
+              JOIN sponsorship_packages package ON package.id = version.package_id AND package.tenant_id = version.tenant_id
+              WHERE version.tenant_id = $1 AND version.id = ANY($2::uuid[])
+                AND version.status = 'published' AND package.status = 'active'
+            `, [tenantId, requestedIds]);
+            optionById = new Map(available.rows.map((item) => [item.id, item]));
+            if (requestedIds.some((id) => !optionById.has(id))) {
+              return { state: "invalid" as const, error: "package_version_not_available" };
+            }
+          }
+          packageMapping = Object.fromEntries(packageValues.map((value) => [value, submittedPackageMapping[value] ?? null]));
+          packageMappingComplete = true;
+        }
+
+        const validated = mappedRows.map((row) => {
+          if (row.validation_errors.length || !packageMappingComplete) return row;
+          const label = typeof row.mapped_data.proposal_package === "string" ? row.mapped_data.proposal_package.trim() : "";
+          const packageVersionId = label ? packageMapping[label] : null;
+          const option = packageVersionId ? optionById.get(packageVersionId) : null;
+          if (!option) return { ...row, mapped_data: { ...row.mapped_data, assigned_package_version_id: null } };
+          const annualValue = typeof row.mapped_data.annual_value_cents === "number" ? row.mapped_data.annual_value_cents : 0;
+          return {
+            ...row,
+            mapped_data: {
+              ...row.mapped_data,
+              assigned_package_version_id: option.id,
+              proposal_package: option.name,
+              annual_value_cents: annualValue > 0 ? annualValue : option.price_cents,
+            },
           };
         });
         const errorCount = validated.filter((row) => row.status === "invalid").length;
@@ -194,9 +264,10 @@ export default async (request: Request, context: Context) => {
         `, [tenantId, batchId, JSON.stringify(validated)]);
         await client.query(`
           UPDATE sponsor_import_batches
-          SET mapping = $3::jsonb, status = 'mapped', valid_count = $4, error_count = $5, updated_at = now()
+          SET mapping = $3::jsonb, package_mapping = $4::jsonb, package_mapping_complete = $5,
+              status = 'mapped', valid_count = $6, error_count = $7, updated_at = now()
           WHERE tenant_id = $1 AND id = $2
-        `, [tenantId, batchId, JSON.stringify(parsed.value), validCount, errorCount]);
+        `, [tenantId, batchId, JSON.stringify(parsed.value.mapping), JSON.stringify(packageMapping), packageMappingComplete, validCount, errorCount]);
         await client.query(`
           INSERT INTO audit_events (tenant_id, actor_user_id, action, object_type, object_id, metadata)
           VALUES ($1, $2, 'import.validated', 'sponsor_import', $3::text, jsonb_build_object('valid', $4::integer, 'errors', $5::integer))
@@ -226,7 +297,7 @@ export default async (request: Request, context: Context) => {
         const batch = current.rows[0];
         if (!batch) return { state: "not_found" as const };
         if (batch.status === "imported") return { state: "imported" as const, importedCount: batch.imported_count };
-        if (batch.status !== "mapped" || batch.error_count > 0 || batch.valid_count !== batch.row_count) return { state: "not_ready" as const };
+        if (batch.status !== "mapped" || !batch.package_mapping_complete || batch.error_count > 0 || batch.valid_count !== batch.row_count) return { state: "not_ready" as const };
 
         const inserted = await client.query<{ count: string }>(`
           WITH prepared AS (
@@ -236,14 +307,14 @@ export default async (request: Request, context: Context) => {
           ), inserted_sponsors AS (
             INSERT INTO sponsors (
               id, tenant_id, legal_name, contact_name, contact_email, phone, street, postal_code, city, website,
-              source_organization, status, proposal_package, annual_value_cents, notes
+              source_organization, status, proposal_package, annual_value_cents, notes, assigned_package_version_id
             )
             SELECT sponsor_id, tenant_id, mapped_data->>'legal_name', NULLIF(mapped_data->>'contact_name', ''),
                    NULLIF(mapped_data->>'contact_email', ''), NULLIF(mapped_data->>'phone', ''), NULLIF(mapped_data->>'street', ''),
                    NULLIF(mapped_data->>'postal_code', ''), NULLIF(mapped_data->>'city', ''), NULLIF(mapped_data->>'website', ''),
                    NULLIF(mapped_data->>'source_organization', ''), COALESCE(mapped_data->>'status', 'draft'),
                    NULLIF(mapped_data->>'proposal_package', ''), COALESCE((mapped_data->>'annual_value_cents')::integer, 0),
-                   NULLIF(mapped_data->>'notes', '')
+                   NULLIF(mapped_data->>'notes', ''), NULLIF(mapped_data->>'assigned_package_version_id', '')::uuid
             FROM prepared
             RETURNING id
           ), updated_rows AS (

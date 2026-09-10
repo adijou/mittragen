@@ -22,7 +22,9 @@ Der erste interaktive Produkt-Slice setzt die ausgewählte visuelle Richtung «K
 - Owner-Einstellungen für einen veränderbaren Anzeigenamen bei stabilem technischem Kurzname
 - Teamverwaltung mit Einladungsversand über Netlify Identity
 - Gebrandete Identity-Einladung unter `/emails/invitation.html` (in Netlify als Einladungsvorlage hinterlegen)
-- Produktive CSV-Datenübernahme mit persistierten Importläufen, Feldzuordnung, Vorprüfung und atomarem Sponsorimport
+- Produktive Excel-/CSV-Datenübernahme mit Blattwahl, persistierten Importläufen, Feldzuordnung, Vorprüfung und atomarem Sponsorimport
+- explizite Zuordnung importierter Paketbezeichnungen zu veröffentlichten Paketversionen mit Preisübernahme
+- editierbares Klubprofil und automatisch generiertes Sponsoringdossier als PDF aus den öffentlichen Paketen
 - Produktive Überführungskampagnen mit eingefrorener Ausgangslage, Paket-Mapping, persönlichen Vorschlägen, Ausnahmen und Fortschrittskennzahlen
 - Produktiver Paketkatalog mit unveränderlichen Versionen, strukturierten Rechten, Kapazitäten, Exklusivitätsregeln und transaktionalem Reservierungsschutz
 - Expliziter Kampagnenversand über Resend mit persönlichen, 14 Tage gültigen Sponsorzugängen

@@ -27,3 +27,11 @@ test("rejects unsafe or malformed sponsor values", () => {
 test("requires at least one actual update", () => {
   assert.deepEqual(parseSponsorInput({}, "update"), { ok: false, error: "no_changes" });
 });
+
+test("validates assigned package version ids", () => {
+  const versionId = "123e4567-e89b-42d3-a456-426614174000";
+  const parsed = parseSponsorInput({ assigned_package_version_id: versionId }, "update");
+  assert.equal(parsed.ok, true);
+  if (parsed.ok) assert.equal(parsed.value.assigned_package_version_id, versionId);
+  assert.deepEqual(parseSponsorInput({ assigned_package_version_id: "wrong" }, "update"), { ok: false, error: "invalid_assigned_package" });
+});

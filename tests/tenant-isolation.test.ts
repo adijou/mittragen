@@ -10,6 +10,7 @@ const packageMigrationPath = new URL("../netlify/database/migrations/20260909073
 const sponsorPortalMigrationPath = new URL("../netlify/database/migrations/20260909080000_sponsor_portal/migration.sql", import.meta.url);
 const contractMigrationPath = new URL("../netlify/database/migrations/20260909090000_contracts/migration.sql", import.meta.url);
 const demoSponsorMigrationPath = new URL("../netlify/database/migrations/20260910090000_mark-demo-sponsors/migration.sql", import.meta.url);
+const dossierMigrationPath = new URL("../netlify/database/migrations/20260910193000_excel_import_dossier/migration.sql", import.meta.url);
 
 test("all tenant-owned tables enforce row-level security", async () => {
   const sql = await readFile(migrationPath, "utf8");
@@ -115,4 +116,13 @@ test("only exact onboarding seed rows are marked as example sponsors", async () 
   assert.match(sql, /event\.metadata @> '\{"demo_data": true\}'::jsonb/i);
   assert.match(sql, /sponsor\.legal_name = seed\.legal_name/i);
   assert.match(sql, /sponsor\.annual_value_cents = seed\.annual_value_cents/i);
+});
+
+test("dossier profile and imported package assignments remain tenant-bound", async () => {
+  const sql = await readFile(dossierMigrationPath, "utf8");
+  assert.match(sql, /FOREIGN KEY \(assigned_package_version_id, tenant_id\)/i);
+  assert.match(sql, /REFERENCES sponsorship_package_versions\(id, tenant_id\)/i);
+  assert.match(sql, /ALTER TABLE tenant_sponsoring_profiles ENABLE ROW LEVEL SECURITY/i);
+  assert.match(sql, /ALTER TABLE tenant_sponsoring_profiles FORCE ROW LEVEL SECURITY/i);
+  assert.match(sql, /tenant_id = app_current_tenant_id\(\)/i);
 });

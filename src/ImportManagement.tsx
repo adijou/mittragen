@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { parseCsv, type ParsedCsv } from "./importCsv";
+import type { ParsedCsv } from "./importCsv";
+import { parseSpreadsheetFile, type ParsedSheet } from "./importSpreadsheet";
 
 type ImportStatus = "draft" | "mapped" | "imported";
 type ImportBatch = {
@@ -9,6 +10,8 @@ type ImportBatch = {
   status: ImportStatus;
   source_columns: string[];
   mapping: Record<string, string>;
+  package_mapping: Record<string, string | null>;
+  package_mapping_complete: boolean;
   row_count: number;
   valid_count: number;
   error_count: number;
@@ -23,7 +26,8 @@ type ImportRow = {
   validation_errors: string[];
   status: "pending" | "valid" | "invalid" | "imported";
 };
-type ImportDetail = { batch: ImportBatch; rows: ImportRow[] };
+type PackageOption = { id: string; name: string; price_cents: number };
+type ImportDetail = { batch: ImportBatch; rows: ImportRow[]; packageValues: string[]; packageOptions?: PackageOption[] };
 
 const targets = [
   { value: "legal_name", label: "Firmenname", required: true },
@@ -35,7 +39,7 @@ const targets = [
   { value: "city", label: "Ort" },
   { value: "website", label: "Website" },
   { value: "source_organization", label: "Bisherige Organisation" },
-  { value: "proposal_package", label: "Sponsoringpaket" },
+  { value: "proposal_package", label: "Paketbezeichnung (für Zuordnung)" },
   { value: "annual_value_chf", label: "Jahreswert in CHF" },
   { value: "notes", label: "Interne Notizen" },
 ] as const;
@@ -53,7 +57,8 @@ const errorLabels: Record<string, string> = {
   invalid_annual_value: "Jahreswert ist ungültig",
 };
 
-const normalizeColumn = (value: string) => value.toLocaleLowerCase("de-CH").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, "");
+const normalizeColumn = (value: string) => value.toLocaleLowerCase("de-CH").replace(/ß/g, "ss").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, "");
+const normalizePackage = (value: string) => normalizeColumn(value).replace(/sponsoringpaket|sponsorpaket|sponsoring|sponsor/g, "");
 
 function suggestMapping(columns: string[]) {
   const aliases: Record<string, string[]> = {
@@ -66,13 +71,22 @@ function suggestMapping(columns: string[]) {
     city: ["ort", "stadt"],
     website: ["website", "webseite", "web", "url"],
     source_organization: ["herkunft", "bisherigerverein", "quelle", "club", "klub"],
-    proposal_package: ["paket", "sponsoringpaket", "vorschlag"],
+    proposal_package: ["paket", "sponsoringpaket", "vorschlag", "sonstige", "sponsoringart", "paketkategorie"],
     annual_value_chf: ["jahreswert", "betrag", "wert", "chf"],
-    notes: ["notizen", "notiz", "bemerkungen", "bemerkung"],
+    notes: ["notizen", "notiz", "bemerkungen", "bemerkung", "info"],
   };
   return Object.fromEntries(Object.entries(aliases).flatMap(([target, candidates]) => {
     const match = columns.find((column) => candidates.includes(normalizeColumn(column)));
     return match ? [[target, match]] : [];
+  }));
+}
+
+function suggestPackageMapping(values: string[], options: PackageOption[], current: Record<string, string | null> = {}) {
+  return Object.fromEntries(values.map((value) => {
+    if (Object.prototype.hasOwnProperty.call(current, value)) return [value, current[value]];
+    const normalized = normalizePackage(value);
+    const match = options.find((option) => normalizePackage(option.name) === normalized);
+    return [value, match?.id ?? null];
   }));
 }
 
@@ -93,7 +107,13 @@ export function ImportManagement({ tenantId, tenantName, demoSponsorCount, canDe
   const [batches, setBatches] = useState<ImportBatch[]>([]);
   const [detail, setDetail] = useState<ImportDetail | null>(null);
   const [mapping, setMapping] = useState<Record<string, string>>({});
+  const [packageMapping, setPackageMapping] = useState<Record<string, string | null>>({});
+  const [packageOptions, setPackageOptions] = useState<PackageOption[]>([]);
+  const [mappingDirty, setMappingDirty] = useState(false);
+  const [packageMappingDirty, setPackageMappingDirty] = useState(false);
   const [fileData, setFileData] = useState<ParsedCsv | null>(null);
+  const [fileSheets, setFileSheets] = useState<ParsedSheet[]>([]);
+  const [selectedSheet, setSelectedSheet] = useState("");
   const [fileName, setFileName] = useState("");
   const [importName, setImportName] = useState("");
   const [loading, setLoading] = useState(true);
@@ -105,8 +125,9 @@ export function ImportManagement({ tenantId, tenantName, demoSponsorCount, canDe
   const [message, setMessage] = useState("");
 
   const loadBatches = async () => {
-    const result = await request<{ batches: ImportBatch[] }>(`/api/imports/${tenantId}`);
+    const result = await request<{ batches: ImportBatch[]; packageOptions: PackageOption[] }>(`/api/imports/${tenantId}`);
     setBatches(result.batches);
+    setPackageOptions(result.packageOptions);
   };
 
   useEffect(() => {
@@ -120,12 +141,14 @@ export function ImportManagement({ tenantId, tenantName, demoSponsorCount, canDe
     setError("");
     setMessage("");
     if (!file) return;
-    if (file.size > 2_000_000) { setError("Die CSV-Datei darf höchstens 2 MB gross sein."); return; }
+    if (file.size > 2_000_000) { setError("Die CSV- oder Excel-Datei darf höchstens 2 MB gross sein."); return; }
     try {
-      const parsed = parseCsv(await file.text());
-      setFileData(parsed);
+      const sheets = await parseSpreadsheetFile(file);
+      setFileSheets(sheets);
+      setSelectedSheet(sheets[0].name);
+      setFileData(sheets[0]);
       setFileName(file.name);
-      setImportName(file.name.replace(/\.csv$/i, ""));
+      setImportName(file.name.replace(/\.(?:csv|xlsx)$/i, ""));
     } catch (reason) {
       const code = reason instanceof Error ? reason.message : "csv_invalid";
       const labels: Record<string, string> = {
@@ -135,9 +158,16 @@ export function ImportManagement({ tenantId, tenantName, demoSponsorCount, canDe
         csv_duplicate_column: "CSV-Spalten dürfen nicht gleich benannt sein.",
         csv_too_many_columns: "Die CSV-Datei darf höchstens 50 Spalten enthalten.",
         csv_too_many_rows: "Pro Import sind höchstens 1'000 Zeilen erlaubt.",
+        spreadsheet_no_data: "Die Datei enthält kein Blatt mit Kopfzeile und Datenzeilen.",
+        spreadsheet_too_many_columns: "Ein Tabellenblatt darf höchstens 50 verwendete Spalten enthalten.",
+        spreadsheet_too_many_rows: "Pro Tabellenblatt sind höchstens 1'000 Datenzeilen erlaubt.",
+        spreadsheet_file_type: "Unterstützt werden CSV- und XLSX-Dateien.",
+        xlsx_invalid: "Die XLSX-Datei ist beschädigt oder hat kein unterstütztes Excel-Format.",
       };
-      setError(labels[code] ?? "Die CSV-Datei konnte nicht gelesen werden.");
+      setError(labels[code] ?? "Die Datei konnte nicht gelesen werden.");
       setFileData(null);
+      setFileSheets([]);
+      setSelectedSheet("");
     }
   };
 
@@ -154,7 +184,12 @@ export function ImportManagement({ tenantId, tenantName, demoSponsorCount, canDe
       });
       setDetail(created);
       setMapping(suggestMapping(created.batch.source_columns));
+      setPackageMapping({});
+      setMappingDirty(true);
+      setPackageMappingDirty(false);
       setFileData(null);
+      setFileSheets([]);
+      setSelectedSheet("");
       setFileName("");
       setImportName("");
       setMessage(`${created.batch.row_count} Zeilen wurden sicher zwischengespeichert. Ordnen Sie nun die Spalten zu.`);
@@ -174,6 +209,10 @@ export function ImportManagement({ tenantId, tenantName, demoSponsorCount, canDe
       const loaded = await request<ImportDetail>(`/api/imports/${tenantId}/${batchId}`);
       setDetail(loaded);
       setMapping(Object.keys(loaded.batch.mapping).length ? loaded.batch.mapping : suggestMapping(loaded.batch.source_columns));
+      if (loaded.packageOptions) setPackageOptions(loaded.packageOptions);
+      setPackageMapping(suggestPackageMapping(loaded.packageValues, loaded.packageOptions ?? packageOptions, loaded.batch.package_mapping));
+      setMappingDirty(false);
+      setPackageMappingDirty(Boolean(loaded.packageValues.length && !loaded.batch.package_mapping_complete));
     } catch {
       setError("Der Import konnte nicht geöffnet werden.");
     } finally {
@@ -187,19 +226,32 @@ export function ImportManagement({ tenantId, tenantName, demoSponsorCount, canDe
     setError("");
     setMessage("");
     try {
+      const reviewingColumns = mappingDirty || detail.batch.status === "draft";
       const validated = await request<ImportDetail>(`/api/imports/${tenantId}/${detail.batch.id}`, {
         method: "PATCH",
-        body: JSON.stringify({ mapping }),
+        body: JSON.stringify(reviewingColumns ? { mapping } : { mapping, packageMapping }),
       });
       setDetail(validated);
       setMapping(validated.batch.mapping);
-      setMessage(validated.batch.error_count === 0
-        ? "Alle Zeilen sind gültig und bereit für die Übernahme."
-        : `${validated.batch.error_count} Zeilen benötigen noch eine Korrektur in der Quelldatei oder Zuordnung.`);
+      setMappingDirty(false);
+      if (validated.packageOptions) setPackageOptions(validated.packageOptions);
+      const nextOptions = validated.packageOptions ?? packageOptions;
+      setPackageMapping(suggestPackageMapping(validated.packageValues, nextOptions, validated.batch.package_mapping));
+      setPackageMappingDirty(Boolean(validated.packageValues.length && !validated.batch.package_mapping_complete));
+      setMessage(validated.batch.error_count > 0
+        ? `${validated.batch.error_count} Zeilen benötigen noch eine Korrektur in der Quelldatei oder Zuordnung.`
+        : validated.packageValues.length && !validated.batch.package_mapping_complete
+          ? `${validated.packageValues.length} Paketbezeichnungen erkannt. Bitte jetzt den veröffentlichten Paketen zuordnen.`
+          : "Alle Zeilen und Paketzuordnungen sind gültig und bereit für die Übernahme.");
       await loadBatches();
     } catch (reason) {
       const code = reason instanceof Error ? reason.message : "import_mapping_failed";
-      setError(code === "legal_name_mapping_required" ? "Bitte ordnen Sie mindestens den Firmenname zu." : "Die Zuordnung konnte nicht geprüft werden.");
+      const labels: Record<string, string> = {
+        legal_name_mapping_required: "Bitte ordnen Sie mindestens den Firmenname zu.",
+        package_mapping_incomplete: "Bitte jede erkannte Paketbezeichnung prüfen.",
+        package_version_not_available: "Mindestens ein gewähltes Paket ist nicht mehr veröffentlicht.",
+      };
+      setError(labels[code] ?? "Die Zuordnung konnte nicht geprüft werden.");
     } finally {
       setBusy(false);
     }
@@ -252,10 +304,18 @@ export function ImportManagement({ tenantId, tenantName, demoSponsorCount, canDe
     }
   };
 
+  const chooseSheet = (name: string) => {
+    const sheet = fileSheets.find((item) => item.name === name);
+    if (!sheet) return;
+    setSelectedSheet(name);
+    setFileData(sheet);
+  };
+
   const preview = useMemo(() => detail?.rows.slice(0, 12) ?? [], [detail]);
+  const assignedPackageCount = detail?.packageValues.filter((value) => packageMapping[value]).length ?? 0;
 
   return <section className="data-import">
-    <header><div><p className="eyebrow">Bestehende Daten übernehmen</p><h1>Datenimport</h1><p>CSV hochladen, Felder zuordnen, vollständig prüfen und erst dann als Sponsoren übernehmen.</p></div><span className="import-limit">max. 1'000 Zeilen</span></header>
+    <header><div><p className="eyebrow">Bestehende Daten übernehmen</p><h1>Datenimport</h1><p>Excel oder CSV hochladen, Tabellenblatt und Felder wählen, Pakete zuordnen und erst dann als Sponsoren übernehmen.</p></div><span className="import-limit">max. 1'000 Zeilen</span></header>
 
     {demoSponsorCount > 0 && <section className="import-demo-cleanup">
       <div><p className="eyebrow">Vor dem Echtimport</p><h2>{demoSponsorCount} Beispiel-Sponsoren vorhanden</h2><p>Sie können ausschliesslich die beim Onboarding angelegten Beispieldaten entfernen. Eigene und bereits importierte Sponsoren bleiben erhalten.</p></div>
@@ -264,8 +324,9 @@ export function ImportManagement({ tenantId, tenantName, demoSponsorCount, canDe
 
     <div className="import-top-grid">
       <form className="import-card import-upload" onSubmit={createImport}>
-        <div><p className="eyebrow">Schritt 1</p><h2>CSV-Datei auswählen</h2></div>
-        <label className="import-file"><span>{fileName || "CSV-Datei auswählen"}</span><input type="file" accept=".csv,text/csv" onChange={(event) => void readFile(event.target.files?.[0])}/><small>UTF-8, Komma oder Semikolon, maximal 2 MB</small></label>
+        <div><p className="eyebrow">Schritt 1</p><h2>Excel- oder CSV-Datei auswählen</h2></div>
+        <label className="import-file"><span>{fileName || "Datei auswählen"}</span><input type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.csv,text/csv" onChange={(event) => void readFile(event.target.files?.[0])}/><small>XLSX oder UTF-8-CSV, maximal 2 MB</small></label>
+        {fileSheets.length > 1 && <label><span>Tabellenblatt</span><select value={selectedSheet} onChange={(event) => chooseSheet(event.target.value)}>{fileSheets.map((sheet) => <option key={sheet.name} value={sheet.name}>{sheet.name} · {sheet.rows.length} Zeilen</option>)}</select><small>Nur das ausgewählte Blatt wird vorbereitet.</small></label>}
         {fileData && <div className="import-file-summary"><strong>{fileData.rows.length} Zeilen</strong><span>{fileData.columns.length} Spalten erkannt</span></div>}
         <label><span>Bezeichnung</span><input required minLength={2} maxLength={160} value={importName} onChange={(event) => setImportName(event.target.value)} placeholder="Sponsoren FC Bösingen 2026"/></label>
         <button className="access-primary" disabled={busy || !fileData}>{busy ? "Wird vorbereitet …" : "Import vorbereiten"}</button>
@@ -284,18 +345,24 @@ export function ImportManagement({ tenantId, tenantName, demoSponsorCount, canDe
       <header><div><p className="eyebrow">Schritt 2</p><h2>{detail.batch.name}</h2><p>{detail.batch.source_filename} · {detail.batch.row_count} Datenzeilen</p></div><span className={`import-status import-status--${detail.batch.status}`}>{statusLabels[detail.batch.status]}</span></header>
 
       <div className="import-mapping">
-        <div className="import-mapping__heading"><div><h3>Spalten zuordnen</h3><p>Links steht das Mittragen-Feld, rechts die passende Spalte aus Ihrer Datei.</p></div><button className="access-secondary" type="button" disabled={busy || detail.batch.status === "imported"} onClick={() => void validateMapping()}>{busy ? "Prüft …" : "Zuordnung prüfen"}</button></div>
-        <div className="import-targets">{targets.map((target) => <label key={target.value}><span>{target.label}{"required" in target && target.required && <em>Pflicht</em>}</span><select disabled={detail.batch.status === "imported"} value={mapping[target.value] ?? ""} onChange={(event) => setMapping((current) => ({ ...current, [target.value]: event.target.value }))}><option value="">Nicht übernehmen</option>{detail.batch.source_columns.map((column) => <option value={column} key={column}>{column}</option>)}</select></label>)}</div>
+        <div className="import-mapping__heading"><div><h3>Spalten zuordnen</h3><p>Links steht das Mittragen-Feld, rechts die passende Spalte aus Ihrer Datei.</p></div><button className="access-secondary" type="button" disabled={busy || detail.batch.status === "imported"} onClick={() => void validateMapping()}>{busy ? "Prüft …" : !mappingDirty && detail.packageValues.length ? "Paketzuordnung bestätigen" : "Zuordnung prüfen"}</button></div>
+        <div className="import-targets">{targets.map((target) => <label key={target.value}><span>{target.label}{"required" in target && target.required && <em>Pflicht</em>}</span><select disabled={detail.batch.status === "imported"} value={mapping[target.value] ?? ""} onChange={(event) => { setMapping((current) => ({ ...current, [target.value]: event.target.value })); setMappingDirty(true); setPackageMappingDirty(false); }}><option value="">Nicht übernehmen</option>{detail.batch.source_columns.map((column) => <option value={column} key={column}>{column}</option>)}</select></label>)}</div>
       </div>
+
+      {detail.packageValues.length > 0 && <section className="import-package-mapping">
+        <div className="import-mapping__heading"><div><p className="eyebrow">Schritt 3</p><h3>Paketbezeichnungen zuordnen</h3><p>Jede Bezeichnung aus der Datei kann einem veröffentlichten Paket zugeordnet oder bewusst nur als Text übernommen werden. Ohne eigenen Jahreswert wird der Paketpreis verwendet.</p></div><span>{assignedPackageCount} von {detail.packageValues.length} zugeordnet</span></div>
+        {packageOptions.length === 0 && <p className="import-package-note">Es gibt noch keine veröffentlichten Pakete. Sie können die Bezeichnungen als Text übernehmen und die Pakete später zuordnen.</p>}
+        <div className="import-package-grid">{detail.packageValues.map((value) => <label key={value}><span>{value}</span><select disabled={detail.batch.status === "imported"} value={packageMapping[value] ?? ""} onChange={(event) => { setPackageMapping((current) => ({ ...current, [value]: event.target.value || null })); setPackageMappingDirty(true); }}><option value="">Nur als Text übernehmen</option>{packageOptions.map((option) => <option key={option.id} value={option.id}>{option.name} · {new Intl.NumberFormat("de-CH", { style: "currency", currency: "CHF", maximumFractionDigits: 0 }).format(option.price_cents / 100)}</option>)}</select></label>)}</div>
+      </section>}
 
       {detail.batch.status !== "draft" && <div className="import-validation">
         <article><span>Gültig</span><strong>{detail.batch.valid_count}</strong></article>
         <article className={detail.batch.error_count ? "has-errors" : ""}><span>Mit Fehlern</span><strong>{detail.batch.error_count}</strong></article>
         <article><span>Übernommen</span><strong>{detail.batch.imported_count}</strong></article>
-        {detail.batch.status !== "imported" && <button className="access-primary" disabled={busy || detail.batch.error_count > 0 || detail.batch.valid_count !== detail.batch.row_count} onClick={() => void commitImport()}>{busy ? "Wird übernommen …" : `${detail.batch.valid_count} Sponsoren übernehmen`}</button>}
+        {detail.batch.status !== "imported" && <button className="access-primary" disabled={busy || mappingDirty || packageMappingDirty || !detail.batch.package_mapping_complete || detail.batch.error_count > 0 || detail.batch.valid_count !== detail.batch.row_count} onClick={() => void commitImport()}>{busy ? "Wird übernommen …" : `${detail.batch.valid_count} Sponsoren übernehmen`}</button>}
       </div>}
 
-      <div className="import-preview"><table><thead><tr><th>Zeile</th><th>Firmenname</th><th>Kontakt</th><th>Jahreswert</th><th>Prüfung</th></tr></thead><tbody>{preview.map((row) => <tr key={row.row_number}><td>{row.row_number}</td><td><strong>{String(row.mapped_data.legal_name ?? row.raw_data[detail.batch.source_columns[0]] ?? "–")}</strong></td><td>{String(row.mapped_data.contact_email ?? row.mapped_data.contact_name ?? "–")}</td><td>{typeof row.mapped_data.annual_value_cents === "number" ? new Intl.NumberFormat("de-CH", { style: "currency", currency: "CHF" }).format(row.mapped_data.annual_value_cents / 100) : "–"}</td><td>{row.validation_errors.length ? <span className="import-row-error">{row.validation_errors.map((code) => errorLabels[code] ?? code).join(", ")}</span> : row.status === "pending" ? <span className="import-row-pending">Noch nicht geprüft</span> : <span className="import-row-valid">✓ Gültig</span>}</td></tr>)}</tbody></table>{detail.batch.row_count > preview.length && <p>Vorschau der ersten {preview.length} von {detail.batch.row_count} Zeilen.</p>}</div>
+      <div className="import-preview"><table><thead><tr><th>Zeile</th><th>Firmenname</th><th>Kontakt</th><th>Paket</th><th>Jahreswert</th><th>Prüfung</th></tr></thead><tbody>{preview.map((row) => <tr key={row.row_number}><td>{row.row_number}</td><td><strong>{String(row.mapped_data.legal_name ?? row.raw_data[detail.batch.source_columns[0]] ?? "–")}</strong></td><td>{String(row.mapped_data.contact_email ?? row.mapped_data.contact_name ?? "–")}</td><td>{String(row.mapped_data.proposal_package ?? "–")}</td><td>{typeof row.mapped_data.annual_value_cents === "number" ? new Intl.NumberFormat("de-CH", { style: "currency", currency: "CHF" }).format(row.mapped_data.annual_value_cents / 100) : "–"}</td><td>{row.validation_errors.length ? <span className="import-row-error">{row.validation_errors.map((code) => errorLabels[code] ?? code).join(", ")}</span> : row.status === "pending" ? <span className="import-row-pending">Noch nicht geprüft</span> : <span className="import-row-valid">✓ Gültig</span>}</td></tr>)}</tbody></table>{detail.batch.row_count > preview.length && <p>Vorschau der ersten {preview.length} von {detail.batch.row_count} Zeilen.</p>}</div>
     </section>}
   </section>;
 }

@@ -20,6 +20,19 @@ test("requires a valid company-name mapping", () => {
   assert.deepEqual(parseImportMappingInput({ mapping: { legal_name: "Unbekannt" } }, ["Firma"]), { ok: false, error: "invalid_mapping_source" });
 });
 
+test("accepts reviewed package labels and rejects malformed package ids", () => {
+  const versionId = "123e4567-e89b-42d3-a456-426614174000";
+  const parsed = parseImportMappingInput({
+    mapping: { legal_name: "Firma", proposal_package: "Paket" },
+    packageMapping: { Goldsponsor: versionId, Einzelbeitrag: null },
+  }, ["Firma", "Paket"]);
+  assert.equal(parsed.ok, true);
+  if (parsed.ok) assert.deepEqual(parsed.value.packageMapping, { Goldsponsor: versionId, Einzelbeitrag: null });
+  assert.deepEqual(parseImportMappingInput({
+    mapping: { legal_name: "Firma" }, packageMapping: { Gold: "wrong" },
+  }, ["Firma"]), { ok: false, error: "invalid_package_mapping_version" });
+});
+
 test("maps a sponsor row, normalizes websites and parses Swiss francs", () => {
   const result = mapImportRow(
     { Firma: "Bäckerei Sense", Mail: "kontakt@example.ch", Web: "sense.example", Betrag: "CHF 1'250.50" },

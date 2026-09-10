@@ -23,12 +23,12 @@ async function membershipRole(client: DatabaseClient, tenantId: string, userId: 
 
 const columns = [
   "legal_name", "contact_name", "contact_email", "phone", "street", "postal_code", "city", "website",
-  "source_organization", "status", "proposal_package", "annual_value_cents", "notes",
+  "source_organization", "status", "proposal_package", "assigned_package_version_id", "annual_value_cents", "notes",
 ] as const;
 
 const returningColumns = `
   id, tenant_id, legal_name, contact_name, contact_email, phone, street, postal_code, city, website,
-  source_organization, status, proposal_package, annual_value_cents, notes,
+  source_organization, status, proposal_package, assigned_package_version_id, annual_value_cents, notes,
   created_at::text AS created_at, updated_at::text AS updated_at
 `;
 
@@ -45,18 +45,29 @@ export default async (request: Request, context: Context) => {
     const result = await withSession(user.id, tenantId, async (client) => {
       const role = await membershipRole(client, tenantId, user.id);
       if (!role || !hasPermission(role, "sponsors:read")) return null;
-      const sponsors = await client.query<SponsorRow>(`
-        SELECT id, tenant_id, legal_name, contact_name, contact_email, phone, street, postal_code, city, website,
-               source_organization, status, proposal_package, annual_value_cents, notes,
-               created_at::text, updated_at::text
-        FROM sponsors
-        WHERE tenant_id = $1
-        ORDER BY legal_name, id
+      const sponsors = await client.query<SponsorRow & { assigned_package_name: string | null }>(`
+        SELECT sponsor.id, sponsor.tenant_id, sponsor.legal_name, sponsor.contact_name, sponsor.contact_email,
+               sponsor.phone, sponsor.street, sponsor.postal_code, sponsor.city, sponsor.website,
+               sponsor.source_organization, sponsor.status, sponsor.proposal_package,
+               sponsor.assigned_package_version_id, version.name AS assigned_package_name,
+               sponsor.annual_value_cents, sponsor.notes, sponsor.created_at::text, sponsor.updated_at::text
+        FROM sponsors sponsor
+        LEFT JOIN sponsorship_package_versions version
+          ON version.id = sponsor.assigned_package_version_id AND version.tenant_id = sponsor.tenant_id
+        WHERE sponsor.tenant_id = $1
+        ORDER BY sponsor.legal_name, sponsor.id
       `, [tenantId]);
-      return sponsors.rows;
+      const packageOptions = await client.query<{ id: string; name: string; price_cents: number }>(`
+        SELECT version.id, version.name, version.price_cents
+        FROM sponsorship_package_versions version
+        JOIN sponsorship_packages package ON package.id = version.package_id AND package.tenant_id = version.tenant_id
+        WHERE version.tenant_id = $1 AND version.status = 'published' AND package.status = 'active'
+        ORDER BY lower(version.name), version.version_number DESC
+      `, [tenantId]);
+      return { sponsors: sponsors.rows, packageOptions: packageOptions.rows };
     });
     if (!result) return json({ error: "tenant_access_denied" }, 403);
-    return json({ sponsors: result });
+    return json(result);
   }
 
   if (!['POST', 'PATCH'].includes(request.method)) return json({ error: "method_not_allowed" }, 405);
@@ -75,14 +86,25 @@ export default async (request: Request, context: Context) => {
     const result = await withSession(user.id, tenantId, async (client) => {
       const role = await membershipRole(client, tenantId, user.id);
       if (!role || !hasPermission(role, "sponsors:write")) return { denied: true as const };
+      const requestedPackageVersion = parsed.value.assigned_package_version_id;
+      if (requestedPackageVersion) {
+        const available = await client.query<{ id: string }>(`
+          SELECT version.id
+          FROM sponsorship_package_versions version
+          JOIN sponsorship_packages package ON package.id = version.package_id AND package.tenant_id = version.tenant_id
+          WHERE version.tenant_id = $1 AND version.id = $2 AND version.status = 'published' AND package.status = 'active'
+          LIMIT 1
+        `, [tenantId, requestedPackageVersion]);
+        if (!available.rows[0]) return { invalidPackage: true as const };
+      }
 
       if (request.method === "POST") {
         const input = parsed.value as SponsorInput;
         const created = await client.query<SponsorRow>(`
           INSERT INTO sponsors (
             tenant_id, legal_name, contact_name, contact_email, phone, street, postal_code, city, website,
-            source_organization, status, proposal_package, annual_value_cents, notes
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+            source_organization, status, proposal_package, assigned_package_version_id, annual_value_cents, notes
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
           RETURNING ${returningColumns}
         `, [tenantId, ...columns.map((column) => input[column])]);
         const sponsor = created.rows[0];
@@ -111,6 +133,7 @@ export default async (request: Request, context: Context) => {
     });
 
     if ('denied' in result) return json({ error: "permission_denied" }, 403);
+    if ('invalidPackage' in result) return json({ error: "invalid_assigned_package" }, 422);
     if ('notFound' in result) return json({ error: "sponsor_not_found" }, 404);
     return json(result, request.method === "POST" ? 201 : 200);
   } catch (error) {
