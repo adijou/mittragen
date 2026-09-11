@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { isLogoUpload, parseBrandColors, parseOrganizationProfile } from "../netlify/functions/_shared/organization-profile-input.ts";
 
@@ -46,4 +47,12 @@ test("logo uploads are accepted by capability instead of runtime-specific File i
   assert.equal(isLogoUpload({ size: 1024 }), false);
   assert.equal(isLogoUpload({ size: -1, arrayBuffer: async () => new ArrayBuffer(0) }), false);
   assert.equal(isLogoUpload("logo.png"), false);
+});
+
+test("organization audit events keep UUID and text parameters separate", async () => {
+  const source = await readFile(new URL("../netlify/functions/organization.mts", import.meta.url), "utf8");
+  const tenantAuditIds = source.match(/'organization\.(?:profile|logo)_updated','tenant',\$3::text/g) ?? [];
+
+  assert.equal(tenantAuditIds.length, 2);
+  assert.doesNotMatch(source, /'organization\.(?:profile|logo)_updated','tenant',\$1::text/);
 });

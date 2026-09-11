@@ -90,9 +90,9 @@ async function saveProfile(client: DatabaseClient, tenantId: string, userId: str
     input.placeOfJurisdiction, input.brandPrimaryColor, input.brandAccentColor, userId]);
   await client.query(`
     INSERT INTO audit_events (tenant_id, actor_user_id, action, object_type, object_id, metadata)
-    VALUES ($1,$2,'organization.profile_updated','tenant',$1::text,
-            jsonb_build_object('renewal_mode',$3::text,'brand_primary',$4::text,'brand_accent',$5::text))
-  `, [tenantId, userId, input.renewalMode, input.brandPrimaryColor, input.brandAccentColor]);
+    VALUES ($1,$2,'organization.profile_updated','tenant',$3::text,
+            jsonb_build_object('renewal_mode',$4::text,'brand_primary',$5::text,'brand_accent',$6::text))
+  `, [tenantId, userId, tenantId, input.renewalMode, input.brandPrimaryColor, input.brandAccentColor]);
 }
 
 export default async (request: Request, context: Context) => {
@@ -205,9 +205,9 @@ export default async (request: Request, context: Context) => {
       `, [tenantId, newKey, contentType, colors.value.brandPrimaryColor, colors.value.brandAccentColor, user.id]);
       await client.query(`
         INSERT INTO audit_events (tenant_id, actor_user_id, action, object_type, object_id, metadata)
-        VALUES ($1,$2,'organization.logo_updated','tenant',$1::text,
-                jsonb_build_object('content_type',$3::text,'size_bytes',$4::integer))
-      `, [tenantId, user.id, contentType, logo.size]);
+        VALUES ($1,$2,'organization.logo_updated','tenant',$3::text,
+                jsonb_build_object('content_type',$4::text,'size_bytes',$5::integer))
+      `, [tenantId, user.id, tenantId, contentType, logo.size]);
       return { state: "saved" as const, row: await getOrganizationProfile(client, tenantId) };
     });
     if (result.state === "denied") {
