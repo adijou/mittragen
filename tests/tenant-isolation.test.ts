@@ -11,6 +11,7 @@ const sponsorPortalMigrationPath = new URL("../netlify/database/migrations/20260
 const contractMigrationPath = new URL("../netlify/database/migrations/20260909090000_contracts/migration.sql", import.meta.url);
 const demoSponsorMigrationPath = new URL("../netlify/database/migrations/20260910090000_mark-demo-sponsors/migration.sql", import.meta.url);
 const dossierMigrationPath = new URL("../netlify/database/migrations/20260910193000_excel_import_dossier/migration.sql", import.meta.url);
+const organizationMigrationPath = new URL("../netlify/database/migrations/20260911120000_organization_profile_branding/migration.sql", import.meta.url);
 
 test("all tenant-owned tables enforce row-level security", async () => {
   const sql = await readFile(migrationPath, "utf8");
@@ -125,4 +126,12 @@ test("dossier profile and imported package assignments remain tenant-bound", asy
   assert.match(sql, /ALTER TABLE tenant_sponsoring_profiles ENABLE ROW LEVEL SECURITY/i);
   assert.match(sql, /ALTER TABLE tenant_sponsoring_profiles FORCE ROW LEVEL SECURITY/i);
   assert.match(sql, /tenant_id = app_current_tenant_id\(\)/i);
+});
+
+test("organization profile consolidates dossier contacts and validates branding metadata", async () => {
+  const sql = await readFile(organizationMigrationPath, "utf8");
+  assert.match(sql, /contact_name = COALESCE\(tenant_contract_settings\.contact_name, EXCLUDED\.contact_name\)/i);
+  assert.match(sql, /contact_email = COALESCE\(tenant_contract_settings\.contact_email, EXCLUDED\.contact_email\)/i);
+  assert.match(sql, /logo_content_type IN \('image\/png', 'image\/jpeg'\)/i);
+  assert.match(sql, /brand_primary_color ~ '\^#\[0-9A-F\]\{6\}\$'/i);
 });

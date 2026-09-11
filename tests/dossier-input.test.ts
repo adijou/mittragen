@@ -9,25 +9,21 @@ const completeProfile = {
   clubPortrait: "Der Klub verbindet Breiten- und Leistungsfussball.",
   sponsorshipImpact: "Partnerschaften finanzieren Ausbildung und Infrastruktur.",
   audience: "Familien, Aktive und Unternehmen aus der Region.",
-  contactName: "Adrian Muster",
-  contactEmail: "sponsoring@example.ch",
-  contactPhone: "+41 79 000 00 00",
-  website: "https://example.ch",
 };
+const completeContact = { contactName: "Adrian Muster", contactEmail: "sponsoring@example.ch" };
 
 test("dossier profile accepts complete club content", () => {
   const parsed = parseDossierProfile(completeProfile);
   assert.equal(parsed.ok, true);
-  if (parsed.ok) assert.deepEqual(dossierMissingFields(parsed.value), []);
+  if (parsed.ok) assert.deepEqual(dossierMissingFields(parsed.value, completeContact), []);
 });
 
 test("dossier profile reports missing required editorial fields", () => {
-  const parsed = parseDossierProfile({ ...completeProfile, clubPortrait: "", contactEmail: null });
+  const parsed = parseDossierProfile({ ...completeProfile, clubPortrait: "" });
   assert.equal(parsed.ok, true);
-  if (parsed.ok) assert.deepEqual(dossierMissingFields(parsed.value), ["clubPortrait", "contactEmail"]);
+  if (parsed.ok) assert.deepEqual(dossierMissingFields(parsed.value, { ...completeContact, contactEmail: null }), ["clubPortrait", "contactEmail"]);
 });
 
-test("dossier profile rejects invalid contact data", () => {
-  assert.deepEqual(parseDossierProfile({ ...completeProfile, contactEmail: "wrong" }), { ok: false, error: "invalid_contactEmail" });
-  assert.deepEqual(parseDossierProfile({ ...completeProfile, website: "javascript:alert(1)" }), { ok: false, error: "invalid_website" });
+test("dossier profile only accepts editorial content", () => {
+  assert.deepEqual(parseDossierProfile({ ...completeProfile, audience: 5 }), { ok: false, error: "invalid_audience" });
 });

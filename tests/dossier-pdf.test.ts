@@ -7,6 +7,14 @@ test("dossier PDF contains portrait, packages and contact pages", async () => {
   const bytes = await createDossierPdf({
     organizationName: "FC Muster",
     generatedAt: "2026-09-10T12:00:00Z",
+    brand: {
+      primaryColor: "#9F1D35",
+      accentColor: "#F4C542",
+      logo: {
+        contentType: "image/png",
+        bytes: Uint8Array.from(Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64")),
+      },
+    },
     profile: {
       headline: "Gemeinsam für starke Teams und regionale Perspektiven",
       seasonLabel: "Saison 2026/27",

@@ -12,6 +12,11 @@ type DossierRight = {
 export type DossierPdfData = {
   organizationName: string;
   generatedAt: string;
+  brand: {
+    primaryColor: string;
+    accentColor: string;
+    logo?: { bytes: Uint8Array; contentType: "image/png" | "image/jpeg" };
+  };
   profile: {
     headline: string;
     seasonLabel: string | null;
@@ -36,14 +41,46 @@ export type DossierPdfData = {
 
 const A4 = { width: 595.28, height: 841.89 };
 const MARGIN = 52;
-const NAVY = rgb(11 / 255, 33 / 255, 68 / 255);
-const BLUE = rgb(25 / 255, 103 / 255, 255 / 255);
-const GOLD = rgb(233 / 255, 180 / 255, 76 / 255);
-const LIGHT_BLUE = rgb(237 / 255, 244 / 255, 255 / 255);
 const LIGHT_NEUTRAL = rgb(247 / 255, 249 / 255, 252 / 255);
 const LINE = rgb(220 / 255, 227 / 255, 236 / 255);
 const MUTED = rgb(67 / 255, 83 / 255, 107 / 255);
 const WHITE = rgb(1, 1, 1);
+
+type ColorTuple = [number, number, number];
+
+function colorTuple(value: string, fallback: string): ColorTuple {
+  const normalized = /^#[0-9a-f]{6}$/i.test(value) ? value : fallback;
+  return [1, 3, 5].map((index) => Number.parseInt(normalized.slice(index, index + 2), 16) / 255) as ColorTuple;
+}
+
+function luminance(color: ColorTuple) {
+  const linear = color.map((channel) => channel <= 0.03928 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4);
+  return linear[0] * 0.2126 + linear[1] * 0.7152 + linear[2] * 0.0722;
+}
+
+function mix(first: ColorTuple, second: ColorTuple, weight: number): ColorTuple {
+  return first.map((channel, index) => channel * (1 - weight) + second[index] * weight) as ColorTuple;
+}
+
+function darkSurface(color: ColorTuple) {
+  let result = color;
+  while (luminance(result) > 0.22) result = mix(result, [0, 0, 0], 0.18);
+  return result;
+}
+
+function accentOnWhite(color: ColorTuple) {
+  let result = color;
+  while (luminance(result) > 0.48) result = mix(result, [0, 0, 0], 0.16);
+  return result;
+}
+
+function accentOnDark(color: ColorTuple) {
+  let result = color;
+  while (luminance(result) < 0.5) result = mix(result, [1, 1, 1], 0.18);
+  return result;
+}
+
+const pdfColor = (value: ColorTuple) => rgb(value[0], value[1], value[2]);
 
 const paymentLabels: Record<string, string> = {
   annual: "jährlich",
@@ -116,6 +153,12 @@ export async function createDossierPdf(data: DossierPdfData): Promise<Uint8Array
   const pdf = await PDFDocument.create();
   const regular = await pdf.embedFont(StandardFonts.Helvetica);
   const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
+  const primary = colorTuple(data.brand.primaryColor, "#0B2144");
+  const accent = colorTuple(data.brand.accentColor, "#1967FF");
+  const NAVY = pdfColor(darkSurface(primary));
+  const BLUE = pdfColor(accentOnWhite(accent));
+  const GOLD = pdfColor(accentOnDark(accent));
+  const LIGHT_BLUE = pdfColor(mix(primary, [1, 1, 1], 0.88));
   const generatedAt = new Date(data.generatedAt);
   if (!Number.isNaN(generatedAt.valueOf())) {
     pdf.setCreationDate(generatedAt);
@@ -133,7 +176,17 @@ export async function createDossierPdf(data: DossierPdfData): Promise<Uint8Array
   cover.drawRectangle({ x: 0, y: A4.height - 10, width: A4.width, height: 10, color: BLUE });
   cover.drawRectangle({ x: MARGIN, y: A4.height - 156, width: 56, height: 5, color: GOLD });
   cover.drawText("SPONSORINGDOSSIER", { x: MARGIN, y: A4.height - 96, size: 10, font: bold, color: GOLD });
-  cover.drawText(fitLine(data.organizationName, bold, 15, A4.width - MARGIN * 2), { x: MARGIN, y: A4.height - 126, size: 15, font: bold, color: WHITE });
+  cover.drawText(fitLine(data.organizationName, bold, 15, data.brand.logo ? 330 : A4.width - MARGIN * 2), { x: MARGIN, y: A4.height - 126, size: 15, font: bold, color: WHITE });
+  if (data.brand.logo) {
+    const embedded = data.brand.logo.contentType === "image/png"
+      ? await pdf.embedPng(data.brand.logo.bytes)
+      : await pdf.embedJpg(data.brand.logo.bytes);
+    const fitted = embedded.scaleToFit(104, 66);
+    const boxX = A4.width - MARGIN - 124;
+    const boxY = A4.height - 151;
+    cover.drawRectangle({ x: boxX, y: boxY, width: 124, height: 82, color: WHITE, opacity: 0.96 });
+    cover.drawImage(embedded, { x: boxX + (124 - fitted.width) / 2, y: boxY + (82 - fitted.height) / 2, width: fitted.width, height: fitted.height });
+  }
   const headlineLines = linesFor(data.profile.headline, bold, 31, A4.width - MARGIN * 2).slice(0, 4);
   let coverY = A4.height - 230;
   for (const line of headlineLines) {

@@ -83,6 +83,8 @@ Das Repository ist für einen Git-basierten Netlify-Deploy vorbereitet:
 
 Der Netlify Vite Plugin ist eingebunden, damit Functions, Blobs, Umgebungsvariablen und weitere Netlify-Primitiven in den nächsten Ausbauschritten lokal und in Produktion konsistent genutzt werden können.
 
+Organisationskontakt, Vertragsabsender und Dossier-Branding werden zentral unter «Organisation» gepflegt. Logos liegen mandantengetrennt im site-weiten Blob Store `tenant-brand-assets`; die Datenbank speichert nur den geschützten Blob-Schlüssel, Dateityp und die automatisch vorgeschlagene, manuell anpassbare Farbpalette.
+
 ## Fachliche Grundlage
 
 Die Umsetzung folgt dem Pflichtenheft «Sponsoring-Plattform für die Fusion des FC Bösingen und des FC Wünnewil-Flamatt – mit SaaS-Fähigkeit ab dem ersten Release», Version 1.0 vom 8. September 2026.

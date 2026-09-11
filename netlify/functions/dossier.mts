@@ -1,9 +1,11 @@
+import { getStore } from "@netlify/blobs";
 import type { Config, Context } from "@netlify/functions";
 import { AuthError, verifyRequestOrigin } from "@netlify/identity";
 import { hasPermission, isResponse, json, requireUser, type MembershipRole } from "./_shared/auth.ts";
 import { createDossierPdf, type DossierPdfData } from "./_shared/dossier-pdf.ts";
 import { dossierMissingFields, parseDossierProfile, type DossierProfileInput } from "./_shared/dossier-input.ts";
 import { isUuid, withSession, type DatabaseClient } from "./_shared/database.ts";
+import { getOrganizationProfile, mapOrganizationProfile } from "./_shared/organization-profile.ts";
 
 type ProfileRow = {
   headline: string | null;
@@ -12,10 +14,6 @@ type ProfileRow = {
   club_portrait: string | null;
   sponsorship_impact: string | null;
   audience: string | null;
-  contact_name: string | null;
-  contact_email: string | null;
-  contact_phone: string | null;
-  website: string | null;
   updated_at: string | null;
 };
 
@@ -60,10 +58,6 @@ function mapProfile(row: ProfileRow | undefined, tenantName: string): DossierPro
     clubPortrait: row?.club_portrait ?? null,
     sponsorshipImpact: row?.sponsorship_impact ?? null,
     audience: row?.audience ?? null,
-    contactName: row?.contact_name ?? null,
-    contactEmail: row?.contact_email ?? null,
-    contactPhone: row?.contact_phone ?? null,
-    website: row?.website ?? null,
     updatedAt: row?.updated_at ?? null,
   };
 }
@@ -74,10 +68,12 @@ async function dossierData(client: DatabaseClient, tenantId: string) {
   `, [tenantId]);
   if (!tenant.rows[0]) return null;
   const profileResult = await client.query<ProfileRow>(`
-    SELECT headline, season_label, introduction, club_portrait, sponsorship_impact, audience,
-           contact_name, contact_email, contact_phone, website, updated_at::text
+    SELECT headline, season_label, introduction, club_portrait, sponsorship_impact, audience, updated_at::text
     FROM tenant_sponsoring_profiles WHERE tenant_id = $1 LIMIT 1
   `, [tenantId]);
+  const organizationRow = await getOrganizationProfile(client, tenantId);
+  const organization = mapOrganizationProfile(organizationRow);
+  if (!organizationRow || !organization) return null;
   const packages = await client.query<PackageRow>(`
     SELECT version.id, version.name, version.description, version.price_cents,
            version.duration_months, version.payment_plan
@@ -99,7 +95,9 @@ async function dossierData(client: DatabaseClient, tenantId: string) {
   return {
     tenant: tenant.rows[0],
     profile,
-    missingFields: dossierMissingFields(profile),
+    organization,
+    brandAsset: { key: organizationRow.logo_blob_key, contentType: organizationRow.logo_content_type },
+    missingFields: dossierMissingFields(profile, organization),
     packages: packages.rows.map((item) => ({
       id: item.id,
       name: item.name,
@@ -137,12 +135,35 @@ export default async (request: Request, context: Context) => {
       });
       if (result.state === "denied") return json({ error: "permission_denied" }, 403);
       if (result.state === "not_found") return json({ error: "tenant_not_found" }, 404);
-      if (!routes.pdf.test(pathname)) return json({ dossier: result.data });
+      if (!routes.pdf.test(pathname)) {
+        const publicData = {
+          tenant: result.data.tenant,
+          profile: result.data.profile,
+          organization: result.data.organization,
+          missingFields: result.data.missingFields,
+          packages: result.data.packages,
+        };
+        return json({ dossier: publicData });
+      }
       if (result.data.missingFields.length) return json({ error: "dossier_profile_incomplete", missingFields: result.data.missingFields }, 409);
       if (!result.data.packages.length) return json({ error: "dossier_packages_required" }, 409);
+      let logo: DossierPdfData["brand"]["logo"];
+      if (result.data.brandAsset.key && result.data.brandAsset.contentType) {
+        try {
+          const buffer = await getStore({ name: "tenant-brand-assets", consistency: "strong" }).get(result.data.brandAsset.key, { type: "arrayBuffer" }) as ArrayBuffer | null;
+          if (buffer) logo = { bytes: new Uint8Array(buffer), contentType: result.data.brandAsset.contentType };
+        } catch (error) {
+          console.error("dossier_logo_load_failed", { requestId: context.requestId, tenantId, error });
+        }
+      }
       const pdfData: DossierPdfData = {
         organizationName: result.data.tenant.name,
         generatedAt: new Date().toISOString(),
+        brand: {
+          primaryColor: result.data.organization.brandPrimaryColor,
+          accentColor: result.data.organization.brandAccentColor,
+          logo,
+        },
         profile: {
           headline: result.data.profile.headline ?? "",
           seasonLabel: result.data.profile.seasonLabel,
@@ -150,10 +171,10 @@ export default async (request: Request, context: Context) => {
           clubPortrait: result.data.profile.clubPortrait ?? "",
           sponsorshipImpact: result.data.profile.sponsorshipImpact ?? "",
           audience: result.data.profile.audience,
-          contactName: result.data.profile.contactName ?? "",
-          contactEmail: result.data.profile.contactEmail ?? "",
-          contactPhone: result.data.profile.contactPhone,
-          website: result.data.profile.website,
+          contactName: result.data.organization.contactName ?? "",
+          contactEmail: result.data.organization.contactEmail ?? "",
+          contactPhone: result.data.organization.contactPhone,
+          website: result.data.organization.website,
         },
         packages: result.data.packages,
       };
@@ -188,23 +209,21 @@ export default async (request: Request, context: Context) => {
       await client.query(`
         INSERT INTO tenant_sponsoring_profiles (
           tenant_id, headline, season_label, introduction, club_portrait, sponsorship_impact,
-          audience, contact_name, contact_email, contact_phone, website, updated_by
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+          audience, updated_by
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         ON CONFLICT (tenant_id) DO UPDATE SET
           headline = EXCLUDED.headline, season_label = EXCLUDED.season_label,
           introduction = EXCLUDED.introduction, club_portrait = EXCLUDED.club_portrait,
           sponsorship_impact = EXCLUDED.sponsorship_impact, audience = EXCLUDED.audience,
-          contact_name = EXCLUDED.contact_name, contact_email = EXCLUDED.contact_email,
-          contact_phone = EXCLUDED.contact_phone, website = EXCLUDED.website,
           updated_by = EXCLUDED.updated_by, updated_at = now()
       `, [tenantId, value.headline, value.seasonLabel, value.introduction, value.clubPortrait,
-        value.sponsorshipImpact, value.audience, value.contactName, value.contactEmail,
-        value.contactPhone, value.website, user.id]);
+        value.sponsorshipImpact, value.audience, user.id]);
+      const organization = mapOrganizationProfile(await getOrganizationProfile(client, tenantId));
       await client.query(`
         INSERT INTO audit_events (tenant_id, actor_user_id, action, object_type, object_id, metadata)
         VALUES ($1, $2, 'dossier.profile_updated', 'tenant_sponsoring_profile', $3::text,
                 jsonb_build_object('complete', $4::boolean))
-      `, [tenantId, user.id, tenantId, dossierMissingFields(value).length === 0]);
+      `, [tenantId, user.id, tenantId, organization ? dossierMissingFields(value, organization).length === 0 : false]);
       return { state: "saved" as const, data: await dossierData(client, tenantId) };
     });
     if (result.state === "denied") return json({ error: "permission_denied" }, 403);

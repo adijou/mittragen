@@ -7,11 +7,9 @@ export type DossierProfileInput = {
   clubPortrait: string | null;
   sponsorshipImpact: string | null;
   audience: string | null;
-  contactName: string | null;
-  contactEmail: string | null;
-  contactPhone: string | null;
-  website: string | null;
 };
+
+export type DossierContact = { contactName: string | null; contactEmail: string | null };
 
 const fields = {
   headline: { maximum: 160, minimum: 2 },
@@ -20,10 +18,6 @@ const fields = {
   clubPortrait: { maximum: 5000 },
   sponsorshipImpact: { maximum: 5000 },
   audience: { maximum: 3000 },
-  contactName: { maximum: 160 },
-  contactEmail: { maximum: 254 },
-  contactPhone: { maximum: 80 },
-  website: { maximum: 500 },
 } as const;
 
 export function parseDossierProfile(body: unknown): Result<DossierProfileInput> {
@@ -39,27 +33,16 @@ export function parseDossierProfile(body: unknown): Result<DossierProfileInput> 
     }
     value[field] = normalized || null;
   }
-  if (value.contactEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.contactEmail)) {
-    return { ok: false, error: "invalid_contactEmail" };
-  }
-  if (value.website) {
-    try {
-      const url = new URL(value.website);
-      if (!['http:', 'https:'].includes(url.protocol)) return { ok: false, error: "invalid_website" };
-    } catch {
-      return { ok: false, error: "invalid_website" };
-    }
-  }
   return { ok: true, value };
 }
 
-export function dossierMissingFields(profile: DossierProfileInput) {
+export function dossierMissingFields(profile: DossierProfileInput, contact: DossierContact) {
   return [
     ["headline", profile.headline],
     ["introduction", profile.introduction],
     ["clubPortrait", profile.clubPortrait],
     ["sponsorshipImpact", profile.sponsorshipImpact],
-    ["contactName", profile.contactName],
-    ["contactEmail", profile.contactEmail],
+    ["contactName", contact.contactName],
+    ["contactEmail", contact.contactEmail],
   ].filter(([, content]) => !content).map(([field]) => field);
 }

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import type { OrganizationProfile } from "./OrganizationSettings";
 
 type DossierProfile = {
   headline: string | null;
@@ -7,10 +8,6 @@ type DossierProfile = {
   clubPortrait: string | null;
   sponsorshipImpact: string | null;
   audience: string | null;
-  contactName: string | null;
-  contactEmail: string | null;
-  contactPhone: string | null;
-  website: string | null;
   updatedAt: string | null;
 };
 
@@ -27,6 +24,7 @@ type DossierPackage = {
 type DossierData = {
   tenant: { name: string; slug: string };
   profile: DossierProfile;
+  organization: OrganizationProfile;
   missingFields: string[];
   packages: DossierPackage[];
 };
@@ -40,10 +38,6 @@ const emptyForm: ProfileForm = {
   clubPortrait: "",
   sponsorshipImpact: "",
   audience: "",
-  contactName: "",
-  contactEmail: "",
-  contactPhone: "",
-  website: "",
 };
 
 const missingLabels: Record<string, string> = {
@@ -79,7 +73,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   return body;
 }
 
-export function SponsoringDossier({ tenantId, canManage }: { tenantId: string; canManage: boolean }) {
+export function SponsoringDossier({ tenantId, canManage, onOpenOrganization }: { tenantId: string; canManage: boolean; onOpenOrganization: () => void }) {
   const [data, setData] = useState<DossierData | null>(null);
   const [form, setForm] = useState<ProfileForm>(emptyForm);
   const [loading, setLoading] = useState(true);
@@ -107,17 +101,16 @@ export function SponsoringDossier({ tenantId, canManage }: { tenantId: string; c
     setError("");
     setMessage("");
     try {
-      const website = form.website.trim() && !/^https?:\/\//i.test(form.website) ? `https://${form.website.trim()}` : form.website.trim();
       const result = await request<{ dossier: DossierData }>(`/api/dossier/${tenantId}`, {
         method: "PATCH",
-        body: JSON.stringify({ ...form, website: website || null }),
+        body: JSON.stringify(form),
       });
       setData(result.dossier);
       setForm(formFromProfile(result.dossier.profile));
       setMessage(result.dossier.missingFields.length ? "Inhalte gespeichert. Für das PDF fehlen noch Pflichtangaben." : "Klubprofil gespeichert. Das Dossier ist inhaltlich bereit.");
     } catch (reason) {
       const code = reason instanceof Error ? reason.message : "dossier_save_failed";
-      setError(code === "permission_denied" ? "Nur Owner können die Dossierinhalte bearbeiten." : code === "invalid_contactEmail" ? "Bitte eine gültige Kontakt-E-Mail eintragen." : code === "invalid_website" ? "Bitte eine gültige Website-Adresse eintragen." : "Die Dossierinhalte konnten nicht gespeichert werden.");
+      setError(code === "permission_denied" ? "Nur Owner können die Dossierinhalte bearbeiten." : "Die Dossierinhalte konnten nicht gespeichert werden.");
     } finally {
       setBusy("");
     }
@@ -164,18 +157,20 @@ export function SponsoringDossier({ tenantId, canManage }: { tenantId: string; c
 
     <div className="dossier-layout">
       <form className="dossier-profile" onSubmit={save}>
-        <div><p className="eyebrow">Klubprofil</p><h2>Inhalte des Dossiers</h2><p>Die Pflichtfelder bilden Einleitung und Klubkapitel. Zielgruppe, Saison, Telefon und Website sind optional.</p></div>
+        <div><p className="eyebrow">Klubprofil</p><h2>Redaktionelle Inhalte</h2><p>Hier werden nur die Texte des Dossiers gepflegt. Kontakt, Logo und Farben stammen zentral aus «Organisation».</p></div>
         <label><span>Titel des Dossiers <em>Pflicht</em></span><input required minLength={2} maxLength={160} disabled={!canManage} value={form.headline} onChange={(event) => update("headline", event.target.value)} placeholder="Gemeinsam für starke Teams"/></label>
         <label><span>Saison oder Zeitraum</span><input maxLength={80} disabled={!canManage} value={form.seasonLabel} onChange={(event) => update("seasonLabel", event.target.value)} placeholder="Saison 2026/27"/></label>
         <label><span>Kurze Einleitung <em>Pflicht</em></span><textarea required maxLength={2000} disabled={!canManage} value={form.introduction} onChange={(event) => update("introduction", event.target.value)} placeholder="Was verbindet den Klub mit seinen Partnern?"/></label>
         <label><span>Klubporträt <em>Pflicht</em></span><textarea required maxLength={5000} disabled={!canManage} value={form.clubPortrait} onChange={(event) => update("clubPortrait", event.target.value)} placeholder="Geschichte, Teams, Nachwuchs, Werte und regionale Verankerung"/></label>
         <label><span>Wirkung des Sponsorings <em>Pflicht</em></span><textarea required maxLength={5000} disabled={!canManage} value={form.sponsorshipImpact} onChange={(event) => update("sponsorshipImpact", event.target.value)} placeholder="Welche konkreten Angebote und Entwicklungen werden ermöglicht?"/></label>
         <label><span>Zielgruppen und Reichweite</span><textarea maxLength={3000} disabled={!canManage} value={form.audience} onChange={(event) => update("audience", event.target.value)} placeholder="Mitglieder, Familien, Region, Spieltage und digitale Kanäle"/></label>
-        <div className="dossier-contact-grid"><label><span>Kontaktperson <em>Pflicht</em></span><input required maxLength={160} disabled={!canManage} value={form.contactName} onChange={(event) => update("contactName", event.target.value)}/></label><label><span>Kontakt-E-Mail <em>Pflicht</em></span><input required type="email" maxLength={254} disabled={!canManage} value={form.contactEmail} onChange={(event) => update("contactEmail", event.target.value)}/></label><label><span>Telefon</span><input maxLength={80} disabled={!canManage} value={form.contactPhone} onChange={(event) => update("contactPhone", event.target.value)}/></label><label><span>Website</span><input maxLength={500} disabled={!canManage} value={form.website} onChange={(event) => update("website", event.target.value)} placeholder="www.verein.ch"/></label></div>
         {canManage ? <button className="access-primary" disabled={busy !== ""}>{busy === "save" ? "Wird gespeichert …" : "Klubprofil speichern"}</button> : <p className="organization-readonly">Nur Owner können die Dossierinhalte bearbeiten.</p>}
       </form>
 
-      <aside className="dossier-packages"><div><p className="eyebrow">Automatisch aus Paketen</p><h2>{data.packages.length} Pakete im Dossier</h2><p>Berücksichtigt werden aktuell gültige, veröffentlichte und öffentlich sichtbare Paketversionen.</p></div>{data.packages.length === 0 ? <p className="import-empty">Noch keine geeigneten Pakete vorhanden.</p> : <div>{data.packages.map((item) => <article key={item.id}><span>{item.durationMonths} Monate · {paymentLabels[item.paymentPlan] ?? item.paymentPlan}</span><h3>{item.name}</h3><strong>{formatChf(item.priceCents)}</strong>{item.description && <p>{item.description}</p>}<small>{item.rights.length} Leistungen</small></article>)}</div>}</aside>
+      <aside className="dossier-sidebar">
+        <section className="dossier-organization"><div><p className="eyebrow">Aus Organisation</p><h2>Kontakt & Erscheinungsbild</h2></div><div className="dossier-brand-preview" style={{ background: `linear-gradient(145deg, ${data.organization.brandPrimaryColor}, ${data.organization.brandAccentColor})` }}>{data.organization.logoAvailable ? <img src={`/api/organization/${tenantId}/logo?v=${encodeURIComponent(data.organization.logoUpdatedAt ?? "current")}`} alt="Organisationslogo"/> : <span>Standardgestaltung</span>}</div><dl><div><dt>Kontakt</dt><dd>{data.organization.contactName || "Noch offen"}</dd></div><div><dt>E-Mail</dt><dd>{data.organization.contactEmail || "Noch offen"}</dd></div><div><dt>Farben</dt><dd><i style={{ background: data.organization.brandPrimaryColor }}></i><i style={{ background: data.organization.brandAccentColor }}></i></dd></div></dl>{canManage && <button type="button" className="access-secondary" onClick={onOpenOrganization}>In Organisation bearbeiten</button>}</section>
+        <section className="dossier-packages"><div><p className="eyebrow">Automatisch aus Paketen</p><h2>{data.packages.length} Pakete im Dossier</h2><p>Berücksichtigt werden aktuell gültige, veröffentlichte und öffentlich sichtbare Paketversionen.</p></div>{data.packages.length === 0 ? <p className="import-empty">Noch keine geeigneten Pakete vorhanden.</p> : <div>{data.packages.map((item) => <article key={item.id}><span>{item.durationMonths} Monate · {paymentLabels[item.paymentPlan] ?? item.paymentPlan}</span><h3>{item.name}</h3><strong>{formatChf(item.priceCents)}</strong>{item.description && <p>{item.description}</p>}<small>{item.rights.length} Leistungen</small></article>)}</div>}</section>
+      </aside>
     </div>
   </section>;
 }
