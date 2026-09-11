@@ -1,7 +1,11 @@
 export type BrandColors = { primary: string; accent: string };
 export type Pixel = { red: number; green: number; blue: number; alpha?: number };
+export type PreparedLogo = { file: File; colors: BrandColors; optimized: boolean };
 
 const FALLBACK: BrandColors = { primary: "#0B2144", accent: "#1967FF" };
+const MAX_UPLOAD_BYTES = 2 * 1024 * 1024;
+const MAX_RENDER_DIMENSION = 2400;
+const MIN_RENDER_DIMENSION = 16;
 
 function rgbToHex(red: number, green: number, blue: number) {
   return `#${[red, green, blue].map((channel) => Math.max(0, Math.min(255, Math.round(channel))).toString(16).padStart(2, "0")).join("")}`.toUpperCase();
@@ -69,10 +73,18 @@ async function imageFromFile(file: File) {
   }
 }
 
-export async function extractBrandColors(file: File): Promise<BrandColors> {
-  const image = await imageFromFile(file);
+function closeImage(image: ImageBitmap | HTMLImageElement) {
+  if ("close" in image && typeof image.close === "function") image.close();
+}
+
+function imageDimensions(image: ImageBitmap | HTMLImageElement) {
   const width = "naturalWidth" in image ? image.naturalWidth : image.width;
   const height = "naturalHeight" in image ? image.naturalHeight : image.height;
+  return { width, height };
+}
+
+function colorsFromImage(image: ImageBitmap | HTMLImageElement): BrandColors {
+  const { width, height } = imageDimensions(image);
   const scale = Math.min(1, 96 / Math.max(width, height));
   const canvas = document.createElement("canvas");
   canvas.width = Math.max(1, Math.round(width * scale));
@@ -80,11 +92,80 @@ export async function extractBrandColors(file: File): Promise<BrandColors> {
   const context = canvas.getContext("2d", { willReadFrequently: true });
   if (!context) return FALLBACK;
   context.drawImage(image, 0, 0, canvas.width, canvas.height);
-  if ("close" in image && typeof image.close === "function") image.close();
   const data = context.getImageData(0, 0, canvas.width, canvas.height).data;
   const pixels: Pixel[] = [];
   for (let index = 0; index < data.length; index += 4) {
     pixels.push({ red: data[index], green: data[index + 1], blue: data[index + 2], alpha: data[index + 3] });
   }
   return deriveBrandColors(pixels);
+}
+
+export function normalizedLogoDimensions(width: number, height: number, maximum = MAX_RENDER_DIMENSION) {
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width < MIN_RENDER_DIMENSION || height < MIN_RENDER_DIMENSION) return null;
+  let scale = Math.min(1, maximum / Math.max(width, height));
+  if (Math.min(width, height) * scale < MIN_RENDER_DIMENSION) {
+    scale = MIN_RENDER_DIMENSION / Math.min(width, height);
+  }
+  const normalized = { width: Math.round(width * scale), height: Math.round(height * scale) };
+  return normalized.width <= 6000 && normalized.height <= 6000 && normalized.width * normalized.height <= 30_000_000
+    ? normalized
+    : null;
+}
+
+function canvasBlob(canvas: HTMLCanvasElement, contentType: "image/png" | "image/jpeg") {
+  return new Promise<Blob>((resolve, reject) => canvas.toBlob(
+    (blob) => blob ? resolve(blob) : reject(new Error("logo_normalization_failed")),
+    contentType,
+    contentType === "image/jpeg" ? 0.9 : undefined,
+  ));
+}
+
+async function normalizedLogoBlob(image: ImageBitmap | HTMLImageElement, contentType: "image/png" | "image/jpeg") {
+  const source = imageDimensions(image);
+  const initial = normalizedLogoDimensions(source.width, source.height);
+  if (!initial) throw new Error("invalid_logo_dimensions");
+  let width = initial.width;
+  let height = initial.height;
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("logo_normalization_failed");
+    context.drawImage(image, 0, 0, width, height);
+    const blob = await canvasBlob(canvas, contentType);
+    if (blob.size <= MAX_UPLOAD_BYTES) return { blob, width, height };
+    width = Math.max(MIN_RENDER_DIMENSION, Math.round(width * 0.72));
+    height = Math.max(MIN_RENDER_DIMENSION, Math.round(height * 0.72));
+  }
+  throw new Error("invalid_logo_size");
+}
+
+export async function extractBrandColors(file: File): Promise<BrandColors> {
+  const image = await imageFromFile(file);
+  try {
+    return colorsFromImage(image);
+  } finally {
+    closeImage(image);
+  }
+}
+
+export async function prepareLogoUpload(file: File): Promise<PreparedLogo> {
+  const image = await imageFromFile(file);
+  try {
+    const colors = colorsFromImage(image);
+    const contentType = file.type === "image/jpeg" ? "image/jpeg" : "image/png";
+    const prepared = await normalizedLogoBlob(image, contentType);
+    const baseName = file.name.replace(/\.[^.]+$/, "") || "logo";
+    const extension = contentType === "image/jpeg" ? "jpg" : "png";
+    return {
+      colors,
+      file: new File([prepared.blob], `${baseName}.${extension}`, { type: contentType, lastModified: Date.now() }),
+      optimized: prepared.width !== imageDimensions(image).width
+        || prepared.height !== imageDimensions(image).height
+        || prepared.blob.size !== file.size,
+    };
+  } finally {
+    closeImage(image);
+  }
 }

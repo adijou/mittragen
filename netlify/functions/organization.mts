@@ -174,6 +174,7 @@ export default async (request: Request, context: Context) => {
 
   let newKey = "";
   let oldKey: string | null = null;
+  let saveStage: "access" | "blob" | "database" = "access";
   try {
     const access = await withSession(user.id, tenantId, async (client) => {
       const role = await membershipRole(client, tenantId, user.id);
@@ -185,7 +186,9 @@ export default async (request: Request, context: Context) => {
     oldKey = access.oldKey;
     newKey = `tenant-logos/${tenantId}/${crypto.randomUUID()}`;
     const store = getStore({ name: STORE_NAME, consistency: "strong" });
+    saveStage = "blob";
     await store.set(newKey, buffer, { metadata: { contentType, uploadedAt: new Date().toISOString() } });
+    saveStage = "database";
     const result = await withSession(user.id, tenantId, async (client) => {
       const role = await membershipRole(client, tenantId, user.id);
       if (!role || !hasPermission(role, "tenant:manage")) return { state: "denied" as const };
@@ -218,8 +221,11 @@ export default async (request: Request, context: Context) => {
     return json({ organization: mapOrganizationProfile(result.row) });
   } catch (error) {
     if (newKey) await getStore({ name: STORE_NAME, consistency: "strong" }).delete(newKey).catch(() => undefined);
-    console.error("organization_logo_save_failed", { requestId: context.requestId, tenantId, error });
-    return json({ error: "organization_logo_save_failed", requestId: context.requestId }, 500);
+    const code = saveStage === "blob" ? "organization_logo_storage_failed"
+      : saveStage === "database" ? "organization_logo_metadata_failed"
+      : "organization_logo_access_failed";
+    console.error(code, { requestId: context.requestId, tenantId, error });
+    return json({ error: code, requestId: context.requestId }, saveStage === "blob" ? 503 : 500);
   }
 };
 

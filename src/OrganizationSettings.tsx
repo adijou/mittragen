@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { extractBrandColors } from "./brandColors";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { prepareLogoUpload } from "./brandColors";
 
 export type OrganizationTenant = {
   id: string;
@@ -63,11 +63,31 @@ const emptyProfile: ProfileForm = {
   brandAccentColor: "#1967FF",
 };
 
+class ApiError extends Error {
+  constructor(public code: string, public requestId?: string) { super(code); }
+}
+
 async function request<T>(path: string, options?: RequestInit) {
   const response = await fetch(path, options);
-  const body = await response.json().catch(() => ({})) as T & { error?: string };
-  if (!response.ok) throw new Error(body.error ?? `request_failed_${response.status}`);
+  const body = await response.json().catch(() => ({})) as T & { error?: string; requestId?: string };
+  if (!response.ok) throw new ApiError(body.error ?? `request_failed_${response.status}`, body.requestId);
   return body;
+}
+
+function profileError(reason: unknown) {
+  const code = reason instanceof ApiError ? reason.code : reason instanceof Error ? reason.message : "organization_save_failed";
+  const reference = reason instanceof ApiError && reason.requestId ? ` Fehler-ID: ${reason.requestId}.` : "";
+  const message = code === "invalid_logo_size" ? "Das Logo darf nach der Optimierung höchstens 2 MB gross sein."
+    : code === "invalid_logo_type" || code === "invalid_logo_file" ? "Die Datei konnte nicht als PNG- oder JPEG-Logo verarbeitet werden."
+    : code === "logo_normalization_failed" ? "Das Logo konnte im Browser nicht für die Speicherung vorbereitet werden. Bitte versuchen Sie eine PNG- oder JPEG-Datei."
+    : code === "invalid_logo_dimensions" ? "Das Logo benötigt eine gültige Bildgrösse von mindestens 16 × 16 Pixel."
+    : code === "invalid_contact_email" ? "Bitte eine gültige Kontakt-E-Mail eintragen."
+    : code === "invalid_website" ? "Bitte eine gültige Website-Adresse eintragen."
+    : code === "organization_logo_storage_failed" ? "Das Logo konnte im Dateispeicher nicht gesichert werden."
+    : code === "organization_logo_metadata_failed" ? "Das Logo wurde übertragen, aber die Zuordnung zur Organisation konnte nicht gespeichert werden."
+    : code === "organization_logo_access_failed" ? "Die Berechtigung für die Logo-Speicherung konnte nicht geprüft werden."
+    : "Das Organisationsprofil konnte nicht gespeichert werden.";
+  return `${message}${reference}`;
 }
 
 async function updateOrganization(tenantId: string, name: string, kind: string) {
@@ -97,6 +117,7 @@ export function OrganizationSettings({ tenant, canManage, onSaved }: {
   const [saving, setSaving] = useState("");
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const logoInputRef = useRef<HTMLInputElement>(null);
   const logoPreview = useMemo(() => logoFile ? URL.createObjectURL(logoFile) : null, [logoFile]);
 
   const loadProfile = async () => {
@@ -143,40 +164,66 @@ export function OrganizationSettings({ tenant, canManage, onSaved }: {
       return;
     }
     try {
-      const colors = await extractBrandColors(file);
-      setLogoFile(file);
-      setForm((current) => ({ ...current, brandPrimaryColor: colors.primary, brandAccentColor: colors.accent }));
-      setMessage("Logo analysiert. Die erkannten Farben können vor dem Speichern angepasst werden.");
-    } catch {
-      setLogoFile(file);
-      setError("Die Farben konnten nicht automatisch erkannt werden. Bitte die Farbwerte manuell wählen.");
+      const prepared = await prepareLogoUpload(file);
+      setLogoFile(prepared.file);
+      setForm((current) => ({ ...current, brandPrimaryColor: prepared.colors.primary, brandAccentColor: prepared.colors.accent }));
+      setMessage(prepared.optimized
+        ? "Logo analysiert und für Dossier sowie Speicherung optimiert. Die Farben können vor dem Speichern angepasst werden."
+        : "Logo analysiert. Die erkannten Farben können vor dem Speichern angepasst werden.");
+    } catch (reason) {
+      event.target.value = "";
+      setLogoFile(null);
+      setError(profileError(reason));
     }
+  };
+
+  const uploadLogo = async (file: File) => {
+    const upload = new FormData();
+    upload.append("logo", file);
+    upload.append("brandPrimaryColor", form.brandPrimaryColor);
+    upload.append("brandAccentColor", form.brandAccentColor);
+    return request<{ organization: OrganizationProfile }>(`/api/organization/${tenant.id}/logo`, { method: "POST", body: upload });
+  };
+
+  const submitLogo = async () => {
+    if (!logoFile) return;
+    setSaving("logo"); setError(""); setMessage("");
+    try {
+      const result = await uploadLogo(logoFile);
+      setProfile(result.organization);
+      setForm((current) => ({ ...current, brandPrimaryColor: result.organization.brandPrimaryColor, brandAccentColor: result.organization.brandAccentColor }));
+      setLogoFile(null);
+      if (logoInputRef.current) logoInputRef.current.value = "";
+      setMessage("Logo und Dossierfarben wurden gespeichert.");
+    } catch (reason) {
+      setError(profileError(reason));
+    } finally { setSaving(""); }
   };
 
   const submitProfile = async (event: React.FormEvent) => {
     event.preventDefault();
     setSaving("profile"); setError(""); setMessage("");
+    let logoWasSaved = false;
     try {
       const website = form.website?.trim() && !/^https?:\/\//i.test(form.website) ? `https://${form.website.trim()}` : form.website?.trim();
-      let result = await request<{ organization: OrganizationProfile }>(`/api/organization/${tenant.id}`, {
+      if (logoFile) {
+        const uploaded = await uploadLogo(logoFile);
+        logoWasSaved = true;
+        setProfile(uploaded.organization);
+        setLogoFile(null);
+        if (logoInputRef.current) logoInputRef.current.value = "";
+      }
+      const result = await request<{ organization: OrganizationProfile }>(`/api/organization/${tenant.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ...form, website: website || null, noticeMonths: form.renewalMode === "annual_auto" ? form.noticeMonths : null }),
       });
-      if (logoFile) {
-        const upload = new FormData();
-        upload.append("logo", logoFile);
-        upload.append("brandPrimaryColor", form.brandPrimaryColor);
-        upload.append("brandAccentColor", form.brandAccentColor);
-        result = await request<{ organization: OrganizationProfile }>(`/api/organization/${tenant.id}/logo`, { method: "POST", body: upload });
-      }
       setProfile(result.organization);
       setForm(formFromProfile(result.organization));
-      setLogoFile(null);
-      setMessage(logoFile ? "Organisationsprofil, Logo und Dossierfarben wurden gespeichert." : "Das zentrale Organisationsprofil wurde gespeichert.");
+      setMessage(logoWasSaved ? "Organisationsprofil, Logo und Dossierfarben wurden gespeichert." : "Das zentrale Organisationsprofil wurde gespeichert.");
     } catch (reason) {
-      const code = reason instanceof Error ? reason.message : "organization_save_failed";
-      setError(code === "invalid_logo_size" ? "Das Logo darf höchstens 2 MB gross sein." : code === "invalid_logo_type" || code === "invalid_logo_file" ? "Die Datei ist kein lesbares PNG- oder JPEG-Logo." : code === "invalid_logo_dimensions" ? "Das Logo muss zwischen 16 × 16 und 6000 × 6000 Pixel gross sein." : code === "invalid_contact_email" ? "Bitte eine gültige Kontakt-E-Mail eintragen." : code === "invalid_website" ? "Bitte eine gültige Website-Adresse eintragen." : "Das Organisationsprofil konnte nicht gespeichert werden.");
+      setError(profileError(reason));
+      if (logoWasSaved) setMessage("Das Logo wurde gespeichert; die übrigen Profilangaben konnten noch nicht übernommen werden.");
     } finally { setSaving(""); }
   };
 
@@ -203,11 +250,12 @@ export function OrganizationSettings({ tenant, canManage, onSaved }: {
             {(logoPreview || profile?.logoAvailable) ? <img src={logoPreview ?? `/api/organization/${tenant.id}/logo?v=${encodeURIComponent(profile?.logoUpdatedAt ?? "current")}`} alt="Logo der Organisation"/> : <span>Noch kein Logo</span>}
           </div>
           <div className="organization-branding__controls">
-            <label><span>Logo hochladen</span><input type="file" accept="image/png,image/jpeg" disabled={!canManage || saving !== ""} onChange={(event) => void chooseLogo(event)}/><small>PNG oder JPEG, maximal 2 MB. Transparente PNGs werden unterstützt.</small></label>
+            <label><span>Logo hochladen</span><input ref={logoInputRef} type="file" accept="image/png,image/jpeg" disabled={!canManage || saving !== ""} onChange={(event) => void chooseLogo(event)}/><small>PNG oder JPEG, maximal 2 MB. Transparente PNGs werden unterstützt.</small></label>
             <div className="organization-color-fields">
               <label><span>Primärfarbe</span><span className="organization-color-input"><input type="color" disabled={!canManage} value={form.brandPrimaryColor} onChange={(event) => update("brandPrimaryColor", event.target.value.toUpperCase())}/><input pattern="#[0-9A-Fa-f]{6}" maxLength={7} disabled={!canManage} value={form.brandPrimaryColor} onChange={(event) => update("brandPrimaryColor", event.target.value.toUpperCase())}/></span></label>
               <label><span>Akzentfarbe</span><span className="organization-color-input"><input type="color" disabled={!canManage} value={form.brandAccentColor} onChange={(event) => update("brandAccentColor", event.target.value.toUpperCase())}/><input pattern="#[0-9A-Fa-f]{6}" maxLength={7} disabled={!canManage} value={form.brandAccentColor} onChange={(event) => update("brandAccentColor", event.target.value.toUpperCase())}/></span></label>
             </div>
+            {canManage && logoFile && <button type="button" className="access-secondary" disabled={saving !== ""} onClick={() => void submitLogo()}>{saving === "logo" ? "Logo wird gespeichert …" : "Logo und Farben speichern"}</button>}
           </div>
         </div>
       </section>
