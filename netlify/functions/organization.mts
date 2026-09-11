@@ -4,7 +4,7 @@ import { AuthError, verifyRequestOrigin } from "@netlify/identity";
 import { PDFDocument } from "pdf-lib";
 import { hasPermission, isResponse, json, requireUser, type MembershipRole } from "./_shared/auth.ts";
 import { isUuid, withSession, type DatabaseClient } from "./_shared/database.ts";
-import { parseBrandColors, parseOrganizationProfile } from "./_shared/organization-profile-input.ts";
+import { isLogoUpload, parseBrandColors, parseOrganizationProfile } from "./_shared/organization-profile-input.ts";
 import { getOrganizationProfile, mapOrganizationProfile } from "./_shared/organization-profile.ts";
 
 const MAX_LOGO_BYTES = 2 * 1024 * 1024;
@@ -154,7 +154,7 @@ export default async (request: Request, context: Context) => {
   if (!routes.logo.test(pathname) || request.method !== "POST") return json({ error: "method_not_allowed" }, 405);
   const form = await request.formData().catch(() => null);
   const logo = form?.get("logo");
-  if (!(logo instanceof File) || logo.size === 0 || logo.size > MAX_LOGO_BYTES) return json({ error: "invalid_logo_size" }, 422);
+  if (!isLogoUpload(logo) || logo.size === 0 || logo.size > MAX_LOGO_BYTES) return json({ error: "invalid_logo_size" }, 422);
   const colors = parseBrandColors(form?.get("brandPrimaryColor"), form?.get("brandAccentColor"));
   if (!colors.ok) return json({ error: colors.error }, 422);
   const buffer = await logo.arrayBuffer();

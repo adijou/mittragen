@@ -21,6 +21,19 @@ export type OrganizationProfileInput = {
   brandAccentColor: string;
 };
 
+export type LogoUpload = {
+  size: number;
+  arrayBuffer: () => Promise<ArrayBuffer>;
+};
+
+export function isLogoUpload(value: unknown): value is LogoUpload {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Partial<LogoUpload>;
+  return Number.isSafeInteger(candidate.size)
+    && Number(candidate.size) >= 0
+    && typeof candidate.arrayBuffer === "function";
+}
+
 function optionalText(value: unknown, maximum: number) {
   if (value === null || value === undefined || value === "") return null;
   if (typeof value !== "string") return undefined;

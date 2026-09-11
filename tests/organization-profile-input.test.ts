@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { parseBrandColors, parseOrganizationProfile } from "../netlify/functions/_shared/organization-profile-input.ts";
+import { isLogoUpload, parseBrandColors, parseOrganizationProfile } from "../netlify/functions/_shared/organization-profile-input.ts";
 
 const complete = {
   legalName: "FC Muster",
@@ -34,4 +34,16 @@ test("organization profile combines dossier contact, contract data and branding"
 test("organization profile validates public URLs and brand colors", () => {
   assert.deepEqual(parseOrganizationProfile({ ...complete, website: "javascript:alert(1)" }), { ok: false, error: "invalid_website" });
   assert.deepEqual(parseBrandColors("#123456", "red"), { ok: false, error: "invalid_brand_colors" });
+});
+
+test("logo uploads are accepted by capability instead of runtime-specific File identity", () => {
+  const crossRuntimeUpload = {
+    size: 1024,
+    arrayBuffer: async () => new ArrayBuffer(1024),
+  };
+
+  assert.equal(isLogoUpload(crossRuntimeUpload), true);
+  assert.equal(isLogoUpload({ size: 1024 }), false);
+  assert.equal(isLogoUpload({ size: -1, arrayBuffer: async () => new ArrayBuffer(0) }), false);
+  assert.equal(isLogoUpload("logo.png"), false);
 });
