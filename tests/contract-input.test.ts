@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   parseContractAcknowledgement,
+  parseContractAdminConfirmation,
   parseContractConfirmation,
   parseContractCreate,
   parseContractDispatch,
@@ -78,4 +79,26 @@ test("contract dispatch validates and normalizes the designated signer", () => {
 test("account and one-time confirmation both require explicit acknowledgement", () => {
   assert.deepEqual(parseContractAcknowledgement({ acknowledged: false }), { ok: false, error: "contract_acknowledgement_required" });
   assert.deepEqual(parseContractAcknowledgement({ acknowledged: true }), { ok: true, value: { acknowledged: true } });
+});
+
+test("administrative legacy confirmation requires an original date, evidence and explicit acknowledgement", () => {
+  assert.deepEqual(parseContractAdminConfirmation({
+    signingAuthorityName: "Max Muster",
+    signingAuthorityRole: "",
+    confirmedOn: "2024-06-15",
+    evidenceNote: "Beidseitig unterzeichneter Papiervertrag liegt im Vereinsarchiv.",
+    acknowledged: true,
+  }), {
+    ok: true,
+    value: {
+      signingAuthorityName: "Max Muster",
+      signingAuthorityRole: "Vertretungsberechtigte Person",
+      confirmedOn: "2024-06-15",
+      evidenceNote: "Beidseitig unterzeichneter Papiervertrag liegt im Vereinsarchiv.",
+      acknowledged: true,
+    },
+  });
+  assert.deepEqual(parseContractAdminConfirmation({ signingAuthorityName: "Max", confirmedOn: "2024-02-30", evidenceNote: "Archiv", acknowledged: true }), { ok: false, error: "invalid_legacy_confirmation_date" });
+  assert.deepEqual(parseContractAdminConfirmation({ signingAuthorityName: "Max", confirmedOn: "2024-06-15", evidenceNote: "", acknowledged: true }), { ok: false, error: "legacy_confirmation_evidence_required" });
+  assert.deepEqual(parseContractAdminConfirmation({ signingAuthorityName: "Max", confirmedOn: "2024-06-15", evidenceNote: "Archiv", acknowledged: false }), { ok: false, error: "admin_contract_acknowledgement_required" });
 });

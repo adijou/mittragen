@@ -43,6 +43,9 @@ type PublicContract = {
   confirmed_email: string | null;
   confirmed_name: string | null;
   confirmed_role: string | null;
+  confirmation_mode: "authenticated_account" | "one_time_link" | "legacy_portal" | "admin_legacy" | null;
+  confirmation_recorded_at: string | null;
+  confirmation_note: string | null;
 };
 
 function verifyMutation(request: Request): Response | null {
@@ -74,7 +77,8 @@ async function loadContract(client: DatabaseClient, signing: SigningRow) {
     SELECT id, contract_number, version_number, title, status, signing_method, snapshot_hash,
            organization_snapshot, sponsor_snapshot, package_snapshot, terms_snapshot,
            special_agreements, created_at::text, released_at::text, confirmed_at::text,
-           confirmed_email, confirmed_name, confirmed_role
+           confirmed_email, confirmed_name, confirmed_role, confirmation_mode,
+           confirmation_recorded_at::text, confirmation_note
     FROM sponsorship_contracts
     WHERE tenant_id = $1 AND id = $2 AND sponsor_id = $3 AND status IN ('released', 'confirmed')
     LIMIT 1
@@ -98,6 +102,9 @@ function pdfData(contract: PublicContract, brand: OrganizationPdfBrand): Contrac
     releasedAt: contract.released_at,
     confirmedAt: contract.confirmed_at,
     confirmedEmail: contract.confirmed_email,
+    confirmationMode: contract.confirmation_mode,
+    confirmationRecordedAt: contract.confirmation_recorded_at,
+    confirmationNote: contract.confirmation_note,
     snapshotHash: contract.snapshot_hash,
     brand,
     organization: contract.organization_snapshot,
@@ -163,7 +170,8 @@ export default async (request: Request, context: Context) => {
       if (signing.status === "confirmed" || contract.status === "confirmed") return { state: "already_confirmed" as const };
       if (contract.status !== "released" || contract.signing_method !== "click") return { state: "not_released" as const };
       const updated = await client.query<{ id: string }>(`UPDATE sponsorship_contracts SET status = 'confirmed', confirmed_at = now(),
-        confirmed_by = $3, confirmed_email = $4, confirmed_name = $5, confirmed_role = $6, updated_at = now()
+        confirmed_by = $3, confirmed_email = $4, confirmed_name = $5, confirmed_role = $6,
+        confirmation_mode = 'one_time_link', confirmation_recorded_at = now(), confirmation_note = NULL, updated_at = now()
         WHERE tenant_id = $1 AND id = $2 AND status = 'released' RETURNING id`,
       [signing.tenant_id, signing.contract_id, `one-time:${signing.id}`, signing.signer_email, signing.signer_name, signing.signer_role]);
       if (!updated.rows[0]) return { state: "already_confirmed" as const };

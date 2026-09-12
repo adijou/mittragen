@@ -102,6 +102,30 @@ export function parseContractConfirmation(body: unknown): Result<{ signingAuthor
   return { ok: true, value: { signingAuthorityName, signingAuthorityRole, acknowledged: true } };
 }
 
+export function parseContractAdminConfirmation(body: unknown): Result<{
+  signingAuthorityName: string;
+  signingAuthorityRole: string;
+  confirmedOn: string;
+  evidenceNote: string;
+  acknowledged: true;
+}> {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return { ok: false, error: "invalid_body" };
+  const record = body as Record<string, unknown>;
+  const signingAuthorityName = optionalText(record.signingAuthorityName, 160);
+  const signingAuthorityRole = optionalText(record.signingAuthorityRole, 120) ?? "Vertretungsberechtigte Person";
+  const confirmedOn = optionalText(record.confirmedOn, 10);
+  const evidenceNote = optionalText(record.evidenceNote, 600);
+  if (!signingAuthorityName) return { ok: false, error: "signing_authority_name_required" };
+  if (!confirmedOn || !/^\d{4}-\d{2}-\d{2}$/.test(confirmedOn)) return { ok: false, error: "legacy_confirmation_date_required" };
+  const parsedDate = new Date(`${confirmedOn}T00:00:00.000Z`);
+  if (Number.isNaN(parsedDate.valueOf()) || parsedDate.toISOString().slice(0, 10) !== confirmedOn || Number(confirmedOn.slice(0, 4)) < 1900) {
+    return { ok: false, error: "invalid_legacy_confirmation_date" };
+  }
+  if (!evidenceNote) return { ok: false, error: "legacy_confirmation_evidence_required" };
+  if (record.acknowledged !== true) return { ok: false, error: "admin_contract_acknowledgement_required" };
+  return { ok: true, value: { signingAuthorityName, signingAuthorityRole, confirmedOn, evidenceNote, acknowledged: true } };
+}
+
 export function parseContractDispatch(body: unknown): Result<{ signerEmail: string; signerName: string; signerRole: string }> {
   if (!body || typeof body !== "object" || Array.isArray(body)) return { ok: false, error: "invalid_body" };
   const record = body as Record<string, unknown>;
