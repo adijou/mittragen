@@ -29,6 +29,7 @@ test("contract confirmation automatically separates identified accounts from one
   const contracts = await readFile(new URL("../netlify/functions/contracts.mts", import.meta.url), "utf8");
   const publicSigning = await readFile(new URL("../netlify/functions/contract-signing.mts", import.meta.url), "utf8");
   assert.match(contracts, /findIdentityUserByEmail/);
+  assert.match(contracts, /contract_identity_lookup_failed/);
   assert.match(contracts, /randomBytes\(32\)\.toString\("base64url"\)/);
   assert.match(contracts, /createHash\("sha256"\)\.update\(rawToken\)/);
   assert.match(contracts, /contract_signer_locked/);
