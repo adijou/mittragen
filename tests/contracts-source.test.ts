@@ -63,6 +63,28 @@ test("legacy contracts can be closed by an authorized admin without email delive
   assert.doesNotMatch(adminFlow, /emailConfig\(/);
 });
 
+test("legacy contracts can be created directly without the digital release and delivery flow", async () => {
+  const contracts = await readFile(new URL("../netlify/functions/contracts.mts", import.meta.url), "utf8");
+  const management = await readFile(new URL("../src/ContractManagement.tsx", import.meta.url), "utf8");
+  const routeStart = contracts.indexOf("if (routes.legacyCreate.test(pathname)");
+  const routeEnd = contracts.indexOf("if (routes.collection.test(pathname)", routeStart);
+  const legacyCreateFlow = contracts.slice(routeStart, routeEnd);
+
+  assert.notEqual(routeStart, -1);
+  assert.match(legacyCreateFlow, /parseLegacyContractCreate/);
+  assert.match(legacyCreateFlow, /hasPermission\(role, "packages:write"\)/);
+  assert.match(legacyCreateFlow, /ensureDirectReservation/);
+  assert.match(legacyCreateFlow, /'confirmed','click'/);
+  assert.match(legacyCreateFlow, /'admin_legacy'/);
+  assert.match(legacyCreateFlow, /contract\.admin_legacy_created/);
+  assert.doesNotMatch(legacyCreateFlow, /sponsorComplete/);
+  assert.doesNotMatch(legacyCreateFlow, /sendContractSigningEmail/);
+  assert.doesNotMatch(legacyCreateFlow, /emailConfig\(/);
+  assert.match(management, /Altvertrag für einen Sponsor erfassen/);
+  assert.match(management, /\/api\/contracts\/\$\{tenantId\}\/legacy/);
+  assert.match(management, /Es wird keine Bestätigungs- oder sonstige E-Mail versendet/);
+});
+
 test("every contract PDF path loads the current organization branding", async () => {
   const contracts = await readFile(new URL("../netlify/functions/contracts.mts", import.meta.url), "utf8");
   const publicSigning = await readFile(new URL("../netlify/functions/contract-signing.mts", import.meta.url), "utf8");
