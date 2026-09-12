@@ -2,7 +2,7 @@
 
 Stand: 9. September 2026
 
-Mittragen verwendet für Benutzerkonten und Einladungen Netlify Identity. Neue Identity-Konten erhalten ihre Einladung über Resend SMTP in Netlify. Für Personen, die bereits ein Identity-Konto besitzen, sendet die Team-Funktion zusätzlich eine gebrandete Zugangsmail direkt über die Resend API.
+mittragen.ch verwendet für Benutzerkonten und Einladungen Netlify Identity. Neue Identity-Konten erhalten ihre Einladung über Resend SMTP in Netlify. Für Personen, die bereits ein Identity-Konto besitzen, sendet die Team-Funktion zusätzlich eine gebrandete Zugangsmail direkt über die Resend API.
 
 ## 1. Resend vorbereiten
 
@@ -27,7 +27,7 @@ Pfad im Netlify-Dashboard:
 | Netlify-Feld | Wert |
 |---|---|
 | Outgoing email address | `noreply@news.mittragen.ch` |
-| Sender name, falls als separates Feld vorhanden | `Mittragen` |
+| Sender name, falls als separates Feld vorhanden | `mittragen.ch` |
 | SMTP host | `smtp.resend.com` |
 | SMTP port | `587` |
 | SMTP username | `resend` |
@@ -36,7 +36,7 @@ Pfad im Netlify-Dashboard:
 
 SMTP-Port `587` verwendet STARTTLS. Alternativ unterstützt Resend Port `465` mit implizitem SSL/TLS; für Netlify Identity ist `587` die bevorzugte Einstellung.
 
-## 3. Mittragen-Einladung aktivieren
+## 3. mittragen.ch-Einladung aktivieren
 
 Pfad im Netlify-Dashboard:
 
@@ -44,7 +44,7 @@ Pfad im Netlify-Dashboard:
 
 | Feld | Wert |
 |---|---|
-| Subject | `Einladung zu Mittragen – gemeinsam Unterstützung organisieren` |
+| Subject | `Einladung zu mittragen.ch – Unterstützung einfach organisieren` |
 | Template path | `/emails/invitation.html` |
 
 Die Vorlage ist bereits mit der produktiven Website deployt. Sie führt Einladungen gezielt auf `/login/` und übergibt dort den persönlichen `invite_token` an `@netlify/identity`.
@@ -58,7 +58,7 @@ Die bestehende Variable `NETLIFY_IDENTITY_OPERATOR_TOKEN` bleibt unverändert. S
 | Variable | Beispiel / Bedeutung | Netlify Scope | Context |
 |---|---|---|---|
 | `RESEND_API_KEY` | Schlüssel `mittragen-existing-user-mail` | Functions, als Secret | Production |
-| `MAIL_FROM` | `Mittragen <noreply@news.mittragen.ch>` | Functions | Production |
+| `MAIL_FROM` | `mittragen.ch <noreply@news.mittragen.ch>` | Functions | Production |
 | `MAIL_REPLY_TO` | optionale, betreute Antwortadresse | Functions | Production |
 
 `RESEND_API_KEY` ist für diesen Versandweg erforderlich. `MAIL_FROM` sollte explizit gesetzt werden; ohne Variable verwendet die Funktion denselben Wert als sicheren Standard. `MAIL_REPLY_TO` bleibt optional. Der Schlüssel gehört ausschliesslich ins Netlify-Dashboard und nie ins Repository, in einen Chat oder Screenshot.
@@ -71,4 +71,4 @@ Die bestehende Variable `NETLIFY_IDENTITY_OPERATOR_TOKEN` bleibt unverändert. S
 4. In Resend den Status `Delivered`, `Bounced` oder `Suppressed` prüfen.
 5. Link öffnen, Passwort setzen und kontrollieren, ob die Organisation im Workspace erscheint.
 
-In Mittragen bedeutet der Status **Übergeben**, dass Netlify die E-Mail an den Mailanbieter übergeben hat. Den endgültigen Zustellstatus liefert Resend.
+In mittragen.ch bedeutet der Status **Übergeben**, dass Netlify die E-Mail an den Mailanbieter übergeben hat. Den endgültigen Zustellstatus liefert Resend.

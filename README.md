@@ -1,12 +1,12 @@
-# Mittragen
+# mittragen.ch
 
-**Das Support-OS für Vereine, Events und Projekte.**
+**Unterstützung. Einfach weiter.**
 
-Mittragen führt Unterstützungsbeziehungen durch ihren gesamten Lebenszyklus: vom Paket und Vertrag über Rechnung, Dokumente und Leistungserfüllung bis zur nächsten Veränderung. Der besondere Produktkern ist der geführte Überführungsmodus für Fusionen, neue Paketwelten und die Ablösung manueller Prozesse.
+mittragen.ch ist das Schweizer Support-OS für Vereine, Events und Projekte. Die Plattform führt Unterstützungsbeziehungen durch ihren gesamten Lebenszyklus: vom Paket und Vertrag über Dokumente und Leistungserfüllung bis zur nächsten Veränderung.
 
 ## Aktueller Stand
 
-Der erste interaktive Produkt-Slice setzt die ausgewählte visuelle Richtung «Klares Partnerschafts-OS» unter dem definitiven Namen **Mittragen** um:
+Die produktive Anwendung setzt die Markenwelt von **mittragen.ch** konsequent um:
 
 - öffentliche Startseite und Markenauftritt
 - Organisations-Dashboard mit Aufgaben, Kennzahlen und Übergangsstatus
@@ -67,10 +67,10 @@ npm run build
 ## Routen
 
 - `/` – öffentliche Produktseite
-- `/admin` – Organisations-Backoffice
-- `/space` – Sponsor-Space
+- `/admin` – öffentlicher Backoffice-Prototyp, nicht produktiv
+- `/space` – öffentlicher Sponsor-Prototyp, nicht produktiv
 - `/sponsor` – produktiver, geschützter Sponsorbereich
-- `/ueberfuehren` – geführter Überführungsprozess
+- `/ueberfuehren` – öffentlicher Überführungs-Prototyp, nicht produktiv
 - `/login` – produktive Anmeldung und Registrierung
 - `/workspace` – geschützter, mandantengetrennter Workspace
 - `/matchball/:publicKey` – öffentliches Matchball-Formular einer Organisation ohne Login
@@ -122,9 +122,10 @@ npm test
 
 ## Designsystem
 
-- Dunkles Navy: `#0B2144`
-- Primäres Blau: `#1967FF`
-- Gönner-Gold: `#E9B44C`
-- Typografie: Manrope + DM Sans mit System-Fallbacks
+- Mittragen Blau: `#1F6BFF`
+- Warmes Gold: `#F2B632`
+- Tiefes Navy: `#0B2142`
+- Off-White: `#F4F7FB`
+- Typografie: Inter mit System-Fallbacks
 
-Das Signet zeigt mehrere Beitragende, die ein gemeinsames Zentrum tragen.
+Das Signet zeigt ein tragendes, rundes «m» mit einem warmen Mittelpunkt. Die Wortmarke wird immer exakt als `mittragen.ch` gesetzt.

@@ -181,7 +181,7 @@ function getResendConfig() {
   if (!apiKey) throw new ResendDeliveryError("resend_not_configured");
   return {
     apiKey,
-    from: Netlify.env.get("MAIL_FROM")?.trim() || "Mittragen <noreply@news.mittragen.ch>",
+    from: Netlify.env.get("MAIL_FROM")?.trim() || "mittragen.ch <noreply@news.mittragen.ch>",
     replyTo: Netlify.env.get("MAIL_REPLY_TO")?.trim() || undefined,
   };
 }

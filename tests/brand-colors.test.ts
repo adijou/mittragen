@@ -12,7 +12,7 @@ test("brand colors derive a dominant and a distinct accent color", () => {
 });
 
 test("brand colors ignore transparent pixels and use safe defaults for empty artwork", () => {
-  assert.deepEqual(deriveBrandColors([{ red: 255, green: 0, blue: 0, alpha: 0 }]), { primary: "#0B2144", accent: "#1967FF" });
+  assert.deepEqual(deriveBrandColors([{ red: 255, green: 0, blue: 0, alpha: 0 }]), { primary: "#0B2142", accent: "#1F6BFF" });
 });
 
 test("oversized logos are normalized to PDF-safe dimensions", () => {

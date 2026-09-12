@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { Brand } from "./ProductBrand";
 
 type PublicEvent = {
   id: string;
@@ -111,12 +112,12 @@ export function EventSponsoringPublic({ onHome }: { onHome: () => void }) {
   const style = { "--event-primary": data.organization.brandPrimaryColor, "--event-accent": data.organization.brandAccentColor } as CSSProperties;
 
   if (booking && selected) return <main className="event-public-page" style={style}>
-    <header className="event-public-header"><button onClick={onHome} aria-label="Zur Startseite">mittragen</button>{data.organization.logoAvailable ? <img src={`/api/event-sponsoring-public/${key}/logo`} alt={`${data.organization.name} Logo`}/> : <strong>{data.organization.name}</strong>}</header>
+    <header className="event-public-header"><button onClick={onHome} aria-label="Zur Startseite"><Brand compact/></button>{data.organization.logoAvailable ? <img src={`/api/event-sponsoring-public/${key}/logo`} alt={`${data.organization.name} Logo`}/> : <strong>{data.organization.name}</strong>}</header>
     <section className="event-public-success"><span>✓</span><p className="eyebrow">Anmeldung gespeichert</p><h1>Vielen Dank für das Matchball-Sponsoring.</h1><p><strong>{selected.teamName} gegen {selected.opponent}</strong><br/>{formatDate(selected.startsAt)}</p><dl><div><dt>Referenz</dt><dd>{booking.reference}</dd></div><div><dt>Betrag</dt><dd>{formatChf(booking.amountCents)}</dd></div><div><dt>Abrechnung</dt><dd>{form.paymentMode === "invoice" ? "Der Verein stellt eine Rechnung." : "Barzahlung wurde gewählt."}</dd></div></dl><p>Die Anmeldung ist gespeichert. Es ist keine Konto- oder E-Mail-Bestätigung notwendig.</p></section>
   </main>;
 
   return <main className="event-public-page" style={style}>
-    <header className="event-public-header"><button onClick={onHome} aria-label="Zur Startseite">mittragen</button>{data.organization.logoAvailable ? <img src={`/api/event-sponsoring-public/${key}/logo`} alt={`${data.organization.name} Logo`}/> : <strong>{data.organization.name}</strong>}</header>
+    <header className="event-public-header"><button onClick={onHome} aria-label="Zur Startseite"><Brand compact/></button>{data.organization.logoAvailable ? <img src={`/api/event-sponsoring-public/${key}/logo`} alt={`${data.organization.name} Logo`}/> : <strong>{data.organization.name}</strong>}</header>
     <section className="event-public-hero"><div><p className="eyebrow">{data.settings.seasonLabel || "Matchball-Sponsoring"}</p><h1>{data.settings.headline}</h1><p>{data.settings.introduction}</p></div><aside><span>Direkt anmelden</span><strong>Mehrere Sponsoren möglich</strong><small>Kein Konto und keine E-Mail-Bestätigung nötig.</small></aside></section>
 
     <section className="event-public-selection"><div><p className="eyebrow">Spielplan</p><h2>Heimspiel auswählen</h2><p>Pro Spiel können sich mehrere Matchballsponsoren engagieren; jede Anmeldung wird unmittelbar reserviert.</p></div>

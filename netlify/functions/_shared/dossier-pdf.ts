@@ -153,8 +153,8 @@ export async function createDossierPdf(data: DossierPdfData): Promise<Uint8Array
   const pdf = await PDFDocument.create();
   const regular = await pdf.embedFont(StandardFonts.Helvetica);
   const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
-  const primary = colorTuple(data.brand.primaryColor, "#0B2144");
-  const accent = colorTuple(data.brand.accentColor, "#1967FF");
+  const primary = colorTuple(data.brand.primaryColor, "#0B2142");
+  const accent = colorTuple(data.brand.accentColor, "#1F6BFF");
   const NAVY = pdfColor(darkSurface(primary));
   const BLUE = pdfColor(accentOnWhite(accent));
   const GOLD = pdfColor(accentOnDark(accent));
@@ -166,8 +166,8 @@ export async function createDossierPdf(data: DossierPdfData): Promise<Uint8Array
   }
   pdf.setTitle(`Sponsoringdossier ${data.organizationName}`);
   pdf.setAuthor(data.organizationName);
-  pdf.setCreator("Mittragen");
-  pdf.setProducer("Mittragen");
+  pdf.setCreator("mittragen.ch");
+  pdf.setProducer("mittragen.ch");
 
   const pages: PDFPage[] = [];
   const cover = pdf.addPage([A4.width, A4.height]);
@@ -200,7 +200,7 @@ export async function createDossierPdf(data: DossierPdfData): Promise<Uint8Array
     coverY -= 18;
   }
   if (data.profile.seasonLabel) cover.drawText(fitLine(data.profile.seasonLabel, bold, 10, 300), { x: MARGIN, y: 82, size: 10, font: bold, color: GOLD });
-  cover.drawText("erstellt mit Mittragen", { x: MARGIN, y: 56, size: 8, font: regular, color: LIGHT_BLUE });
+  cover.drawText("erstellt mit mittragen.ch", { x: MARGIN, y: 56, size: 8, font: regular, color: LIGHT_BLUE });
 
   let page: PDFPage = cover;
   let y = 0;
@@ -292,7 +292,7 @@ export async function createDossierPdf(data: DossierPdfData): Promise<Uint8Array
   pages.forEach((target, index) => {
     if (index === 0) return;
     target.drawLine({ start: { x: MARGIN, y: 40 }, end: { x: A4.width - MARGIN, y: 40 }, thickness: 0.6, color: LINE });
-    target.drawText("erstellt mit Mittragen", { x: MARGIN, y: 24, size: 7, font: regular, color: MUTED });
+    target.drawText("erstellt mit mittragen.ch", { x: MARGIN, y: 24, size: 7, font: regular, color: MUTED });
     const pageNumber = `Seite ${index + 1} von ${pages.length}`;
     target.drawText(pageNumber, { x: A4.width - MARGIN - regular.widthOfTextAtSize(pageNumber, 7), y: 24, size: 7, font: regular, color: MUTED });
   });

@@ -41,27 +41,27 @@ function buildEmail(input: ExistingUserAccessEmail) {
   const organizationName = escapeHtml(input.organizationName);
   const roleLabel = escapeHtml(input.roleLabel);
   const loginUrl = escapeHtml(input.loginUrl);
-  const subject = `Ihr Zugang zu ${input.organizationName} auf Mittragen`;
+  const subject = `Ihr Zugang zu ${input.organizationName} auf mittragen.ch`;
 
   const html = `<!doctype html>
 <html lang="de">
-  <body style="margin:0;background:#f4f5f1;color:#173127;font-family:Arial,Helvetica,sans-serif;">
-    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f4f5f1;padding:32px 16px;">
+  <body style="margin:0;background:#f4f7fb;color:#0b2142;font-family:Inter,Arial,Helvetica,sans-serif;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f4f7fb;padding:32px 16px;">
       <tr><td align="center">
         <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:620px;background:#ffffff;border:1px solid #dfe5df;border-radius:18px;overflow:hidden;">
-          <tr><td style="padding:26px 32px;background:#173127;color:#ffffff;">
-            <div style="font-size:13px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#cbe8d8;">MITTRAGEN</div>
+          <tr><td style="padding:26px 32px;background:#0b2142;color:#ffffff;">
+            <div style="font-size:20px;font-weight:800;letter-spacing:-.04em;">mittragen<span style="color:#7fadff;">.ch</span><span style="color:#f2b632;"> ·</span></div>
             <div style="margin-top:8px;font-size:24px;font-weight:700;line-height:1.25;">Gemeinsam Unterstützung organisieren.</div>
           </td></tr>
           <tr><td style="padding:32px;">
-            <h1 style="margin:0 0 18px;font-size:25px;line-height:1.3;color:#173127;">Ihr Zugang ist bereit</h1>
-            <p style="margin:0 0 14px;font-size:16px;line-height:1.65;">Sie wurden eingeladen, im Mittragen-Workspace «${organizationName}» als <strong>${roleLabel}</strong> mitzuwirken.</p>
+            <h1 style="margin:0 0 18px;font-size:25px;line-height:1.3;color:#0b2142;">Ihr Zugang ist bereit</h1>
+            <p style="margin:0 0 14px;font-size:16px;line-height:1.65;">Sie wurden eingeladen, im mittragen.ch-Workspace «${organizationName}» als <strong>${roleLabel}</strong> mitzuwirken.</p>
             <p style="margin:0 0 24px;font-size:16px;line-height:1.65;">Für ${email} besteht bereits ein Konto. Sie müssen deshalb kein neues Passwort setzen.</p>
-            <table role="presentation" cellspacing="0" cellpadding="0"><tr><td style="border-radius:10px;background:#1f7a50;">
-              <a href="${loginUrl}" style="display:inline-block;padding:14px 22px;font-size:15px;font-weight:700;text-decoration:none;color:#ffffff;">Bei Mittragen anmelden</a>
+            <table role="presentation" cellspacing="0" cellpadding="0"><tr><td style="border-radius:10px;background:#1f6bff;">
+              <a href="${loginUrl}" style="display:inline-block;padding:14px 22px;font-size:15px;font-weight:700;text-decoration:none;color:#ffffff;">Bei mittragen.ch anmelden</a>
             </td></tr></table>
             <p style="margin:24px 0 0;font-size:14px;line-height:1.65;color:#53655d;">Beim Öffnen des Workspaces wird Ihr Organisationszugang automatisch aktiviert.</p>
-            <p style="margin:18px 0 0;font-size:12px;line-height:1.6;color:#6a7771;word-break:break-all;">Falls die Schaltfläche nicht funktioniert:<br><a href="${loginUrl}" style="color:#1f7a50;">${loginUrl}</a></p>
+            <p style="margin:18px 0 0;font-size:12px;line-height:1.6;color:#6f7f94;word-break:break-all;">Falls die Schaltfläche nicht funktioniert:<br><a href="${loginUrl}" style="color:#1f6bff;">${loginUrl}</a></p>
           </td></tr>
         </table>
       </td></tr>
@@ -69,7 +69,7 @@ function buildEmail(input: ExistingUserAccessEmail) {
   </body>
 </html>`;
 
-  const text = `Ihr Zugang zu ${input.organizationName} auf Mittragen\n\nSie wurden eingeladen, im Mittragen-Workspace «${input.organizationName}» als ${input.roleLabel} mitzuwirken.\n\nFür ${input.email} besteht bereits ein Konto. Sie müssen deshalb kein neues Passwort setzen.\n\nBei Mittragen anmelden: ${input.loginUrl}\n\nBeim Öffnen des Workspaces wird Ihr Organisationszugang automatisch aktiviert.`;
+  const text = `Ihr Zugang zu ${input.organizationName} auf mittragen.ch\n\nSie wurden eingeladen, im mittragen.ch-Workspace «${input.organizationName}» als ${input.roleLabel} mitzuwirken.\n\nFür ${input.email} besteht bereits ein Konto. Sie müssen deshalb kein neues Passwort setzen.\n\nBei mittragen.ch anmelden: ${input.loginUrl}\n\nBeim Öffnen des Workspaces wird Ihr Organisationszugang automatisch aktiviert.`;
 
   return { subject, html, text };
 }

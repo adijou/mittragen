@@ -210,8 +210,8 @@ export function ContractManagement({ tenantId, canWrite, canManage, onOpenOrgani
       });
       applyDetail(result.detail);
       setMessage(result.deliveryMode === "account"
-        ? "Die Person hat bereits ein Mittragen-Konto. Der Vertrag wurde zur Bestätigung in ihren Sponsorbereich gesendet."
-        : "Die Person hat kein Mittragen-Konto. Ein persönlicher Einmallink wurde versendet.");
+        ? "Die Person hat bereits ein mittragen.ch-Konto. Der Vertrag wurde zur Bestätigung in ihren Sponsorbereich gesendet."
+        : "Die Person hat kein mittragen.ch-Konto. Ein persönlicher Einmallink wurde versendet.");
       await load(detail.contract.id);
     } catch (reason) {
       const code = reason instanceof Error ? reason.message : "contract_signing_send_failed";
@@ -291,18 +291,18 @@ export function ContractManagement({ tenantId, canWrite, canManage, onOpenOrgani
         {detail.contract.status === "draft" ? <form className="contract-editor" onSubmit={saveDraft}>
           <label><span>Dokumenttitel</span><input required value={title} onChange={(event) => setTitle(event.target.value)}/></label>
           <label><span>Besondere Vereinbarungen</span><textarea required maxLength={5000} value={specialAgreements} onChange={(event) => setSpecialAgreements(event.target.value)}/><small>Produktionskosten, Eigentum, spezielle Platzierungen oder individuelle Abweichungen hier ausdrücklich aufführen.</small></label>
-          <div className="contract-signing-method"><strong>Bestätigungsweg</strong><p>Nach der Freigabe prüft Mittragen die E-Mail-Adresse: Bestehende Konten bestätigen nach der Anmeldung, alle anderen Personen erhalten einen persönlichen Einmallink.</p></div>
+          <div className="contract-signing-method"><strong>Bestätigungsweg</strong><p>Nach der Freigabe prüft mittragen.ch die E-Mail-Adresse: Bestehende Konten bestätigen nach der Anmeldung, alle anderen Personen erhalten einen persönlichen Einmallink.</p></div>
           <button className="access-secondary" disabled={busy === "save"}>{busy === "save" ? "Speichert …" : "Entwurf speichern"}</button>
           <label className="contract-release-check"><input type="checkbox" checked={legalReview} onChange={(event) => setLegalReview(event.target.checked)}/><span>Ich bestätige, dass Vertragsinhalt, Absender, Paket, Beitrag, Laufzeit, Verlängerung und besondere Vereinbarungen fachlich sowie rechtlich geprüft wurden.</span></label>
           <button className="access-primary" type="button" disabled={!legalReview || busy === "release" || !canWrite} onClick={() => void releaseContract()}>{busy === "release" ? "Wird freigegeben …" : "Unveränderlich freigeben"}</button>
         </form> : <>
           <section className="contract-proof"><h3>{detail.contract.status === "confirmed" ? detail.contract.confirmation_mode === "admin_legacy" ? "Altbestand übernommen" : "Elektronisch bestätigt" : detail.signingRequest ? "Zur Bestätigung versendet" : "Bereit zum Versand"}</h3>{detail.contract.confirmed_at && <p>{detail.contract.confirmed_name} · {detail.contract.confirmed_role}<br/>{detail.contract.confirmation_mode === "admin_legacy" ? "Ursprünglicher Abschluss: " : "Bestätigt: "}{new Intl.DateTimeFormat("de-CH", detail.contract.confirmation_mode === "admin_legacy" ? { dateStyle: "long" } : { dateStyle: "long", timeStyle: "short" }).format(new Date(detail.contract.confirmed_at))}{detail.contract.confirmation_mode === "admin_legacy" && detail.contract.confirmation_recorded_at && <><br/>Administrativ erfasst: {new Intl.DateTimeFormat("de-CH", { dateStyle: "long", timeStyle: "short" }).format(new Date(detail.contract.confirmation_recorded_at))} · {detail.contract.confirmed_email}</>}</p>}{detail.contract.confirmation_mode === "admin_legacy" && detail.contract.confirmation_note && <p className="contract-proof__note"><strong>Nachweis:</strong> {detail.contract.confirmation_note}</p>}<code>{detail.contract.snapshot_hash}</code></section>
           {detail.contract.status === "released" && <form className="contract-dispatch" onSubmit={sendForConfirmation}>
-            <div><p className="eyebrow">Unterzeichnende Person</p><h3>Vertrag zur Bestätigung senden</h3><p>Mittragen erkennt automatisch, ob diese E-Mail-Adresse bereits ein Konto hat.</p></div>
+            <div><p className="eyebrow">Unterzeichnende Person</p><h3>Vertrag zur Bestätigung senden</h3><p>mittragen.ch erkennt automatisch, ob diese E-Mail-Adresse bereits ein Konto hat.</p></div>
             <label><span>E-Mail-Adresse</span><input type="email" required value={signerEmail} onChange={(event) => setSignerEmail(event.target.value)} autoComplete="email"/></label>
             <label><span>Name</span><input required value={signerName} onChange={(event) => setSignerName(event.target.value)} autoComplete="name"/></label>
             <label><span>Funktion beim Sponsor (optional)</span><input value={signerRole} onChange={(event) => setSignerRole(event.target.value)} placeholder="Standard: vertretungsberechtigte Person"/></label>
-            {detail.signingRequest && <div className={`contract-delivery-status contract-delivery-status--${detail.signingRequest.status}`}><strong>{detail.signingRequest.delivery_mode === "account" ? "Mittragen-Konto erkannt" : "Persönlicher Einmallink"}</strong><span>{detail.signingRequest.status === "failed" ? "Versand fehlgeschlagen" : detail.signingRequest.opened_at ? "Vertrag geöffnet" : "E-Mail versendet"} · gültig bis {new Intl.DateTimeFormat("de-CH", { dateStyle: "medium", timeStyle: "short" }).format(new Date(detail.signingRequest.expires_at))}</span></div>}
+            {detail.signingRequest && <div className={`contract-delivery-status contract-delivery-status--${detail.signingRequest.status}`}><strong>{detail.signingRequest.delivery_mode === "account" ? "mittragen.ch-Konto erkannt" : "Persönlicher Einmallink"}</strong><span>{detail.signingRequest.status === "failed" ? "Versand fehlgeschlagen" : detail.signingRequest.opened_at ? "Vertrag geöffnet" : "E-Mail versendet"} · gültig bis {new Intl.DateTimeFormat("de-CH", { dateStyle: "medium", timeStyle: "short" }).format(new Date(detail.signingRequest.expires_at))}</span></div>}
             <button className="access-primary" disabled={busy !== "" || !canWrite}>{busy === "send" ? "Wird versendet …" : detail.signingRequest ? "Erneut zur Bestätigung senden" : "Zur Bestätigung senden"}</button>
           </form>}
           {detail.contract.status === "released" && canWrite && <section className="contract-legacy">

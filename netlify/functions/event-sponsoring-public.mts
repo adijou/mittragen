@@ -90,8 +90,8 @@ async function publicData(client: DatabaseClient, publicKey: string) {
       contactEmail: organization?.contactEmail ?? null,
       contactPhone: organization?.contactPhone ?? null,
       website: organization?.website ?? null,
-      brandPrimaryColor: organization?.brandPrimaryColor ?? "#0B2144",
-      brandAccentColor: organization?.brandAccentColor ?? "#1967FF",
+      brandPrimaryColor: organization?.brandPrimaryColor ?? "#0B2142",
+      brandAccentColor: organization?.brandAccentColor ?? "#1F6BFF",
       logoAvailable: organization?.logoAvailable ?? false,
     },
     settings: {

@@ -59,8 +59,8 @@ const emptyProfile: ProfileForm = {
   renewalMode: "manual",
   noticeMonths: null,
   placeOfJurisdiction: "",
-  brandPrimaryColor: "#0B2144",
-  brandAccentColor: "#1967FF",
+  brandPrimaryColor: "#0B2142",
+  brandAccentColor: "#1F6BFF",
 };
 
 class ApiError extends Error {
@@ -237,7 +237,7 @@ export function OrganizationSettings({ tenant, canManage, onSaved }: {
         <label><span>Technischer Kurzname</span><input readOnly value={tenant.slug}/><small>Bleibt stabil, damit Links und Integrationen weiter funktionieren.</small></label>
         {canManage ? <button className="access-primary" disabled={saving !== "" || (name.trim() === tenant.name && kind === tenant.kind)}>{saving === "basics" ? "Wird gespeichert …" : "Name und Typ speichern"}</button> : <p className="organization-readonly">Diese Einstellungen können nur von einem Owner geändert werden.</p>}
       </form>
-      <aside className="organization-card organization-card--note"><p className="eyebrow">Einmal pflegen</p><h2>Überall konsistent</h2><p>Öffentlicher Kontakt und Logo erscheinen im Sponsoringdossier. Rechtliche Angaben bilden den Absender neuer Verträge.</p><dl><div><dt>Dossier</dt><dd>{profile?.dossierContactComplete ? "Kontakt bereit" : "Kontakt unvollständig"}</dd></div><div><dt>Verträge</dt><dd>{profile?.contractComplete ? "Organisation bereit" : "Angaben unvollständig"}</dd></div><div><dt>Branding</dt><dd>{profile?.logoAvailable ? "Eigenes Logo" : "Mittragen-Standard"}</dd></div></dl></aside>
+      <aside className="organization-card organization-card--note"><p className="eyebrow">Einmal pflegen</p><h2>Überall konsistent</h2><p>Öffentlicher Kontakt und Logo erscheinen im Sponsoringdossier. Rechtliche Angaben bilden den Absender neuer Verträge.</p><dl><div><dt>Dossier</dt><dd>{profile?.dossierContactComplete ? "Kontakt bereit" : "Kontakt unvollständig"}</dd></div><div><dt>Verträge</dt><dd>{profile?.contractComplete ? "Organisation bereit" : "Angaben unvollständig"}</dd></div><div><dt>Branding</dt><dd>{profile?.logoAvailable ? "Eigenes Logo" : "mittragen.ch-Standard"}</dd></div></dl></aside>
     </div>
 
     {error && <p className="form-error organization-feedback" role="alert">{error}</p>}
@@ -246,7 +246,7 @@ export function OrganizationSettings({ tenant, canManage, onSaved }: {
       <section className="organization-card organization-card--branding">
         <div><p className="eyebrow">Erscheinungsbild</p><h2>Logo und Dossierfarben</h2><p>Beim Auswählen eines Logos werden zwei passende Farben vorgeschlagen. Beide bleiben manuell anpassbar.</p></div>
         <div className="organization-branding">
-          <div className="organization-logo-preview" style={{ background: `linear-gradient(145deg, ${form.brandPrimaryColor}, ${form.brandAccentColor})` }}>
+          <div className="organization-logo-preview" style={{ background: form.brandPrimaryColor }}>
             {(logoPreview || profile?.logoAvailable) ? <img src={logoPreview ?? `/api/organization/${tenant.id}/logo?v=${encodeURIComponent(profile?.logoUpdatedAt ?? "current")}`} alt="Logo der Organisation"/> : <span>Noch kein Logo</span>}
           </div>
           <div className="organization-branding__controls">
