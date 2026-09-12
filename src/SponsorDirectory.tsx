@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from "react";
-import { annualValueForPackage } from "./sponsorPackagePricing";
 
 type Sponsor = {
   id: string;
@@ -76,12 +75,6 @@ const errorLabels: Record<string, string> = {
   sponsor_not_found: "Der Sponsor wurde nicht gefunden.",
 };
 
-const formatChf = (cents: number) => new Intl.NumberFormat("de-CH", {
-  style: "currency",
-  currency: "CHF",
-  maximumFractionDigits: 0,
-}).format(cents / 100);
-
 async function requestApi<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(path, {
     ...options,
@@ -115,7 +108,6 @@ export function SponsorDirectory({ tenantId, canWrite, onChanged }: {
   onChanged: () => void;
 }) {
   const [sponsors, setSponsors] = useState<Sponsor[]>([]);
-  const [packageOptions, setPackageOptions] = useState<Array<{ id: string; name: string; price_cents: number }>>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -128,9 +120,8 @@ export function SponsorDirectory({ tenantId, canWrite, onChanged }: {
     setLoading(true);
     setError("");
     try {
-      const result = await requestApi<{ sponsors: Sponsor[]; packageOptions: Array<{ id: string; name: string; price_cents: number }> }>(`/api/sponsors/${tenantId}`);
+      const result = await requestApi<{ sponsors: Sponsor[] }>(`/api/sponsors/${tenantId}`);
       setSponsors(result.sponsors);
-      setPackageOptions(result.packageOptions);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "sponsors_load_failed");
     } finally {
@@ -148,8 +139,7 @@ export function SponsorDirectory({ tenantId, canWrite, onChanged }: {
       sponsor.contact_name,
       sponsor.contact_email,
       sponsor.city,
-      sponsor.proposal_package,
-      sponsor.assigned_package_name,
+      sponsor.source_organization,
     ].some((value) => value?.toLocaleLowerCase("de-CH").includes(query)));
   }, [search, sponsors]);
 
@@ -168,15 +158,6 @@ export function SponsorDirectory({ tenantId, canWrite, onChanged }: {
   };
 
   const update = (field: keyof SponsorForm, value: string) => setForm((current) => ({ ...current, [field]: value }));
-
-  const updateAssignedPackage = (packageVersionId: string) => {
-    const packageAnnualValue = annualValueForPackage(packageVersionId, packageOptions);
-    setForm((current) => ({
-      ...current,
-      assignedPackageVersionId: packageVersionId,
-      ...(packageAnnualValue === null ? {} : { annualValue: packageAnnualValue }),
-    }));
-  };
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -216,15 +197,15 @@ export function SponsorDirectory({ tenantId, canWrite, onChanged }: {
 
   return <section className="sponsor-directory">
     <header className="sponsor-directory__heading">
-      <div><p className="eyebrow">Stammdaten</p><h1>Sponsoren</h1><p>Kontakte, Pakete und Zielwerte zentral und mandantengetrennt pflegen.</p></div>
+      <div><p className="eyebrow">Stammdaten</p><h1>Sponsoren</h1><p>Firmen- und Kontaktdaten zentral pflegen. Paket und Jahreswert werden beim Vertrag festgelegt.</p></div>
       {canWrite && <button className="access-primary" onClick={openCreate}>Sponsor erfassen</button>}
     </header>
     <div className="sponsor-toolbar">
-      <label><span>Suche</span><input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Firma, Kontakt, Ort oder Paket"/></label>
+      <label><span>Suche</span><input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Firma, Kontakt oder Ort"/></label>
       <strong>{visibleSponsors.length} von {sponsors.length}</strong>
     </div>
-    {loading ? <div className="sponsor-directory__state">Sponsoren werden geladen …</div> : error && !formOpen ? <div className="workspace-error"><strong>Die Sponsoren konnten nicht geladen werden.</strong><p>{error}</p></div> : visibleSponsors.length === 0 ? <div className="sponsor-directory__state"><strong>Noch keine passenden Sponsoren.</strong><p>{canWrite ? "Erfassen Sie den ersten Sponsor für diese Organisation." : "Ändern Sie den Suchbegriff."}</p></div> : <div className="sponsor-table-wrap"><table className="sponsor-table"><thead><tr><th>Sponsor</th><th>Kontakt</th><th>Paket</th><th>Status</th><th>Jahreswert</th><th></th></tr></thead><tbody>{visibleSponsors.map((sponsor) => <tr key={sponsor.id}><td><strong>{sponsor.legal_name}</strong><small>{[sponsor.postal_code, sponsor.city].filter(Boolean).join(" ") || sponsor.source_organization || "–"}</small></td><td><strong>{sponsor.contact_name || "–"}</strong><small>{sponsor.contact_email || sponsor.phone || "Kein Kontakt hinterlegt"}</small></td><td><strong>{sponsor.assigned_package_name || sponsor.proposal_package || "–"}</strong>{sponsor.assigned_package_name && sponsor.proposal_package && sponsor.assigned_package_name !== sponsor.proposal_package && <small>Quelle: {sponsor.proposal_package}</small>}</td><td><span className={`sponsor-status sponsor-status--${sponsor.status}`}>{statusLabels[sponsor.status] ?? sponsor.status}</span></td><td><strong>{formatChf(sponsor.annual_value_cents)}</strong></td><td>{canWrite && <button className="sponsor-edit" onClick={() => openEdit(sponsor)}>Bearbeiten</button>}</td></tr>)}</tbody></table></div>}
+    {loading ? <div className="sponsor-directory__state">Sponsoren werden geladen …</div> : error && !formOpen ? <div className="workspace-error"><strong>Die Sponsoren konnten nicht geladen werden.</strong><p>{error}</p></div> : visibleSponsors.length === 0 ? <div className="sponsor-directory__state"><strong>Noch keine passenden Sponsoren.</strong><p>{canWrite ? "Erfassen Sie den ersten Sponsor für diese Organisation." : "Ändern Sie den Suchbegriff."}</p></div> : <div className="sponsor-table-wrap"><table className="sponsor-table"><thead><tr><th>Sponsor</th><th>Kontakt</th><th>Status</th><th></th></tr></thead><tbody>{visibleSponsors.map((sponsor) => <tr key={sponsor.id}><td><strong>{sponsor.legal_name}</strong><small>{[sponsor.postal_code, sponsor.city].filter(Boolean).join(" ") || sponsor.source_organization || "–"}</small></td><td><strong>{sponsor.contact_name || "–"}</strong><small>{sponsor.contact_email || sponsor.phone || "Kein Kontakt hinterlegt"}</small></td><td><span className={`sponsor-status sponsor-status--${sponsor.status}`}>{statusLabels[sponsor.status] ?? sponsor.status}</span></td><td>{canWrite && <button className="sponsor-edit" onClick={() => openEdit(sponsor)}>Bearbeiten</button>}</td></tr>)}</tbody></table></div>}
 
-    {formOpen && <div className="sponsor-form-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) setFormOpen(false); }}><section className="sponsor-form" role="dialog" aria-modal="true" aria-labelledby="sponsor-form-title"><header><div><p className="eyebrow">{editing ? "Stammdaten bearbeiten" : "Neuer Eintrag"}</p><h2 id="sponsor-form-title">{editing ? editing.legal_name : "Sponsor erfassen"}</h2></div><button type="button" aria-label="Schliessen" onClick={() => setFormOpen(false)} disabled={saving}>×</button></header><form onSubmit={submit}><div className="sponsor-form-grid"><label className="sponsor-form-wide"><span>Firmenname</span><input required value={form.legalName} onChange={(event) => update("legalName", event.target.value)}/></label><label><span>Kontaktperson</span><input value={form.contactName} onChange={(event) => update("contactName", event.target.value)}/></label><label><span>Kontakt-E-Mail</span><input type="email" value={form.contactEmail} onChange={(event) => update("contactEmail", event.target.value)}/></label><label><span>Telefon</span><input value={form.phone} onChange={(event) => update("phone", event.target.value)}/></label><label><span>Website</span><input value={form.website} onChange={(event) => update("website", event.target.value)} placeholder="beispiel.ch"/></label><label className="sponsor-form-wide"><span>Strasse</span><input value={form.street} onChange={(event) => update("street", event.target.value)}/></label><label><span>PLZ</span><input value={form.postalCode} onChange={(event) => update("postalCode", event.target.value)}/></label><label><span>Ort</span><input value={form.city} onChange={(event) => update("city", event.target.value)}/></label><label><span>Herkunft</span><input value={form.sourceOrganization} onChange={(event) => update("sourceOrganization", event.target.value)} placeholder="z. B. FC Bösingen"/></label><label><span>Quellbezeichnung Paket</span><input value={form.proposalPackage} onChange={(event) => update("proposalPackage", event.target.value)} placeholder="z. B. Goldsponsor"/></label><label className="sponsor-form-wide"><span>Zugeordnetes Paket</span><select value={form.assignedPackageVersionId} onChange={(event) => updateAssignedPackage(event.target.value)}><option value="">Kein fest zugeordnetes Paket</option>{packageOptions.map((option) => <option key={option.id} value={option.id}>{option.name} · {formatChf(option.price_cents)}</option>)}</select><small>Der Paketpreis wird als Jahreswert übernommen und kann danach angepasst werden.</small></label><label><span>Status</span><select value={form.status} onChange={(event) => update("status", event.target.value)}>{Object.entries(statusLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label><label><span>Jahreswert in CHF</span><input required min="0" step="0.01" inputMode="decimal" value={form.annualValue} onChange={(event) => update("annualValue", event.target.value)}/></label><label className="sponsor-form-wide"><span>Interne Notizen</span><textarea value={form.notes} onChange={(event) => update("notes", event.target.value)} maxLength={5000}/></label></div>{error && <p className="form-error" role="alert">{error}</p>}<footer><button className="access-secondary" type="button" disabled={saving} onClick={() => setFormOpen(false)}>Abbrechen</button><button className="access-primary" disabled={saving}>{saving ? "Wird gespeichert …" : editing ? "Änderungen speichern" : "Sponsor speichern"}</button></footer></form></section></div>}
+    {formOpen && <div className="sponsor-form-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) setFormOpen(false); }}><section className="sponsor-form" role="dialog" aria-modal="true" aria-labelledby="sponsor-form-title"><header><div><p className="eyebrow">{editing ? "Stammdaten bearbeiten" : "Neuer Eintrag"}</p><h2 id="sponsor-form-title">{editing ? editing.legal_name : "Sponsor erfassen"}</h2></div><button type="button" aria-label="Schliessen" onClick={() => setFormOpen(false)} disabled={saving}>×</button></header><form onSubmit={submit}><div className="sponsor-form-grid"><label className="sponsor-form-wide"><span>Firmenname</span><input required value={form.legalName} onChange={(event) => update("legalName", event.target.value)}/></label><label><span>Kontaktperson</span><input value={form.contactName} onChange={(event) => update("contactName", event.target.value)}/></label><label><span>Kontakt-E-Mail</span><input type="email" value={form.contactEmail} onChange={(event) => update("contactEmail", event.target.value)}/></label><label><span>Telefon</span><input value={form.phone} onChange={(event) => update("phone", event.target.value)}/></label><label><span>Website</span><input value={form.website} onChange={(event) => update("website", event.target.value)} placeholder="beispiel.ch"/></label><label className="sponsor-form-wide"><span>Strasse</span><input value={form.street} onChange={(event) => update("street", event.target.value)}/></label><label><span>PLZ</span><input value={form.postalCode} onChange={(event) => update("postalCode", event.target.value)}/></label><label><span>Ort</span><input value={form.city} onChange={(event) => update("city", event.target.value)}/></label><label><span>Herkunft</span><input value={form.sourceOrganization} onChange={(event) => update("sourceOrganization", event.target.value)} placeholder="z. B. FC Bösingen"/></label><label><span>Status</span><select value={form.status} onChange={(event) => update("status", event.target.value)}>{Object.entries(statusLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label><label className="sponsor-form-wide"><span>Interne Notizen</span><textarea value={form.notes} onChange={(event) => update("notes", event.target.value)} maxLength={5000}/></label></div><p className="sponsor-form-note">Paket und Jahreswert werden im Vertragscenter ausgewählt.</p>{error && <p className="form-error" role="alert">{error}</p>}<footer><button className="access-secondary" type="button" disabled={saving} onClick={() => setFormOpen(false)}>Abbrechen</button><button className="access-primary" disabled={saving}>{saving ? "Wird gespeichert …" : editing ? "Änderungen speichern" : "Sponsor speichern"}</button></footer></form></section></div>}
   </section>;
 }

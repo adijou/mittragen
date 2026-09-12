@@ -45,12 +45,32 @@ export function parseContractSettings(body: unknown): Result<{
   } };
 }
 
-export function parseContractCreate(body: unknown): Result<{ transitionSponsorId: string }> {
+export type ContractCreateInput =
+  | { mode: "transition"; transitionSponsorId: string }
+  | { mode: "direct"; sponsorId: string; packageVersionId: string; annualValueCents: number };
+
+export function parseContractCreate(body: unknown): Result<ContractCreateInput> {
   if (!body || typeof body !== "object" || Array.isArray(body)) return { ok: false, error: "invalid_body" };
-  const transitionSponsorId = (body as Record<string, unknown>).transitionSponsorId;
-  return typeof transitionSponsorId === "string" && isUuid(transitionSponsorId)
-    ? { ok: true, value: { transitionSponsorId } }
-    : { ok: false, error: "invalid_transition_sponsor" };
+  const record = body as Record<string, unknown>;
+  if (record.transitionSponsorId !== undefined) {
+    return typeof record.transitionSponsorId === "string" && isUuid(record.transitionSponsorId)
+      ? { ok: true, value: { mode: "transition", transitionSponsorId: record.transitionSponsorId } }
+      : { ok: false, error: "invalid_transition_sponsor" };
+  }
+  if (typeof record.sponsorId !== "string" || !isUuid(record.sponsorId)) return { ok: false, error: "invalid_sponsor" };
+  if (typeof record.packageVersionId !== "string" || !isUuid(record.packageVersionId)) return { ok: false, error: "invalid_package_version" };
+  if (!Number.isSafeInteger(record.annualValueCents) || Number(record.annualValueCents) < 0 || Number(record.annualValueCents) > 2_147_483_647) {
+    return { ok: false, error: "invalid_annual_value" };
+  }
+  return {
+    ok: true,
+    value: {
+      mode: "direct",
+      sponsorId: record.sponsorId,
+      packageVersionId: record.packageVersionId,
+      annualValueCents: Number(record.annualValueCents),
+    },
+  };
 }
 
 export function parseContractUpdate(body: unknown): Result<{ title: string; specialAgreements: string; signingMethod: SigningMethod }> {

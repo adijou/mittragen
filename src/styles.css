@@ -540,7 +540,7 @@ td small { margin-top: 3px; color: var(--ink-3); }
 .sponsor-toolbar input { height: 40px; padding: 0 12px; }
 .sponsor-toolbar > strong { padding-bottom: 11px; color: var(--ink-3); font-size: 11px; }
 .sponsor-table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 0 0 9px 9px; background: white; }
-.sponsor-table { width: 100%; min-width: 920px; border-collapse: collapse; }
+.sponsor-table { width: 100%; min-width: 680px; border-collapse: collapse; }
 .sponsor-table th { padding: 12px 16px; border-bottom: 1px solid var(--line); background: var(--surface-2); color: var(--ink-3); text-align: left; font-size: 9px; letter-spacing: .05em; text-transform: uppercase; }
 .sponsor-table td { padding: 16px; border-bottom: 1px solid var(--line); color: var(--ink-2); font-size: 11px; }
 .sponsor-table tr:last-child td { border-bottom: 0; }
@@ -566,6 +566,7 @@ td small { margin-top: 3px; color: var(--ink-3); }
 .sponsor-form input, .sponsor-form select { height: 43px; padding: 0 11px; }
 .sponsor-form textarea { min-height: 100px; padding: 10px 11px; resize: vertical; }
 .sponsor-form-wide { grid-column: 1 / -1; }
+.sponsor-form-note { margin: 0; padding: 12px 14px; color: var(--ink-2); background: var(--blue-soft); border-radius: 8px; font-size: 13px; }
 .sponsor-form footer { display: flex; justify-content: flex-end; gap: 10px; padding-top: 18px; border-top: 1px solid var(--line); }
 
 .organization-settings { width: min(1180px, calc(100% - 64px)); margin: 44px auto 70px; }
@@ -1198,6 +1199,13 @@ td small { margin-top: 3px; color: var(--ink-3); }
 .contract-warning { display: grid; grid-template-columns: 1fr auto; gap: 3px 22px; align-items: center; margin-bottom: 22px; padding: 17px 19px; background: var(--gold-soft); border: 1px solid #efd79d; border-radius: 12px; }
 .contract-warning p { margin: 0; }
 .contract-warning button { grid-column: 2; grid-row: 1 / 3; border: 0; background: none; color: var(--blue); font-weight: 800; cursor: pointer; }
+.contract-create { display: grid; grid-template-columns: minmax(240px, 1.25fr) repeat(3, minmax(150px, 1fr)) auto; align-items: end; gap: 16px; margin-bottom: 22px; padding: 23px; background: white; border: 1px solid var(--line); border-radius: 16px; box-shadow: 0 14px 42px rgba(11,33,68,.07); }
+.contract-create > div h2 { margin: 5px 0 5px; font-size: 22px; }
+.contract-create > div p:last-child { margin: 0; color: var(--ink-3); font-size: 13px; line-height: 1.45; }
+.contract-create > label { display: grid; gap: 7px; color: var(--ink-2); font-size: 13px; font-weight: 700; }
+.contract-create select, .contract-create input { width: 100%; min-height: 46px; padding: 10px 12px; color: var(--navy); background: white; border: 1px solid var(--line-strong); border-radius: 7px; }
+.contract-create > button { min-height: 46px; white-space: nowrap; }
+.contract-create__missing { grid-column: 2 / -1; margin: 0; color: #a22d32; font-size: 13px; }
 .contract-layout { display: grid; grid-template-columns: 330px minmax(0, 1fr); min-height: 650px; overflow: hidden; background: white; border: 1px solid var(--line); border-radius: 18px; box-shadow: var(--shadow); }
 .contract-layout > aside { padding: 21px; background: var(--surface-2); border-right: 1px solid var(--line); }
 .contract-layout > aside section + section { margin-top: 28px; }
@@ -1264,6 +1272,9 @@ td small { margin-top: 3px; color: var(--ink-3); }
   .contract-management { width: calc(100% - 28px); margin-top: 28px; }
   .contract-management > header { align-items: stretch; flex-direction: column; }
   .contract-settings__fields { grid-template-columns: 1fr 1fr; }
+  .contract-create { grid-template-columns: 1fr 1fr; }
+  .contract-create > div { grid-column: 1 / -1; }
+  .contract-create__missing { grid-column: 1 / -1; }
   .contract-layout { grid-template-columns: 1fr; }
   .contract-layout > aside { border-right: 0; border-bottom: 1px solid var(--line); }
   .sponsor-contract { grid-template-columns: 1fr; }
@@ -1273,6 +1284,8 @@ td small { margin-top: 3px; color: var(--ink-3); }
   .contract-settings, .contract-layout > main, .sponsor-contracts { padding: 20px 17px; }
   .contract-settings__fields { grid-template-columns: 1fr; }
   .contract-settings__fields label.wide { grid-column: auto; }
+  .contract-create { grid-template-columns: 1fr; padding: 20px 17px; }
+  .contract-create > div, .contract-create__missing { grid-column: auto; }
   .contract-warning { grid-template-columns: 1fr; }
   .contract-warning button { grid-column: auto; grid-row: auto; justify-self: start; padding: 6px 0; }
   .contract-detail-header, .sponsor-contracts > header { align-items: stretch; flex-direction: column; }

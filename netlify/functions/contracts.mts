@@ -4,7 +4,7 @@ import { AuthError, verifyRequestOrigin } from "@netlify/identity";
 import { hasPermission, isResponse, json, requireUser, type MembershipRole } from "./_shared/auth.ts";
 import { isUuid, withSession, type DatabaseClient } from "./_shared/database.ts";
 import { createContractPdf, type ContractPdfData } from "./_shared/contract-pdf.ts";
-import { parseContractConfirmation, parseContractCreate, parseContractRelease, parseContractSettings, parseContractUpdate } from "./_shared/contract-input.ts";
+import { parseContractConfirmation, parseContractCreate, parseContractRelease, parseContractSettings, parseContractUpdate, type ContractCreateInput } from "./_shared/contract-input.ts";
 
 type ContractStatus = "draft" | "released" | "confirmed" | "void";
 type ContractRow = {
@@ -126,25 +126,43 @@ function mapSettings(settings: Awaited<ReturnType<typeof getSettings>>) {
   };
 }
 
-async function buildSnapshots(client: DatabaseClient, tenantId: string, transitionSponsorId: string) {
-  const proposal = await client.query<{
+type SnapshotSource = {
     sponsor_id: string; package_version_id: string; legal_name: string; street: string | null;
     postal_code: string | null; city: string | null; contact_name: string | null; contact_email: string | null;
-    package_name: string; description: string | null; price_cents: number; duration_months: number;
+    package_name: string; description: string | null; contract_value_cents: number; duration_months: number;
     payment_plan: string; payment_terms: string | null; valid_from: string | null; valid_until: string | null;
-  }>(`
-    SELECT proposal.sponsor_id, proposal.proposed_package_version_id AS package_version_id,
-           sponsor.legal_name, sponsor.street, sponsor.postal_code, sponsor.city, sponsor.contact_name, sponsor.contact_email,
-           version.name AS package_name, version.description, version.price_cents, version.duration_months,
-           version.payment_plan, version.payment_terms, version.valid_from::text, version.valid_until::text
-    FROM transition_sponsors proposal
-    JOIN sponsors sponsor ON sponsor.id = proposal.sponsor_id AND sponsor.tenant_id = proposal.tenant_id
-    JOIN sponsorship_package_versions version ON version.id = proposal.proposed_package_version_id AND version.tenant_id = proposal.tenant_id
-    WHERE proposal.tenant_id = $1 AND proposal.id = $2 AND proposal.status = 'confirmed'
-      AND version.status = 'published'
-    LIMIT 1
-  `, [tenantId, transitionSponsorId]);
-  const source = proposal.rows[0];
+};
+
+async function buildSnapshots(client: DatabaseClient, tenantId: string, selection: ContractCreateInput) {
+  const sourceResult = selection.mode === "transition"
+    ? await client.query<SnapshotSource>(`
+      SELECT proposal.sponsor_id, proposal.proposed_package_version_id AS package_version_id,
+             sponsor.legal_name, sponsor.street, sponsor.postal_code, sponsor.city, sponsor.contact_name, sponsor.contact_email,
+             version.name AS package_name, version.description, proposal.proposed_value_cents AS contract_value_cents,
+             version.duration_months, version.payment_plan, version.payment_terms,
+             version.valid_from::text, version.valid_until::text
+      FROM transition_sponsors proposal
+      JOIN sponsors sponsor ON sponsor.id = proposal.sponsor_id AND sponsor.tenant_id = proposal.tenant_id
+      JOIN sponsorship_package_versions version ON version.id = proposal.proposed_package_version_id AND version.tenant_id = proposal.tenant_id
+      JOIN sponsorship_packages package ON package.id = version.package_id AND package.tenant_id = version.tenant_id
+      WHERE proposal.tenant_id = $1 AND proposal.id = $2 AND proposal.status = 'confirmed'
+        AND version.status = 'published' AND package.status = 'active'
+      LIMIT 1
+    `, [tenantId, selection.transitionSponsorId])
+    : await client.query<SnapshotSource>(`
+      SELECT sponsor.id AS sponsor_id, version.id AS package_version_id,
+             sponsor.legal_name, sponsor.street, sponsor.postal_code, sponsor.city, sponsor.contact_name, sponsor.contact_email,
+             version.name AS package_name, version.description, $4::integer AS contract_value_cents,
+             version.duration_months, version.payment_plan, version.payment_terms,
+             version.valid_from::text, version.valid_until::text
+      FROM sponsors sponsor
+      JOIN sponsorship_package_versions version ON version.tenant_id = sponsor.tenant_id
+      JOIN sponsorship_packages package ON package.id = version.package_id AND package.tenant_id = version.tenant_id
+      WHERE sponsor.tenant_id = $1 AND sponsor.id = $2 AND version.id = $3
+        AND sponsor.status <> 'inactive' AND version.status = 'published' AND package.status = 'active'
+      LIMIT 1
+    `, [tenantId, selection.sponsorId, selection.packageVersionId, selection.annualValueCents]);
+  const source = sourceResult.rows[0];
   if (!source) return null;
   const settings = await getSettings(client, tenantId);
   if (!settings) return null;
@@ -180,7 +198,7 @@ async function buildSnapshots(client: DatabaseClient, tenantId: string, transiti
     package: {
       name: source.package_name,
       description: source.description,
-      priceCents: source.price_cents,
+      priceCents: source.contract_value_cents,
       durationMonths: source.duration_months,
       paymentPlan: source.payment_plan,
       paymentTerms: source.payment_terms,
@@ -239,7 +257,43 @@ async function listContracts(client: DatabaseClient, tenantId: string) {
                       WHERE contract.tenant_id = proposal.tenant_id AND contract.transition_sponsor_id = proposal.id AND contract.status <> 'void')
     ORDER BY proposal.updated_at DESC
   `, [tenantId]);
-  return { contracts: contracts.rows, eligible: eligible.rows };
+  const sponsors = await client.query<{ id: string; legal_name: string }>(`
+    SELECT id, legal_name FROM sponsors
+    WHERE tenant_id = $1 AND status <> 'inactive'
+    ORDER BY lower(legal_name), id
+  `, [tenantId]);
+  const catalog = await client.query<{ id: string; name: string; price_cents: number; duration_months: number; version_number: number }>(`
+    SELECT version.id, version.name, version.price_cents, version.duration_months, version.version_number
+    FROM sponsorship_package_versions version
+    JOIN sponsorship_packages package ON package.id = version.package_id AND package.tenant_id = version.tenant_id
+    WHERE version.tenant_id = $1 AND version.status = 'published' AND package.status = 'active'
+      AND (version.valid_from IS NULL OR version.valid_from <= CURRENT_DATE)
+      AND (version.valid_until IS NULL OR version.valid_until >= CURRENT_DATE)
+    ORDER BY version.price_cents, lower(version.name), version.version_number DESC
+  `, [tenantId]);
+  return { contracts: contracts.rows, eligible: eligible.rows, sponsors: sponsors.rows, catalog: catalog.rows };
+}
+
+async function ensureDirectReservation(client: DatabaseClient, tenantId: string, sponsorId: string, packageVersionId: string, userId: string) {
+  const existing = await client.query<{ id: string; status: "held" | "confirmed"; expired: boolean }>(`
+    SELECT id, status, (expires_at IS NOT NULL AND expires_at <= now()) AS expired
+    FROM sponsorship_package_reservations
+    WHERE tenant_id = $1 AND sponsor_id = $2 AND package_version_id = $3
+      AND status IN ('held', 'confirmed')
+    LIMIT 1
+  `, [tenantId, sponsorId, packageVersionId]);
+  if (existing.rows[0]?.status === "confirmed") return true;
+  if (existing.rows[0]?.status === "held" && !existing.rows[0].expired) return false;
+  if (existing.rows[0]?.status === "held") {
+    await client.query(`UPDATE sponsorship_package_reservations
+      SET status = 'released', updated_at = now()
+      WHERE tenant_id = $1 AND id = $2`, [tenantId, existing.rows[0].id]);
+  }
+  await client.query(`INSERT INTO sponsorship_package_reservations
+    (tenant_id, package_version_id, sponsor_id, status, created_by)
+    VALUES ($1, $2, $3, 'confirmed', $4)`,
+    [tenantId, packageVersionId, sponsorId, userId]);
+  return true;
 }
 
 function pdfData(contract: ContractRow): ContractPdfData {
@@ -313,7 +367,8 @@ export default async (request: Request, context: Context) => {
           value.representativeName, value.representativeTitle, value.contactEmail, value.renewalMode,
           value.noticeMonths, value.placeOfJurisdiction, user.id]);
         await client.query(`INSERT INTO audit_events (tenant_id, actor_user_id, action, object_type, object_id, metadata)
-          VALUES ($1,$2,'contract.settings_updated','tenant',$1::text,jsonb_build_object('renewal_mode',$3::text))`, [tenantId, user.id, value.renewalMode]);
+          VALUES ($1,$2,'contract.settings_updated','tenant',$3,jsonb_build_object('renewal_mode',$4::text))`,
+          [tenantId, user.id, tenantId, value.renewalMode]);
         return { settings: mapSettings(await getSettings(client, tenantId)) };
       });
       return "denied" in result ? json({ error: "permission_denied" }, 403) : json(result);
@@ -346,8 +401,8 @@ export default async (request: Request, context: Context) => {
       const result = await withSession(user.id, tenantId, async (client) => {
         const role = await membershipRole(client, tenantId, user.id);
         if (!role || !hasPermission(role, "packages:write")) return { state: "denied" as const };
-        const snapshots = await buildSnapshots(client, tenantId, parsed.value.transitionSponsorId);
-        if (!snapshots) return { state: "proposal_not_found" as const };
+        const snapshots = await buildSnapshots(client, tenantId, parsed.value);
+        if (!snapshots) return { state: "selection_not_found" as const };
         const year = new Date().getUTCFullYear();
         const counter = await client.query<{ last_value: number }>(`
           INSERT INTO contract_number_counters (tenant_id, contract_year, last_value) VALUES ($1,$2,1)
@@ -361,17 +416,22 @@ export default async (request: Request, context: Context) => {
             organization_snapshot, sponsor_snapshot, package_snapshot, terms_snapshot, created_by
           ) VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8::jsonb,$9::jsonb,$10)
           RETURNING id
-        `, [tenantId, contractNumber, snapshots.sponsorId, parsed.value.transitionSponsorId,
+        `, [tenantId, contractNumber, snapshots.sponsorId,
+          parsed.value.mode === "transition" ? parsed.value.transitionSponsorId : null,
           snapshots.packageVersionId, JSON.stringify(snapshots.organization), JSON.stringify(snapshots.sponsor),
           JSON.stringify(snapshots.package), JSON.stringify(snapshots.terms), user.id]);
         await client.query(`INSERT INTO sponsorship_contract_events
           (tenant_id, contract_id, event_type, actor_user_id, actor_email, evidence)
-          VALUES ($1,$2,'created',$3,$4,jsonb_build_object('source','confirmed_transition'))`,
-          [tenantId, created.rows[0].id, user.id, user.email ?? null]);
+          VALUES ($1,$2,'created',$3,$4,jsonb_build_object('source',$5::text,'annual_value_cents',$6::integer))`,
+          [tenantId, created.rows[0].id, user.id, user.email ?? null,
+            parsed.value.mode === "transition" ? "confirmed_transition" : "direct_selection",
+            snapshots.package.priceCents]);
         return { state: "created" as const, detail: await contractDetail(client, tenantId, created.rows[0].id) };
       }, user.email ?? undefined);
       if (result.state === "denied") return json({ error: "permission_denied" }, 403);
-      if (result.state === "proposal_not_found") return json({ error: "confirmed_proposal_required" }, 409);
+      if (result.state === "selection_not_found") {
+        return json({ error: parsed.value.mode === "transition" ? "confirmed_proposal_required" : "contract_selection_not_found" }, 409);
+      }
       return json({ detail: result.detail }, 201);
     } catch (error) {
       console.error("contract_create_failed", { requestId: context.requestId, tenantId, error });
@@ -472,11 +532,25 @@ export default async (request: Request, context: Context) => {
         if (!existing) return { state: "not_found" as const };
         if (existing.contract.status !== "draft") return { state: "locked" as const };
         if (existing.contract.signing_method !== "click") return { state: "provider_required" as const };
-        if (!existing.contract.transition_sponsor_id) return { state: "source_missing" as const };
-        const snapshots = await buildSnapshots(client, tenantId, existing.contract.transition_sponsor_id);
+        const annualValueCents = Number(existing.contract.package_snapshot.priceCents);
+        if (!existing.contract.transition_sponsor_id && (!Number.isSafeInteger(annualValueCents) || annualValueCents < 0)) {
+          return { state: "source_missing" as const };
+        }
+        const source: ContractCreateInput = existing.contract.transition_sponsor_id
+          ? { mode: "transition", transitionSponsorId: existing.contract.transition_sponsor_id }
+          : {
+            mode: "direct",
+            sponsorId: existing.contract.sponsor_id,
+            packageVersionId: existing.contract.package_version_id,
+            annualValueCents,
+          };
+        const snapshots = await buildSnapshots(client, tenantId, source);
         if (!snapshots) return { state: "source_missing" as const };
         if (!snapshots.settingsComplete) return { state: "settings_incomplete" as const };
         if (!snapshots.sponsorComplete) return { state: "sponsor_incomplete" as const };
+        if (source.mode === "direct" && !await ensureDirectReservation(client, tenantId, snapshots.sponsorId, snapshots.packageVersionId, user.id)) {
+          return { state: "reservation_held" as const };
+        }
         const hash = snapshotHash({
           contractNumber: existing.contract.contract_number, versionNumber: existing.contract.version_number,
           title: existing.contract.title, specialAgreements: existing.contract.special_agreements,
@@ -500,9 +574,13 @@ export default async (request: Request, context: Context) => {
       if (result.state === "provider_required") return json({ error: "signature_provider_required" }, 409);
       if (result.state === "settings_incomplete") return json({ error: "contract_settings_incomplete" }, 409);
       if (result.state === "sponsor_incomplete") return json({ error: "contract_sponsor_data_incomplete" }, 409);
-      if (result.state === "source_missing") return json({ error: "confirmed_proposal_required" }, 409);
+      if (result.state === "reservation_held") return json({ error: "package_reservation_held" }, 409);
+      if (result.state === "source_missing") return json({ error: "contract_source_unavailable" }, 409);
       return json({ detail: result.detail });
     } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      if (message.includes("package_capacity_exceeded")) return json({ error: "package_capacity_exceeded" }, 409);
+      if (message.includes("package_exclusivity_conflict")) return json({ error: "package_exclusivity_conflict" }, 409);
       console.error("contract_release_failed", { requestId: context.requestId, tenantId, contractId, error });
       return json({ error: "contract_release_failed", requestId: context.requestId }, 500);
     }
