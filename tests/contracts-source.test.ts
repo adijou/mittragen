@@ -45,3 +45,12 @@ test("access creation and PDF delivery remain explicit admin follow-up actions",
   assert.match(contracts, /\/email-copy\$/);
   assert.match(contracts, /sendContractCopyEmail/);
 });
+
+test("every contract PDF path loads the current organization branding", async () => {
+  const contracts = await readFile(new URL("../netlify/functions/contracts.mts", import.meta.url), "utf8");
+  const publicSigning = await readFile(new URL("../netlify/functions/contract-signing.mts", import.meta.url), "utf8");
+  assert.match(contracts, /loadOrganizationPdfBrand/);
+  assert.match(contracts, /pdfData\(detail\.contract, brand\)/);
+  assert.match(contracts, /pdfData\(contract, authorized\.brand\)/);
+  assert.match(publicSigning, /pdfData\(contract, brand\)/);
+});

@@ -5,6 +5,7 @@ import { json } from "./_shared/auth.ts";
 import { withSession, type DatabaseClient } from "./_shared/database.ts";
 import { parseContractAcknowledgement } from "./_shared/contract-input.ts";
 import { createContractPdf, type ContractPdfData } from "./_shared/contract-pdf.ts";
+import { loadOrganizationPdfBrand, type OrganizationPdfBrand } from "./_shared/organization-pdf-brand.ts";
 
 const route = /^\/api\/contract-signing\/([A-Za-z0-9_-]{43})(?:\/(pdf|confirm))?$/;
 
@@ -87,7 +88,7 @@ function validity(signing: SigningRow) {
   return "valid" as const;
 }
 
-function pdfData(contract: PublicContract): ContractPdfData {
+function pdfData(contract: PublicContract, brand: OrganizationPdfBrand): ContractPdfData {
   return {
     contractNumber: contract.contract_number,
     versionNumber: contract.version_number,
@@ -98,6 +99,7 @@ function pdfData(contract: PublicContract): ContractPdfData {
     confirmedAt: contract.confirmed_at,
     confirmedEmail: contract.confirmed_email,
     snapshotHash: contract.snapshot_hash,
+    brand,
     organization: contract.organization_snapshot,
     sponsor: contract.sponsor_snapshot,
     package: contract.package_snapshot,
@@ -149,7 +151,8 @@ export default async (request: Request, context: Context) => {
       }
 
       if (action === "pdf") {
-        const bytes = await createContractPdf(pdfData(contract));
+        const brand = await loadOrganizationPdfBrand(client, signing.tenant_id, context.requestId);
+        const bytes = await createContractPdf(pdfData(contract, brand));
         await client.query(`INSERT INTO sponsorship_contract_events
           (tenant_id, contract_id, event_type, actor_user_id, actor_email, evidence)
           VALUES ($1,$2,'downloaded',$3,$4,jsonb_build_object('confirmation_mode','one_time_link','snapshot_hash',$5::text))`,

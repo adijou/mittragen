@@ -7,6 +7,7 @@ import { createContractPdf, type ContractPdfData } from "./_shared/contract-pdf.
 import { parseContractAcknowledgement, parseContractConfirmation, parseContractCreate, parseContractDispatch, parseContractRelease, parseContractSettings, parseContractUpdate, type ContractCreateInput } from "./_shared/contract-input.ts";
 import { findIdentityUserByEmail } from "./_shared/identity-user-lookup.ts";
 import { sendIdentityInvitation } from "./_shared/identity-invitations.ts";
+import { loadOrganizationPdfBrand, type OrganizationPdfBrand } from "./_shared/organization-pdf-brand.ts";
 import { sendContractAccessEmail, sendContractCopyEmail, sendContractSigningEmail } from "./_shared/resend-contract-email.ts";
 
 type ContractStatus = "draft" | "released" | "confirmed" | "void";
@@ -343,7 +344,7 @@ async function ensureDirectReservation(client: DatabaseClient, tenantId: string,
   return true;
 }
 
-function pdfData(contract: ContractRow): ContractPdfData {
+function pdfData(contract: ContractRow, brand: OrganizationPdfBrand): ContractPdfData {
   return {
     contractNumber: contract.contract_number,
     versionNumber: contract.version_number,
@@ -354,6 +355,7 @@ function pdfData(contract: ContractRow): ContractPdfData {
     confirmedAt: contract.confirmed_at,
     confirmedEmail: contract.confirmed_email,
     snapshotHash: contract.snapshot_hash,
+    brand,
     organization: contract.organization_snapshot,
     sponsor: contract.sponsor_snapshot,
     package: contract.package_snapshot,
@@ -499,7 +501,8 @@ export default async (request: Request, context: Context) => {
         const sponsorAllowed = await hasSponsorAccess(client, tenantId, detail.contract.sponsor_id, user.id);
         if ((!role || !hasPermission(role, "packages:read")) && !sponsorAllowed) return { state: "denied" as const };
         if (sponsorAllowed && detail.contract.status === "draft") return { state: "denied" as const };
-        const bytes = await createContractPdf(pdfData(detail.contract));
+        const brand = await loadOrganizationPdfBrand(client, tenantId, context.requestId);
+        const bytes = await createContractPdf(pdfData(detail.contract, brand));
         await client.query(`INSERT INTO sponsorship_contract_events
           (tenant_id, contract_id, event_type, actor_user_id, actor_email, evidence)
           VALUES ($1,$2,'downloaded',$3,$4,jsonb_build_object('snapshot_hash',$5::text))`,
@@ -806,14 +809,15 @@ export default async (request: Request, context: Context) => {
         if (!detail) return { state: "not_found" as const };
         if (detail.contract.status !== "confirmed" || !detail.signingRequest) return { state: "not_confirmed" as const };
         const tenant = await client.query<{ name: string }>("SELECT name FROM tenants WHERE id = $1 LIMIT 1", [tenantId]);
-        return { state: "ready" as const, detail, tenantName: tenant.rows[0]?.name ?? detail.contract.organization_snapshot.legalName };
+        const brand = await loadOrganizationPdfBrand(client, tenantId, context.requestId);
+        return { state: "ready" as const, detail, brand, tenantName: tenant.rows[0]?.name ?? detail.contract.organization_snapshot.legalName };
       }, user.email ?? undefined);
       if (authorized.state === "denied") return json({ error: "permission_denied" }, 403);
       if (authorized.state === "not_found") return json({ error: "contract_not_found" }, 404);
       if (authorized.state === "not_confirmed") return json({ error: "confirmed_contract_required" }, 409);
       const contract = authorized.detail.contract;
       const signing = authorized.detail.signingRequest!;
-      const bytes = await createContractPdf(pdfData(contract));
+      const bytes = await createContractPdf(pdfData(contract, authorized.brand));
       await sendContractCopyEmail({
         email: signing.signer_email,
         signerName: signing.signer_name,

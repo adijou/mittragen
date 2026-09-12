@@ -1,4 +1,5 @@
-import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from "pdf-lib";
+import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFImage, type PDFPage } from "pdf-lib";
+import type { OrganizationPdfBrand } from "./organization-pdf-brand.ts";
 
 type ContractRight = {
   name: string;
@@ -19,6 +20,7 @@ export type ContractPdfData = {
   confirmedAt: string | null;
   confirmedEmail: string | null;
   snapshotHash: string | null;
+  brand: OrganizationPdfBrand;
   organization: {
     legalName: string;
     street: string;
@@ -59,21 +61,53 @@ export type ContractPdfData = {
 };
 
 const A4 = { width: 595.28, height: 841.89 };
-const MARGIN = 51;
-const NAVY = rgb(11 / 255, 33 / 255, 68 / 255);
-const BLUE = rgb(25 / 255, 103 / 255, 255 / 255);
-const GOLD = rgb(233 / 255, 180 / 255, 76 / 255);
-const LIGHT_BLUE = rgb(237 / 255, 244 / 255, 255 / 255);
+const MARGIN = 54;
+const CONTENT_WIDTH = A4.width - MARGIN * 2;
+const CONTENT_BOTTOM = 62;
 const LIGHT_NEUTRAL = rgb(247 / 255, 249 / 255, 252 / 255);
-const LINE = rgb(220 / 255, 227 / 255, 236 / 255);
 const MUTED = rgb(67 / 255, 83 / 255, 107 / 255);
-const WHITE = rgb(1, 1, 1);
+
+type ColorTuple = [number, number, number];
+
+function colorTuple(value: string, fallback: string): ColorTuple {
+  const normalized = /^#[0-9a-f]{6}$/i.test(value) ? value : fallback;
+  return [1, 3, 5].map((index) => Number.parseInt(normalized.slice(index, index + 2), 16) / 255) as ColorTuple;
+}
+
+function luminance(color: ColorTuple) {
+  const linear = color.map((channel) => channel <= 0.03928 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4);
+  return linear[0] * 0.2126 + linear[1] * 0.7152 + linear[2] * 0.0722;
+}
+
+function mix(first: ColorTuple, second: ColorTuple, weight: number): ColorTuple {
+  return first.map((channel, index) => channel * (1 - weight) + second[index] * weight) as ColorTuple;
+}
+
+function darkSurface(color: ColorTuple) {
+  let result = color;
+  while (luminance(result) > 0.22) result = mix(result, [0, 0, 0], 0.18);
+  return result;
+}
+
+function accentOnWhite(color: ColorTuple) {
+  let result = color;
+  while (luminance(result) > 0.48) result = mix(result, [0, 0, 0], 0.16);
+  return result;
+}
+
+function accentOnDark(color: ColorTuple) {
+  let result = color;
+  while (luminance(result) < 0.5) result = mix(result, [1, 1, 1], 0.18);
+  return result;
+}
+
+const pdfColor = (value: ColorTuple) => rgb(value[0], value[1], value[2]);
 
 const paymentLabels: Record<string, string> = {
-  annual: "Jährlich",
-  semiannual: "Halbjährlich",
-  quarterly: "Quartalsweise",
-  custom: "Individuell",
+  annual: "jährlich",
+  semiannual: "halbjährlich",
+  quarterly: "quartalsweise",
+  custom: "individuell",
 };
 
 function swissDate(value: string | null) {
@@ -87,21 +121,39 @@ function formatChf(cents: number) {
 }
 
 function safeText(value: string) {
-  return value.replace(/\u2011|\u2013|\u2014/g, "-").replace(/\u00a0/g, " ").replace(/\t/g, " ");
+  return value.replace(/[\u2010-\u2015]/g, "-").replace(/\u00a0/g, " ").replace(/\t/g, " ");
+}
+
+function splitLongWord(word: string, font: PDFFont, size: number, width: number) {
+  const fragments: string[] = [];
+  let fragment = "";
+  for (const character of word) {
+    const next = fragment + character;
+    if (fragment && font.widthOfTextAtSize(next, size) > width) {
+      fragments.push(fragment);
+      fragment = character;
+    } else fragment = next;
+  }
+  if (fragment) fragments.push(fragment);
+  return fragments;
 }
 
 function linesFor(text: string, font: PDFFont, size: number, width: number) {
-  const paragraphs = safeText(text).split(/\n/);
   const lines: string[] = [];
-  for (const paragraph of paragraphs) {
+  for (const paragraph of safeText(text).split(/\n/)) {
     if (!paragraph.trim()) { lines.push(""); continue; }
     let line = "";
-    for (const word of paragraph.trim().split(/\s+/)) {
-      const next = line ? `${line} ${word}` : word;
-      if (font.widthOfTextAtSize(next, size) <= width) line = next;
-      else {
-        if (line) lines.push(line);
-        line = word;
+    for (const originalWord of paragraph.trim().split(/\s+/)) {
+      const words = font.widthOfTextAtSize(originalWord, size) > width
+        ? splitLongWord(originalWord, font, size, width)
+        : [originalWord];
+      for (const word of words) {
+        const next = line ? `${line} ${word}` : word;
+        if (font.widthOfTextAtSize(next, size) <= width) line = next;
+        else {
+          if (line) lines.push(line);
+          line = word;
+        }
       }
     }
     if (line) lines.push(line);
@@ -113,14 +165,42 @@ function fitLine(text: string, font: PDFFont, size: number, width: number) {
   const normalized = safeText(text);
   if (font.widthOfTextAtSize(normalized, size) <= width) return normalized;
   let shortened = normalized;
-  while (shortened.length > 1 && font.widthOfTextAtSize(`${shortened}…`, size) > width) shortened = shortened.slice(0, -1);
-  return `${shortened.trimEnd()}…`;
+  while (shortened.length > 1 && font.widthOfTextAtSize(`${shortened}...`, size) > width) shortened = shortened.slice(0, -1);
+  return `${shortened.trimEnd()}...`;
+}
+
+function statusLabel(status: ContractPdfData["status"]) {
+  if (status === "draft") return "Entwurf - noch nicht freigegeben";
+  if (status === "released") return "Zur Bestätigung freigegeben";
+  if (status === "confirmed") return "Elektronisch bestätigt";
+  return "Aufgehoben";
 }
 
 export async function createContractPdf(data: ContractPdfData): Promise<Uint8Array> {
   const pdf = await PDFDocument.create();
   const regular = await pdf.embedFont(StandardFonts.Helvetica);
   const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
+  const primary = colorTuple(data.brand.primaryColor, "#0B2144");
+  const accent = colorTuple(data.brand.accentColor, "#1967FF");
+  const INK = pdfColor(darkSurface(primary));
+  const PRIMARY = pdfColor(accentOnWhite(primary));
+  const ACCENT = pdfColor(accentOnWhite(accent));
+  const ACCENT_ON_DARK = pdfColor(accentOnDark(accent));
+  const SOFT_PRIMARY = pdfColor(mix(primary, [1, 1, 1], 0.9));
+  const SOFT_ACCENT = pdfColor(mix(accent, [1, 1, 1], 0.91));
+  const LINE = pdfColor(mix(primary, [1, 1, 1], 0.82));
+
+  let logo: PDFImage | undefined;
+  if (data.brand.logo) {
+    try {
+      logo = data.brand.logo.contentType === "image/png"
+        ? await pdf.embedPng(data.brand.logo.bytes)
+        : await pdf.embedJpg(data.brand.logo.bytes);
+    } catch (error) {
+      console.error("contract_pdf_logo_embed_failed", { contractNumber: data.contractNumber, error });
+    }
+  }
+
   const created = new Date(data.createdAt);
   if (!Number.isNaN(created.valueOf())) {
     pdf.setCreationDate(created);
@@ -134,168 +214,296 @@ export async function createContractPdf(data: ContractPdfData): Promise<Uint8Arr
   const pages: PDFPage[] = [];
   let page = pdf.addPage([A4.width, A4.height]);
   pages.push(page);
-  let y = A4.height - 105;
+  let y = A4.height - 99;
 
   const header = (target: PDFPage) => {
-    target.drawRectangle({ x: 0, y: A4.height - 7, width: A4.width, height: 7, color: BLUE });
-    const cx = MARGIN + 13;
-    const cy = A4.height - 42;
-    const nodes = [[0, 10], [9, 5], [9, -5], [0, -10], [-9, -5], [-9, 5]];
-    for (let i = 0; i < nodes.length; i += 1) target.drawCircle({ x: cx + nodes[i][0], y: cy + nodes[i][1], size: 2.7, color: i % 2 ? GOLD : BLUE });
-    target.drawCircle({ x: cx, y: cy, size: 4.1, color: NAVY });
-    target.drawText(fitLine(data.organization.legalName, bold, 11, 260), { x: MARGIN + 33, y: A4.height - 47, size: 11, font: bold, color: NAVY });
+    target.drawRectangle({ x: 0, y: A4.height - 7, width: A4.width, height: 7, color: ACCENT });
+    let nameX = MARGIN;
+    let nameWidth = 300;
+    if (logo) {
+      const natural = logo.scale(1);
+      const scale = Math.min(64 / natural.width, 34 / natural.height, 1);
+      const width = natural.width * scale;
+      const height = natural.height * scale;
+      target.drawImage(logo, { x: MARGIN, y: A4.height - 57 + (34 - height) / 2, width, height });
+      nameX += width + 13;
+      nameWidth -= width + 13;
+    }
+    target.drawText(fitLine(data.organization.legalName, bold, 11, Math.max(120, nameWidth)), {
+      x: nameX, y: A4.height - 45, size: 11, font: bold, color: INK,
+    });
     const platform = "erstellt mit Mittragen";
-    target.drawText(platform, { x: A4.width - MARGIN - regular.widthOfTextAtSize(platform, 8), y: A4.height - 45, size: 8, font: regular, color: MUTED });
-    target.drawLine({ start: { x: MARGIN, y: A4.height - 68 }, end: { x: A4.width - MARGIN, y: A4.height - 68 }, thickness: 0.8, color: LINE });
+    target.drawText(platform, { x: A4.width - MARGIN - regular.widthOfTextAtSize(platform, 7.5), y: A4.height - 44, size: 7.5, font: regular, color: MUTED });
+    target.drawLine({ start: { x: MARGIN, y: A4.height - 67 }, end: { x: A4.width - MARGIN, y: A4.height - 67 }, thickness: 0.7, color: ACCENT });
   };
 
   const addPage = () => {
     page = pdf.addPage([A4.width, A4.height]);
     pages.push(page);
     header(page);
-    y = A4.height - 96;
+    y = A4.height - 91;
   };
 
-  const ensure = (height: number) => { if (y - height < 58) addPage(); };
-  const drawText = (text: string, options: { size?: number; font?: PDFFont; color?: ReturnType<typeof rgb>; indent?: number; lineHeight?: number; after?: number } = {}) => {
-    const size = options.size ?? 9.4;
+  const ensure = (height: number) => { if (y - height < CONTENT_BOTTOM) addPage(); };
+  const drawLines = (lines: string[], options: { x?: number; width?: number; size?: number; font?: PDFFont; color?: ReturnType<typeof rgb>; lineHeight?: number; after?: number } = {}) => {
+    const x = options.x ?? MARGIN;
+    const size = options.size ?? 9.2;
     const font = options.font ?? regular;
-    const indent = options.indent ?? 0;
     const lineHeight = options.lineHeight ?? size * 1.42;
-    const lines = linesFor(text, font, size, A4.width - MARGIN * 2 - indent);
-    ensure(lines.length * lineHeight + (options.after ?? 0));
+    if (lines.length) ensure(Math.min(lines.length, 3) * lineHeight + (options.after ?? 0));
     for (const line of lines) {
-      if (line) page.drawText(line, { x: MARGIN + indent, y, size, font, color: options.color ?? NAVY });
+      ensure(lineHeight);
+      if (line) page.drawText(line, { x, y, size, font, color: options.color ?? INK });
       y -= lineHeight;
     }
     y -= options.after ?? 0;
   };
+  const drawText = (text: string, options: { x?: number; width?: number; size?: number; font?: PDFFont; color?: ReturnType<typeof rgb>; lineHeight?: number; after?: number } = {}) => {
+    const x = options.x ?? MARGIN;
+    const width = options.width ?? A4.width - MARGIN - x;
+    const size = options.size ?? 9.2;
+    const font = options.font ?? regular;
+    drawLines(linesFor(text, font, size, width), { ...options, x, width, size, font });
+  };
   const section = (number: string, title: string) => {
-    ensure(78);
-    y -= 7;
-    page.drawText(`${number}  ${title.toUpperCase()}`, { x: MARGIN, y, size: 10.5, font: bold, color: BLUE });
-    y -= 20;
+    ensure(82);
+    y -= 6;
+    const label = number ? `${number}  ${title}` : title;
+    page.drawText(safeText(label.toUpperCase()), { x: MARGIN, y, size: 10.2, font: bold, color: PRIMARY });
+    page.drawLine({ start: { x: MARGIN, y: y - 5 }, end: { x: MARGIN + 34, y: y - 5 }, thickness: 1.5, color: ACCENT });
+    y -= 19;
+  };
+  const continuedSection = (number: string, title: string) => {
+    page.drawText(safeText(`${number}  ${title.toUpperCase()} (FORTSETZUNG)`), { x: MARGIN, y, size: 8.2, font: bold, color: PRIMARY });
+    page.drawLine({ start: { x: MARGIN, y: y - 5 }, end: { x: MARGIN + 34, y: y - 5 }, thickness: 1.2, color: ACCENT });
+    y -= 19;
+  };
+
+  const drawPartyRow = (role: string, values: string[]) => {
+    const roleWidth = 104;
+    const valueX = MARGIN + roleWidth + 15;
+    const valueWidth = CONTENT_WIDTH - roleWidth - 27;
+    const lines = values.flatMap((value) => value ? linesFor(value, regular, 8.8, valueWidth) : []);
+    const height = Math.max(38, lines.length * 12 + 18);
+    ensure(height + 5);
+    page.drawRectangle({ x: MARGIN, y: y - height + 7, width: CONTENT_WIDTH, height, color: LIGHT_NEUTRAL, borderColor: LINE, borderWidth: 0.45 });
+    page.drawText(role.toUpperCase(), { x: MARGIN + 12, y: y - 9, size: 7.1, font: bold, color: PRIMARY });
+    let rowY = y - 9;
+    for (const line of lines) {
+      page.drawText(line, { x: valueX, y: rowY, size: 8.8, font: regular, color: INK });
+      rowY -= 12;
+    }
+    y -= height + 5;
+  };
+
+  const drawOverview = (items: Array<[string, string]>) => {
+    const gap = 12;
+    const columnWidth = (CONTENT_WIDTH - gap) / 2;
+    const rows = Array.from({ length: Math.ceil(items.length / 2) }, (_, row) => items.slice(row * 2, row * 2 + 2));
+    const rowHeights = rows.map((row) => Math.max(...row.map(([, value]) => linesFor(value, bold, 8.8, columnWidth - 24).length), 1) * 11 + 25);
+    const height = rowHeights.reduce((sum, value) => sum + value, 0) + 8;
+    ensure(height + 4);
+    page.drawRectangle({ x: MARGIN, y: y - height + 7, width: CONTENT_WIDTH, height, color: SOFT_PRIMARY, borderColor: LINE, borderWidth: 0.5 });
+    let rowTop = y - 8;
+    rows.forEach((row, rowIndex) => {
+      row.forEach(([label, value], column) => {
+        const x = MARGIN + 12 + column * (columnWidth + gap);
+        page.drawText(label.toUpperCase(), { x, y: rowTop, size: 6.7, font: bold, color: MUTED });
+        linesFor(value, bold, 8.8, columnWidth - 24).forEach((line, index) => {
+          page.drawText(line, { x, y: rowTop - 12 - index * 11, size: 8.8, font: bold, color: INK });
+        });
+      });
+      rowTop -= rowHeights[rowIndex];
+    });
+    y -= height + 7;
+  };
+
+  const drawFlowingCallout = (text: string) => {
+    const size = 8.8;
+    const lineHeight = 12.2;
+    const lines = linesFor(text, regular, size, CONTENT_WIDTH - 30);
+    let offset = 0;
+    while (offset < lines.length) {
+      if (offset > 0) {
+        addPage();
+        continuedSection("7", "Besondere Vereinbarungen");
+      } else if (y - 42 < CONTENT_BOTTOM) addPage();
+      const available = y - CONTENT_BOTTOM;
+      const capacity = Math.max(1, Math.floor((available - 24) / lineHeight));
+      const chunk = lines.slice(offset, offset + capacity);
+      const height = chunk.length * lineHeight + 22;
+      const top = y;
+      page.drawRectangle({ x: MARGIN, y: top - height + 7, width: CONTENT_WIDTH, height, color: LIGHT_NEUTRAL, borderColor: LINE, borderWidth: 0.5 });
+      page.drawRectangle({ x: MARGIN, y: top - height + 7, width: 3, height, color: ACCENT });
+      let lineY = top - 9;
+      for (const line of chunk) {
+        if (line) page.drawText(line, { x: MARGIN + 15, y: lineY, size, font: regular, color: INK });
+        lineY -= lineHeight;
+      }
+      y -= height + 8;
+      offset += chunk.length;
+    }
+  };
+
+  const drawConfirmation = () => {
+    const name = `${data.signingAuthorityName ?? data.sponsor.contactName ?? "Sponsor"} · ${data.signingAuthorityRole ?? "vertretungsberechtigte Person"}`;
+    const detail = `${data.confirmedEmail ?? "-"} · ${swissDate(data.confirmedAt)}`;
+    const fingerprint = `Dokument-Fingerabdruck: ${data.snapshotHash ?? "-"}`;
+    const nameLines = linesFor(name, bold, 9.2, CONTENT_WIDTH - 28);
+    const detailLines = linesFor(detail, regular, 8.2, CONTENT_WIDTH - 28);
+    const fingerprintLines = linesFor(fingerprint, regular, 6.8, CONTENT_WIDTH - 28);
+    const height = 28 + nameLines.length * 12 + detailLines.length * 11 + fingerprintLines.length * 9;
+    ensure(height + 8);
+    const top = y;
+    page.drawRectangle({ x: MARGIN, y: top - height + 7, width: CONTENT_WIDTH, height, color: SOFT_ACCENT, borderColor: ACCENT, borderWidth: 0.8 });
+    page.drawText("ELEKTRONISCH BESTÄTIGT", { x: MARGIN + 14, y: top - 10, size: 7.2, font: bold, color: ACCENT });
+    let lineY = top - 28;
+    for (const line of nameLines) { page.drawText(line, { x: MARGIN + 14, y: lineY, size: 9.2, font: bold, color: INK }); lineY -= 12; }
+    for (const line of detailLines) { page.drawText(line, { x: MARGIN + 14, y: lineY, size: 8.2, font: regular, color: MUTED }); lineY -= 11; }
+    for (const line of fingerprintLines) { page.drawText(line, { x: MARGIN + 14, y: lineY, size: 6.8, font: regular, color: MUTED }); lineY -= 9; }
+    y -= height + 8;
   };
 
   header(page);
-  page.drawText(data.status === "draft" ? "VERTRAGSENTWURF" : data.title.toUpperCase(), { x: MARGIN, y, size: 10, font: bold, color: data.status === "draft" ? GOLD : BLUE });
-  y -= 34;
-  page.drawText(data.title, { x: MARGIN, y, size: 24, font: bold, color: NAVY });
-  y -= 42;
-
-  page.drawRectangle({ x: MARGIN, y: y - 72, width: A4.width - MARGIN * 2, height: 82, color: LIGHT_BLUE, borderColor: LINE, borderWidth: 0.5 });
-  const metadata = [
-    ["Vertragsnummer", data.contractNumber], ["Status", data.status === "draft" ? "Entwurf - noch nicht freigegeben" : data.status === "released" ? "Zur Bestätigung freigegeben" : data.status === "confirmed" ? "Bestätigt" : "Aufgehoben"],
-    ["Paket", data.package.name], ["Beitrag", formatChf(data.package.priceCents)],
-    ["Laufzeit", `${data.package.durationMonths} Monate`], ["Vertragsversion", String(data.versionNumber)],
-  ];
-  metadata.forEach(([label, value], index) => {
-    const column = index % 2;
-    const row = Math.floor(index / 2);
-    const x = MARGIN + 15 + column * 245;
-    const rowY = y - 12 - row * 23;
-    page.drawText(label.toUpperCase(), { x, y: rowY, size: 6.8, font: bold, color: MUTED });
-    page.drawText(safeText(value), { x, y: rowY - 10, size: 9, font: bold, color: NAVY });
+  page.drawText(data.status === "draft" ? "VERTRAGSENTWURF" : "SPONSORINGVERTRAG", {
+    x: MARGIN, y, size: 8, font: bold, color: data.status === "draft" ? ACCENT_ON_DARK : ACCENT,
   });
-  y -= 94;
+  y -= 27;
+  drawText(data.title, { size: 21, font: bold, color: INK, lineHeight: 24, after: 13 });
 
-  section("", "Vertragsparteien");
-  const partyTop = y;
-  const partyWidth = (A4.width - MARGIN * 2 - 12) / 2;
-  const parties = [
-    { label: "ORGANISATION", name: data.organization.legalName, lines: [data.organization.street, `${data.organization.postalCode} ${data.organization.city}`, data.organization.country, "", data.organization.representativeName, data.organization.representativeTitle, data.organization.contactEmail] },
-    { label: "SPONSOR", name: data.sponsor.legalName, lines: [data.sponsor.street ?? "-", `${data.sponsor.postalCode ?? ""} ${data.sponsor.city ?? ""}`.trim() || "-", "", data.sponsor.contactName ?? "-", data.sponsor.contactEmail ?? "-"] },
+  const metaWidth = 205;
+  const addressX = MARGIN + metaWidth + 26;
+  const addressWidth = CONTENT_WIDTH - metaWidth - 26;
+  const addressValues = [
+    data.sponsor.legalName,
+    data.sponsor.contactName,
+    data.sponsor.street,
+    `${data.sponsor.postalCode ?? ""} ${data.sponsor.city ?? ""}`.trim(),
+    data.sponsor.contactEmail,
+  ].filter((value): value is string => Boolean(value));
+  const addressLines = addressValues.flatMap((value, index) => linesFor(value, index === 0 ? bold : regular, index === 0 ? 9.2 : 8.7, addressWidth - 24));
+  const addressHeight = Math.max(99, addressLines.length * 12 + 35);
+  const gridHeight = Math.max(addressHeight, 108);
+  ensure(gridHeight + 8);
+  const gridTop = y;
+  const metadata: Array<[string, string]> = [
+    ["Vertragsnummer", data.contractNumber],
+    ["Datum", swissDate(data.createdAt)],
+    ["Status", statusLabel(data.status)],
+    ["Version", String(data.versionNumber)],
   ];
-  parties.forEach((party, index) => {
-    const x = MARGIN + index * (partyWidth + 12);
-    page.drawRectangle({ x, y: partyTop - 124, width: partyWidth, height: 132, color: LIGHT_NEUTRAL, borderColor: LINE, borderWidth: 0.5 });
-    page.drawText(party.label, { x: x + 12, y: partyTop - 12, size: 7, font: bold, color: BLUE });
-    const nameLines = linesFor(party.name, bold, 9.6, partyWidth - 24).slice(0, 2);
-    nameLines.forEach((line, lineIndex) => page.drawText(lineIndex === 1 ? fitLine(line, bold, 9.6, partyWidth - 24) : line, { x: x + 12, y: partyTop - 29 - lineIndex * 12, size: 9.6, font: bold, color: NAVY }));
-    let lineY = partyTop - 56;
-    for (const line of party.lines) {
-      if (line) page.drawText(fitLine(line, regular, 8.3, partyWidth - 24), { x: x + 12, y: lineY, size: 8.3, font: regular, color: MUTED });
-      lineY -= 11;
+  let metaY = gridTop - 5;
+  for (const [label, value] of metadata) {
+    page.drawText(label.toUpperCase(), { x: MARGIN, y: metaY, size: 6.7, font: bold, color: MUTED });
+    const valueLines = linesFor(value, bold, 8.7, metaWidth);
+    valueLines.forEach((line, index) => page.drawText(line, { x: MARGIN, y: metaY - 11 - index * 11, size: 8.7, font: bold, color: INK }));
+    metaY -= Math.max(24, valueLines.length * 11 + 13);
+  }
+  page.drawRectangle({ x: addressX, y: gridTop - addressHeight + 7, width: addressWidth, height: addressHeight, color: SOFT_PRIMARY });
+  page.drawText("AUFTRAGGEBER", { x: addressX + 12, y: gridTop - 10, size: 6.8, font: bold, color: ACCENT });
+  let addressY = gridTop - 30;
+  addressValues.forEach((value, index) => {
+    const font = index === 0 ? bold : regular;
+    const size = index === 0 ? 9.2 : 8.7;
+    for (const line of linesFor(value, font, size, addressWidth - 24)) {
+      page.drawText(line, { x: addressX + 12, y: addressY, size, font, color: index === 0 ? INK : MUTED });
+      addressY -= 12;
     }
   });
-  y = partyTop - 146;
+  y -= gridHeight + 9;
+
+  section("", "Vertragsparteien");
+  drawPartyRow("Organisation", [
+    data.organization.legalName,
+    `${data.organization.street}, ${data.organization.postalCode} ${data.organization.city}, ${data.organization.country}`,
+    `${data.organization.representativeName}, ${data.organization.representativeTitle}`,
+    data.organization.contactEmail,
+  ]);
+  drawPartyRow("Sponsor", [
+    data.sponsor.legalName,
+    [data.sponsor.street, `${data.sponsor.postalCode ?? ""} ${data.sponsor.city ?? ""}`.trim()].filter(Boolean).join(", "),
+    [data.sponsor.contactName, data.sponsor.contactEmail].filter(Boolean).join(" · "),
+  ]);
 
   section("1", "Vertragsgegenstand");
-  drawText(`Die Organisation und der Sponsor vereinbaren die Sponsoringpartnerschaft «${data.package.name}». Die Organisation erbringt die nachfolgend aufgeführten Leistungen während der vereinbarten Laufzeit. Der Sponsor leistet den ausgewiesenen Sponsoringbeitrag gemäss Zahlungsplan.`, { after: 5 });
-  drawText("Paket, Preis, Laufzeit und Leistungen sind Bestandteil dieses Vertrags. Spätere Änderungen am allgemeinen Paketkatalog verändern diesen Vertrag nicht.", { after: 8 });
+  drawText(`Die Organisation und der Sponsor vereinbaren die Sponsoringpartnerschaft «${data.package.name}». Die Organisation erbringt die nachfolgend aufgeführten Leistungen während der vereinbarten Laufzeit. Der Sponsor leistet den ausgewiesenen Sponsoringbeitrag gemäss Zahlungsplan.`, { after: 4 });
+  drawText("Paket, Preis, Laufzeit und Leistungen sind Bestandteil dieses Vertrags. Spätere Änderungen am allgemeinen Paketkatalog verändern diesen Vertrag nicht.", { after: 6 });
+  drawOverview([
+    ["Paket", data.package.name],
+    ["Beitrag", formatChf(data.package.priceCents)],
+    ["Laufzeit", `${data.package.durationMonths} Monate`],
+    ["Zahlungsplan", paymentLabels[data.package.paymentPlan] ?? "individuell"],
+  ]);
 
   section("2", "Vereinbarte Leistungen");
   if (data.package.description) drawText(data.package.description, { color: MUTED, after: 6 });
   for (const right of data.package.rights) {
     const details = [right.quantity > 1 ? `${right.quantity}x` : null, right.channel, right.location, right.scheduleText].filter(Boolean).join(" · ");
-    ensure(38);
-    page.drawCircle({ x: MARGIN + 4, y: y + 3, size: 2.5, color: GOLD });
-    drawText(right.name, { font: bold, indent: 13, lineHeight: 12.8 });
-    if (details) drawText(details, { color: MUTED, indent: 13, size: 8.2, lineHeight: 11.5 });
-    if (right.description) drawText(right.description, { color: MUTED, indent: 13, size: 8.2, lineHeight: 11.5 });
-    y -= 4;
+    const nameLines = linesFor(right.name, bold, 9, CONTENT_WIDTH - 19);
+    const detailLines = details ? linesFor(details, regular, 8, CONTENT_WIDTH - 19) : [];
+    const descriptionLines = right.description ? linesFor(right.description, regular, 8, CONTENT_WIDTH - 19) : [];
+    const itemHeight = nameLines.length * 12 + (detailLines.length + descriptionLines.length) * 10.8 + 8;
+    const pageBeforeEnsure = page;
+    if (itemHeight < A4.height - 180) ensure(itemHeight + 3);
+    if (page !== pageBeforeEnsure) continuedSection("2", "Vereinbarte Leistungen");
+    page.drawCircle({ x: MARGIN + 4, y: y + 3, size: 2.5, color: ACCENT_ON_DARK });
+    drawLines(nameLines, { x: MARGIN + 15, width: CONTENT_WIDTH - 15, font: bold, size: 9, lineHeight: 12 });
+    if (detailLines.length) drawLines(detailLines, { x: MARGIN + 15, width: CONTENT_WIDTH - 15, size: 8, color: MUTED, lineHeight: 10.8 });
+    if (descriptionLines.length) drawLines(descriptionLines, { x: MARGIN + 15, width: CONTENT_WIDTH - 15, size: 8, color: MUTED, lineHeight: 10.8 });
+    y -= 7;
   }
 
   section("3", "Zusammenarbeit und Mitwirkung");
-  drawText("Die Organisation plant die konkrete Umsetzung innerhalb der beschriebenen Kanäle, Orte, Mengen und Termine. Der Sponsor liefert benötigte Logos, Inserate, Freigaben und Kontaktdaten rechtzeitig in geeigneter Qualität. Beide Parteien informieren sich frühzeitig über Umstände, welche die vereinbarte Leistungserbringung beeinflussen.", { after: 6 });
+  drawText("Die Organisation plant die konkrete Umsetzung innerhalb der beschriebenen Kanäle, Orte, Mengen und Termine. Der Sponsor liefert benötigte Logos, Inserate, Freigaben und Kontaktdaten rechtzeitig in geeigneter Qualität. Beide Parteien informieren sich frühzeitig über Umstände, welche die vereinbarte Leistungserbringung beeinflussen.", { after: 5 });
 
   const rightNames = data.package.rights.map((right) => `${right.name} ${right.channel ?? ""}`.toLocaleLowerCase("de-CH")).join(" ");
   if (/werbetafel|bande|werbefläche/.test(rightNames)) {
-    drawText("Werbeflächen: Produktion und Montage werden durch die Organisation koordiniert. Standort, Format, Produktionskosten und Eigentum ergeben sich aus dem jeweiligen Leistungseintrag und den besonderen Vereinbarungen.", { after: 5 });
+    drawText("Werbeflächen: Produktion und Montage werden durch die Organisation koordiniert. Standort, Format, Produktionskosten und Eigentum ergeben sich aus dem jeweiligen Leistungseintrag und den besonderen Vereinbarungen.", { after: 4 });
   }
   if (/tenü|trikot|textil|bekleidung/.test(rightNames)) {
-    drawText("Tenü und Textilien: Beschaffung und Bedruckung werden durch die Organisation koordiniert. Platzierung, Team, Nutzungsdauer und Eigentum ergeben sich aus dem jeweiligen Leistungseintrag.", { after: 5 });
+    drawText("Tenü und Textilien: Beschaffung und Bedruckung werden durch die Organisation koordiniert. Platzierung, Team, Nutzungsdauer und Eigentum ergeben sich aus dem jeweiligen Leistungseintrag.", { after: 4 });
   }
   if (/matchball/.test(rightNames)) {
-    drawText("Matchball: Das Sponsoring bezeichnet die kommunikative Präsenz am Spieltag. Es begründet nicht automatisch die Beschaffung eines neuen Balls, sofern dies nicht ausdrücklich vereinbart ist.", { after: 5 });
+    drawText("Matchball: Das Sponsoring bezeichnet die kommunikative Präsenz am Spieltag. Es begründet nicht automatisch die Beschaffung eines neuen Balls, sofern dies nicht ausdrücklich vereinbart ist.", { after: 4 });
   }
 
   section("4", "Beitrag und Rechnungsstellung");
-  drawText(`Der Sponsoringbeitrag beträgt ${formatChf(data.package.priceCents)}. Die Rechnungsstellung erfolgt ${paymentLabels[data.package.paymentPlan]?.toLocaleLowerCase("de-CH") ?? "gemäss individuellem Zahlungsplan"}${data.package.paymentTerms ? `; Zahlungsbedingungen: ${data.package.paymentTerms}` : ""}. Einmalige Produktions- oder Herstellungskosten werden nur geschuldet, wenn sie ausdrücklich in diesem Vertrag aufgeführt sind.`, { after: 6 });
+  drawText(`Der Sponsoringbeitrag beträgt ${formatChf(data.package.priceCents)}. Die Rechnungsstellung erfolgt ${paymentLabels[data.package.paymentPlan] ?? "gemäss individuellem Zahlungsplan"}${data.package.paymentTerms ? `; Zahlungsbedingungen: ${data.package.paymentTerms}` : ""}. Einmalige Produktions- oder Herstellungskosten werden nur geschuldet, wenn sie ausdrücklich in diesem Vertrag aufgeführt sind.`, { after: 5 });
 
   section("5", "Laufzeit und Fortsetzung");
-  drawText(`Die Vertragsdauer beträgt ${data.package.durationMonths} Monate. Beginn: ${swissDate(data.package.validFrom)}. Ende: ${swissDate(data.package.validUntil)}.`, { after: 4 });
+  drawText(`Die Vertragsdauer beträgt ${data.package.durationMonths} Monate. Beginn: ${swissDate(data.package.validFrom)}. Ende: ${swissDate(data.package.validUntil)}.`, { after: 3 });
   drawText(data.terms.renewalMode === "annual_auto"
     ? `Ohne Kündigung bis ${data.terms.noticeMonths} Monate vor dem vereinbarten Ende verlängert sich der Vertrag jeweils um ein Jahr.`
-    : "Der Vertrag verlängert sich nicht automatisch. Eine Fortsetzung wird von beiden Parteien neu vereinbart.", { after: 6 });
+    : "Der Vertrag verlängert sich nicht automatisch. Eine Fortsetzung wird von beiden Parteien neu vereinbart.", { after: 5 });
 
   section("6", "Marken und Inhalte");
-  drawText("Der Sponsor bestätigt, dass er zur Bereitstellung der gelieferten Logos und Inhalte berechtigt ist. Die Organisation verwendet sie ausschliesslich zur Erfüllung der vereinbarten Sponsoringleistungen und während der vereinbarten Laufzeit. Weitergehende Nutzungen benötigen eine separate Vereinbarung.", { after: 6 });
+  drawText("Der Sponsor bestätigt, dass er zur Bereitstellung der gelieferten Logos und Inhalte berechtigt ist. Die Organisation verwendet sie ausschliesslich zur Erfüllung der vereinbarten Sponsoringleistungen und während der vereinbarten Laufzeit. Weitergehende Nutzungen benötigen eine separate Vereinbarung.", { after: 5 });
 
   section("7", "Besondere Vereinbarungen");
-  ensure(54);
-  const specialLines = linesFor(data.specialAgreements, regular, 8.8, A4.width - MARGIN * 2 - 24);
-  const specialHeight = Math.max(48, specialLines.length * 12 + 24);
-  ensure(specialHeight + 5);
-  page.drawRectangle({ x: MARGIN, y: y - specialHeight + 10, width: A4.width - MARGIN * 2, height: specialHeight, color: LIGHT_NEUTRAL, borderColor: LINE, borderWidth: 0.6 });
-  y -= 8;
-  for (const line of specialLines) { if (line) page.drawText(line, { x: MARGIN + 12, y, size: 8.8, font: regular, color: NAVY }); y -= 12; }
-  y -= 12;
+  drawFlowingCallout(data.specialAgreements);
 
   section("8", "Bestätigung");
-  drawText("Mit der ausdrücklichen Bestätigung erklären beide Parteien ihr Einverständnis mit dem dokumentierten Vertragsinhalt. Mittragen protokolliert Identität, E-Mail-Adresse, Zeitpunkt, Vertragsversion und Dokument-Fingerabdruck.", { after: 8 });
+  drawText("Mit der ausdrücklichen Bestätigung erklären beide Parteien ihr Einverständnis mit dem dokumentierten Vertragsinhalt. Mittragen protokolliert Identität, E-Mail-Adresse, Zeitpunkt, Vertragsversion und Dokument-Fingerabdruck.", { after: 7 });
   if (data.status === "confirmed" && data.confirmedAt) {
-    ensure(78);
-    page.drawRectangle({ x: MARGIN, y: y - 60, width: A4.width - MARGIN * 2, height: 68, color: LIGHT_BLUE, borderColor: BLUE, borderWidth: 0.8 });
-    page.drawText("ELEKTRONISCH BESTÄTIGT", { x: MARGIN + 13, y: y - 9, size: 7.2, font: bold, color: BLUE });
-    page.drawText(safeText(`${data.signingAuthorityName ?? data.sponsor.contactName ?? "Sponsor"} · ${data.signingAuthorityRole ?? "vertretungsberechtigte Person"}`), { x: MARGIN + 13, y: y - 27, size: 9.2, font: bold, color: NAVY });
-    page.drawText(safeText(`${data.confirmedEmail ?? "-"} · ${swissDate(data.confirmedAt)}`), { x: MARGIN + 13, y: y - 42, size: 8.2, font: regular, color: MUTED });
-    page.drawText(`Dokument-Fingerabdruck: ${data.snapshotHash ?? "-"}`, { x: MARGIN + 13, y: y - 55, size: 6.8, font: regular, color: MUTED });
-    y -= 78;
+    drawConfirmation();
   } else {
-    drawText(data.status === "draft" ? "Dieser Entwurf wurde noch nicht durch die Organisation freigegeben." : "Dieser Vertrag wartet auf die elektronische Bestätigung der vertretungsberechtigten Person des Sponsors.", { font: bold, color: data.status === "draft" ? GOLD : BLUE });
+    drawText(data.status === "draft"
+      ? "Dieser Entwurf wurde noch nicht durch die Organisation freigegeben."
+      : "Dieser Vertrag wartet auf die elektronische Bestätigung der vertretungsberechtigten Person des Sponsors.", {
+      font: bold, color: data.status === "draft" ? ACCENT_ON_DARK : ACCENT,
+    });
   }
 
   if (data.terms.placeOfJurisdiction) {
-    y -= 8;
-    drawText(`Vereinbarter Gerichtsstand: ${data.terms.placeOfJurisdiction}.`, { size: 8.5, color: MUTED });
+    y -= 7;
+    drawText(`Vereinbarter Gerichtsstand: ${data.terms.placeOfJurisdiction}.`, { size: 8.3, color: MUTED });
   }
 
   pages.forEach((target, index) => {
-    target.drawLine({ start: { x: MARGIN, y: 39 }, end: { x: A4.width - MARGIN, y: 39 }, thickness: 0.6, color: LINE });
-    target.drawText(fitLine(`${data.organization.legalName} · ${data.contractNumber}`, regular, 7, 390), { x: MARGIN, y: 24, size: 7, font: regular, color: MUTED });
+    target.drawLine({ start: { x: MARGIN, y: 41 }, end: { x: A4.width - MARGIN, y: 41 }, thickness: 0.65, color: ACCENT });
+    target.drawText(fitLine(`${data.organization.legalName} · ${data.contractNumber}`, regular, 7, 385), { x: MARGIN, y: 25, size: 7, font: regular, color: MUTED });
     const pageText = `Seite ${index + 1} von ${pages.length}`;
-    target.drawText(pageText, { x: A4.width - MARGIN - regular.widthOfTextAtSize(pageText, 7), y: 24, size: 7, font: regular, color: MUTED });
+    target.drawText(pageText, { x: A4.width - MARGIN - regular.widthOfTextAtSize(pageText, 7), y: 25, size: 7, font: regular, color: MUTED });
   });
 
   return pdf.save({ useObjectStreams: false });
