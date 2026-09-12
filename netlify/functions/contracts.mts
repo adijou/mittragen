@@ -4,7 +4,7 @@ import { AuthError, verifyRequestOrigin } from "@netlify/identity";
 import { hasPermission, isResponse, json, requireUser, type MembershipRole } from "./_shared/auth.ts";
 import { isUuid, withSession, type DatabaseClient } from "./_shared/database.ts";
 import { createContractPdf, type ContractPdfData } from "./_shared/contract-pdf.ts";
-import { parseContractAcknowledgement, parseContractAdminConfirmation, parseContractConfirmation, parseContractCreate, parseContractDispatch, parseContractRelease, parseContractSettings, parseContractUpdate, type ContractCreateInput } from "./_shared/contract-input.ts";
+import { parseContractAcknowledgement, parseContractAdminConfirmation, parseContractConfirmation, parseContractCreate, parseContractDispatch, parseContractRelease, parseContractSettings, parseContractUpdate, parseLegacyContractCreate, type ContractCreateInput } from "./_shared/contract-input.ts";
 import { findIdentityUserByEmail } from "./_shared/identity-user-lookup.ts";
 import { sendIdentityInvitation } from "./_shared/identity-invitations.ts";
 import { loadOrganizationPdfBrand, type OrganizationPdfBrand } from "./_shared/organization-pdf-brand.ts";
@@ -72,6 +72,7 @@ const contractColumns = `
 
 const routes = {
   collection: /^\/api\/contracts\/([0-9a-f-]+)$/i,
+  legacyCreate: /^\/api\/contracts\/([0-9a-f-]+)\/legacy$/i,
   settings: /^\/api\/contracts\/([0-9a-f-]+)\/settings$/i,
   detail: /^\/api\/contracts\/([0-9a-f-]+)\/([0-9a-f-]+)$/i,
   release: /^\/api\/contracts\/([0-9a-f-]+)\/([0-9a-f-]+)\/release$/i,
@@ -378,7 +379,7 @@ export default async (request: Request, context: Context) => {
   const user = await requireUser();
   if (isResponse(user)) return user;
   const pathname = new URL(request.url).pathname;
-  const match = routes.settings.exec(pathname) ?? routes.release.exec(pathname) ?? routes.adminConfirm.exec(pathname) ?? routes.send.exec(pathname)
+  const match = routes.settings.exec(pathname) ?? routes.legacyCreate.exec(pathname) ?? routes.release.exec(pathname) ?? routes.adminConfirm.exec(pathname) ?? routes.send.exec(pathname)
     ?? routes.access.exec(pathname) ?? routes.copy.exec(pathname) ?? routes.confirm.exec(pathname)
     ?? routes.pdf.exec(pathname) ?? routes.detail.exec(pathname) ?? routes.collection.exec(pathname);
   const tenantId = match?.[1];
@@ -433,6 +434,97 @@ export default async (request: Request, context: Context) => {
     } catch (error) {
       console.error("contract_settings_update_failed", { requestId: context.requestId, tenantId, error });
       return json({ error: "contract_settings_update_failed", requestId: context.requestId }, 500);
+    }
+  }
+
+  if (routes.legacyCreate.test(pathname)) {
+    if (request.method !== "POST") return json({ error: "method_not_allowed" }, 405);
+    const invalidOrigin = verifyMutation(request);
+    if (invalidOrigin) return invalidOrigin;
+    const parsed = parseLegacyContractCreate(await request.json().catch(() => null));
+    if (!parsed.ok) return json({ error: parsed.error }, 422);
+    const adminEmail = user.email?.trim().toLowerCase();
+    if (!adminEmail) return json({ error: "verified_email_required" }, 422);
+    try {
+      const result = await withSession(user.id, tenantId, async (client) => {
+        const role = await membershipRole(client, tenantId, user.id);
+        if (!role || !hasPermission(role, "packages:write")) return { state: "denied" as const };
+        const snapshots = await buildSnapshots(client, tenantId, parsed.value);
+        if (!snapshots) return { state: "selection_not_found" as const };
+        if (!snapshots.settingsComplete) return { state: "settings_incomplete" as const };
+        const clock = await client.query<{ current_date: string }>(`
+          SELECT (CURRENT_TIMESTAMP AT TIME ZONE 'Europe/Zurich')::date::text AS current_date
+        `);
+        if (parsed.value.confirmedOn > clock.rows[0].current_date) return { state: "future_date" as const };
+        if (!await ensureDirectReservation(client, tenantId, snapshots.sponsorId, snapshots.packageVersionId, user.id)) {
+          return { state: "reservation_held" as const };
+        }
+
+        const year = new Date().getUTCFullYear();
+        const counter = await client.query<{ last_value: number }>(`
+          INSERT INTO contract_number_counters (tenant_id, contract_year, last_value) VALUES ($1,$2,1)
+          ON CONFLICT (tenant_id, contract_year) DO UPDATE SET last_value = contract_number_counters.last_value + 1
+          RETURNING last_value
+        `, [tenantId, year]);
+        const contractNumber = `MT-${year}-${String(counter.rows[0].last_value).padStart(4, "0")}`;
+        const title = "Sponsoringvertrag";
+        const specialAgreements = "Keine besonderen Vereinbarungen.";
+        const hash = snapshotHash({
+          contractNumber, versionNumber: 1, title, specialAgreements,
+          organization: snapshots.organization, sponsor: snapshots.sponsor, package: snapshots.package,
+          terms: snapshots.terms, signingMethod: "click",
+        });
+        const created = await client.query<{ id: string }>(`
+          INSERT INTO sponsorship_contracts (
+            tenant_id, contract_number, sponsor_id, transition_sponsor_id, package_version_id,
+            title, special_agreements, organization_snapshot, sponsor_snapshot, package_snapshot, terms_snapshot,
+            status, signing_method, snapshot_hash, released_at, released_by,
+            confirmed_at, confirmed_by, confirmed_email, confirmed_name, confirmed_role,
+            confirmation_mode, confirmation_recorded_at, confirmation_note, created_by
+          ) VALUES (
+            $1,$2,$3,NULL,$4,$5,$6,$7::jsonb,$8::jsonb,$9::jsonb,$10::jsonb,
+            'confirmed','click',$11,now(),$12,
+            ($13::date + time '12:00') AT TIME ZONE 'Europe/Zurich',$12,$14,$15,$16,
+            'admin_legacy',now(),$17,$12
+          ) RETURNING id
+        `, [tenantId, contractNumber, snapshots.sponsorId, snapshots.packageVersionId, title, specialAgreements,
+          JSON.stringify(snapshots.organization), JSON.stringify(snapshots.sponsor), JSON.stringify(snapshots.package),
+          JSON.stringify(snapshots.terms), hash, user.id, parsed.value.confirmedOn, adminEmail,
+          parsed.value.signingAuthorityName, parsed.value.signingAuthorityRole, parsed.value.evidenceNote]);
+        await client.query(`INSERT INTO sponsorship_contract_events
+          (tenant_id, contract_id, event_type, actor_user_id, actor_email, evidence)
+          VALUES ($1,$2,'created',$3,$4,jsonb_build_object(
+            'source','admin_legacy_direct','annual_value_cents',$5::integer))`,
+          [tenantId, created.rows[0].id, user.id, adminEmail, snapshots.package.priceCents]);
+        await client.query(`INSERT INTO sponsorship_contract_events
+          (tenant_id, contract_id, event_type, actor_user_id, actor_email, evidence)
+          VALUES ($1,$2,'admin_confirmed',$3,$4,jsonb_build_object(
+            'snapshot_hash',$5::text,'original_confirmed_on',$6::text,
+            'signing_authority_name',$7::text,'signing_authority_role',$8::text,
+            'source_note',$9::text,'acknowledged',true,'confirmation_mode','admin_legacy',
+            'direct_create',true,'user_agent',$10::text))`,
+          [tenantId, created.rows[0].id, user.id, adminEmail, hash, parsed.value.confirmedOn,
+            parsed.value.signingAuthorityName, parsed.value.signingAuthorityRole, parsed.value.evidenceNote,
+            (request.headers.get("user-agent") ?? "unknown").slice(0, 500)]);
+        await client.query(`INSERT INTO audit_events
+          (tenant_id, actor_user_id, action, object_type, object_id, metadata)
+          VALUES ($1,$2,'contract.admin_legacy_created','sponsorship_contract',$3,
+            jsonb_build_object('original_confirmed_on',$4::text,'snapshot_hash',$5::text))`,
+          [tenantId, user.id, created.rows[0].id, parsed.value.confirmedOn, hash]);
+        return { state: "created" as const, detail: await contractDetail(client, tenantId, created.rows[0].id) };
+      }, adminEmail);
+      if (result.state === "denied") return json({ error: "permission_denied" }, 403);
+      if (result.state === "selection_not_found") return json({ error: "contract_selection_not_found" }, 409);
+      if (result.state === "settings_incomplete") return json({ error: "contract_settings_incomplete" }, 409);
+      if (result.state === "reservation_held") return json({ error: "package_reservation_held" }, 409);
+      if (result.state === "future_date") return json({ error: "legacy_confirmation_date_in_future" }, 422);
+      return json({ detail: result.detail }, 201);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      if (message.includes("package_capacity_exceeded")) return json({ error: "package_capacity_exceeded" }, 409);
+      if (message.includes("package_exclusivity_conflict")) return json({ error: "package_exclusivity_conflict" }, 409);
+      console.error("contract_legacy_create_failed", { requestId: context.requestId, tenantId, error });
+      return json({ error: "contract_legacy_create_failed", requestId: context.requestId }, 500);
     }
   }
 
@@ -998,6 +1090,7 @@ export default async (request: Request, context: Context) => {
 export const config: Config = {
   path: [
     "/api/contracts/:tenantId",
+    "/api/contracts/:tenantId/legacy",
     "/api/contracts/:tenantId/settings",
     "/api/contracts/:tenantId/:contractId",
     "/api/contracts/:tenantId/:contractId/release",

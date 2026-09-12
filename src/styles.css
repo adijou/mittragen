@@ -1347,7 +1347,7 @@ td small { margin-top: 3px; color: var(--ink-3); }
 .contract-settings__fields { display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; margin: 22px 0; }
 .contract-settings__fields label, .contract-editor > label, .contract-dispatch > label, .contract-legacy form > label:not(.contract-release-check) { display: grid; gap: 7px; color: var(--ink-2); font-size: 13px; font-weight: 700; }
 .contract-settings__fields label.wide { grid-column: span 2; }
-.contract-settings__fields input, .contract-settings__fields select, .contract-editor input, .contract-editor textarea, .contract-dispatch input, .contract-legacy input:not([type="checkbox"]), .contract-legacy textarea, .sponsor-contract__confirm input { width: 100%; min-height: 46px; padding: 10px 12px; color: var(--navy); background: white; border: 1px solid var(--line-strong); border-radius: 7px; }
+.contract-settings__fields input, .contract-settings__fields select, .contract-editor input, .contract-editor textarea, .contract-dispatch input, .contract-legacy input:not([type="checkbox"]), .contract-legacy select, .contract-legacy textarea, .sponsor-contract__confirm input { width: 100%; min-height: 46px; padding: 10px 12px; color: var(--navy); background: white; border: 1px solid var(--line-strong); border-radius: 7px; }
 .contract-warning { display: grid; grid-template-columns: 1fr auto; gap: 3px 22px; align-items: center; margin-bottom: 22px; padding: 17px 19px; background: var(--gold-soft); border: 1px solid #efd79d; border-radius: 12px; }
 .contract-warning p { margin: 0; }
 .contract-warning button { grid-column: 2; grid-row: 1 / 3; border: 0; background: none; color: var(--blue); font-weight: 800; cursor: pointer; }
@@ -1406,7 +1406,8 @@ td small { margin-top: 3px; color: var(--ink-3); }
 .contract-follow-up__actions { display: flex; flex-wrap: wrap; gap: 10px; }
 .contract-follow-up > small { color: var(--ink-3); }
 .contract-legacy { display: grid; gap: 17px; margin: 0 0 25px; padding: 21px; border: 1px solid #efd79d; border-radius: 12px; background: var(--gold-soft); }
-.contract-legacy h3 { margin: 4px 0 5px; }
+.contract-legacy h2, .contract-legacy h3 { margin: 4px 0 5px; }
+.contract-legacy--create { margin-bottom: 22px; padding: 23px; border-radius: 16px; }
 .contract-legacy > div > p:last-child { margin: 0; color: var(--ink-3); font-size: 14px; line-height: 1.5; }
 .contract-legacy form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 15px; }
 .contract-legacy form .wide { grid-column: 1 / -1; }

@@ -126,6 +126,23 @@ export function parseContractAdminConfirmation(body: unknown): Result<{
   return { ok: true, value: { signingAuthorityName, signingAuthorityRole, confirmedOn, evidenceNote, acknowledged: true } };
 }
 
+export type LegacyContractCreateInput = Extract<ContractCreateInput, { mode: "direct" }> & {
+  signingAuthorityName: string;
+  signingAuthorityRole: string;
+  confirmedOn: string;
+  evidenceNote: string;
+  acknowledged: true;
+};
+
+export function parseLegacyContractCreate(body: unknown): Result<LegacyContractCreateInput> {
+  const selection = parseContractCreate(body);
+  if (!selection.ok) return selection;
+  if (selection.value.mode !== "direct") return { ok: false, error: "invalid_sponsor" };
+  const confirmation = parseContractAdminConfirmation(body);
+  if (!confirmation.ok) return confirmation;
+  return { ok: true, value: { ...selection.value, ...confirmation.value } };
+}
+
 export function parseContractDispatch(body: unknown): Result<{ signerEmail: string; signerName: string; signerRole: string }> {
   if (!body || typeof body !== "object" || Array.isArray(body)) return { ok: false, error: "invalid_body" };
   const record = body as Record<string, unknown>;

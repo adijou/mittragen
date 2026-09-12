@@ -9,6 +9,7 @@ import {
   parseContractRelease,
   parseContractSettings,
   parseContractUpdate,
+  parseLegacyContractCreate,
 } from "../netlify/functions/_shared/contract-input.ts";
 
 const transitionSponsorId = "123e4567-e89b-42d3-a456-426614174000";
@@ -101,4 +102,46 @@ test("administrative legacy confirmation requires an original date, evidence and
   assert.deepEqual(parseContractAdminConfirmation({ signingAuthorityName: "Max", confirmedOn: "2024-02-30", evidenceNote: "Archiv", acknowledged: true }), { ok: false, error: "invalid_legacy_confirmation_date" });
   assert.deepEqual(parseContractAdminConfirmation({ signingAuthorityName: "Max", confirmedOn: "2024-06-15", evidenceNote: "", acknowledged: true }), { ok: false, error: "legacy_confirmation_evidence_required" });
   assert.deepEqual(parseContractAdminConfirmation({ signingAuthorityName: "Max", confirmedOn: "2024-06-15", evidenceNote: "Archiv", acknowledged: false }), { ok: false, error: "admin_contract_acknowledgement_required" });
+});
+
+test("legacy contracts can be created directly from a sponsor and package selection", () => {
+  assert.deepEqual(parseLegacyContractCreate({
+    sponsorId,
+    packageVersionId,
+    annualValueCents: 250_000,
+    signingAuthorityName: "Max Muster",
+    signingAuthorityRole: "",
+    confirmedOn: "2024-06-15",
+    evidenceNote: "Beidseitig unterzeichneter Papiervertrag liegt im Vereinsarchiv.",
+    acknowledged: true,
+  }), {
+    ok: true,
+    value: {
+      mode: "direct",
+      sponsorId,
+      packageVersionId,
+      annualValueCents: 250_000,
+      signingAuthorityName: "Max Muster",
+      signingAuthorityRole: "Vertretungsberechtigte Person",
+      confirmedOn: "2024-06-15",
+      evidenceNote: "Beidseitig unterzeichneter Papiervertrag liegt im Vereinsarchiv.",
+      acknowledged: true,
+    },
+  });
+  assert.deepEqual(parseLegacyContractCreate({
+    transitionSponsorId,
+    signingAuthorityName: "Max Muster",
+    confirmedOn: "2024-06-15",
+    evidenceNote: "Archiv",
+    acknowledged: true,
+  }), { ok: false, error: "invalid_sponsor" });
+  assert.deepEqual(parseLegacyContractCreate({
+    sponsorId,
+    packageVersionId,
+    annualValueCents: 250_000,
+    signingAuthorityName: "Max Muster",
+    confirmedOn: "2024-06-15",
+    evidenceNote: "Archiv",
+    acknowledged: false,
+  }), { ok: false, error: "admin_contract_acknowledgement_required" });
 });
