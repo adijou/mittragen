@@ -6,6 +6,7 @@ const publicSource = new URL("../netlify/functions/event-sponsoring-public.mts",
 const internalSource = new URL("../netlify/functions/event-sponsoring.mts", import.meta.url);
 const publicUiSource = new URL("../src/EventSponsoringPublic.tsx", import.meta.url);
 const migrationSource = new URL("../netlify/database/migrations/20260912143000_event_sponsoring/migration.sql", import.meta.url);
+const pastHomeMatchMigrationSource = new URL("../netlify/database/migrations/20260913042000_add_past_giffers_home_match/migration.sql", import.meta.url);
 
 test("public matchball booking is account-free and prices are computed from the selected event", async () => {
   const source = await readFile(publicSource, "utf8");
@@ -43,4 +44,20 @@ test("FC Sense Saane is prefilled idempotently with the published 2026/27 home s
   assert.match(source, /'2027-04-04 12:00 Europe\/Zurich'::timestamptz, true, '134121'/);
   assert.equal((source.match(/'FC Bösingen I', 'FC /g) ?? []).length, 9);
   assert.match(source, /'FC Bösingen I', 'SC Düdingen IIIa'/);
+});
+
+test("the past Giffers-Tentlingen home match remains available for internal sponsor allocations", async () => {
+  const source = await readFile(pastHomeMatchMigrationSource, "utf8");
+  assert.match(source, /tenant\.slug = 'fc-sense-saane'/);
+  assert.match(source, /'FC Bösingen I'/);
+  assert.match(source, /'FC Giffers-Tentlingen II'/);
+  assert.match(source, /'2026-08-29 18:00 Europe\/Zurich'::timestamptz/);
+  assert.match(source, /'aff-ffv-matchcenter'/);
+  assert.match(source, /'134047'/);
+  assert.match(source, /15000/);
+  assert.match(source, /3000/);
+  assert.match(source, /'draft'/);
+  assert.match(source, /NOT EXISTS/);
+  assert.match(source, /ON CONFLICT DO NOTHING/);
+  assert.doesNotMatch(source, /'published'/);
 });
