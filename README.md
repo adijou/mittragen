@@ -67,10 +67,10 @@ npm run build
 ## Routen
 
 - `/` – öffentliche Produktseite
-- `/admin` – öffentlicher Backoffice-Prototyp, nicht produktiv
-- `/space` – öffentlicher Sponsor-Prototyp, nicht produktiv
+- `/admin` – geschlossener Backoffice-Prototyp; Weiterleitung auf `/login`
+- `/space` – geschlossener Sponsor-Prototyp; Weiterleitung auf `/login`
 - `/sponsor` – produktiver, geschützter Sponsorbereich
-- `/ueberfuehren` – öffentlicher Überführungs-Prototyp, nicht produktiv
+- `/ueberfuehren` – geschlossener Überführungs-Prototyp; Weiterleitung auf `/login`
 - `/login` – produktive Anmeldung und Registrierung
 - `/workspace` – geschützter, mandantengetrennter Workspace
 - `/matchball/:publicKey` – öffentliches Matchball-Formular einer Organisation ohne Login
