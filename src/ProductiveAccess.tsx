@@ -388,9 +388,10 @@ function WorkspacePage({ user, setUser, onHome, onLogin, onPrototype: _onPrototy
   </div>;
 }
 
-export function ProductiveAccess({ page, onHome, onLogin, onWorkspace, onSponsor, onPrototype }: { page: ProductivePage; onHome: () => void; onLogin: () => void; onWorkspace: () => void; onSponsor: () => void; onPrototype: () => void }) {
+export function ProductiveAccess({ page, onLogin, onWorkspace, onSponsor, onPrototype }: { page: ProductivePage; onHome: () => void; onLogin: () => void; onWorkspace: () => void; onSponsor: () => void; onPrototype: () => void }) {
   const session = useIdentitySession();
-  if (page === "login") return <AuthPage {...session} onHome={onHome} onWorkspace={onWorkspace} onSponsor={onSponsor}/>;
+  const goToWebsite = () => window.location.assign("/");
+  if (page === "login") return <AuthPage {...session} onHome={goToWebsite} onWorkspace={onWorkspace} onSponsor={onSponsor}/>;
   if (session.availability === "checking") return <div className="access-page"><main className="access-empty">Zugang wird geprüft …</main></div>;
-  return <WorkspacePage user={session.user} setUser={session.setUser} onHome={onHome} onLogin={onLogin} onPrototype={onPrototype}/>;
+  return <WorkspacePage user={session.user} setUser={session.setUser} onHome={goToWebsite} onLogin={onLogin} onPrototype={onPrototype}/>;
 }
