@@ -26,6 +26,7 @@ type PublicEventRow = {
   price_cents: number;
   fn_supplement_cents: number;
   available: boolean;
+  sponsor_count: string;
 };
 
 const routes = {
@@ -66,11 +67,16 @@ async function publicData(client: DatabaseClient, publicKey: string) {
   const events = await client.query<PublicEventRow>(`
     SELECT event.id, event.team_name, event.opponent, event.competition, event.venue,
            event.starts_at::text, event.time_tbd, event.price_cents, event.fn_supplement_cents,
-           NOT EXISTS (
-             SELECT 1 FROM event_sponsorship_bookings booking
-             WHERE booking.tenant_id = event.tenant_id AND booking.event_id = event.id
-               AND booking.status = 'submitted'
-           ) AS available
+           true AS available,
+           (
+             (SELECT count(*) FROM event_sponsorship_bookings booking
+              WHERE booking.tenant_id = event.tenant_id AND booking.event_id = event.id
+                AND booking.status = 'submitted')
+             +
+             (SELECT count(*) FROM event_package_allocations allocation
+              WHERE allocation.tenant_id = event.tenant_id AND allocation.event_id = event.id
+                AND allocation.status = 'allocated')
+           )::text AS sponsor_count
     FROM sponsorship_events event
     WHERE event.tenant_id = $1 AND event.status = 'published'
       AND event.starts_at >= now() - interval '12 hours'
@@ -105,15 +111,13 @@ async function publicData(client: DatabaseClient, publicKey: string) {
       priceCents: event.price_cents,
       fnSupplementCents: event.fn_supplement_cents,
       available: event.available,
+      sponsorCount: Number(event.sponsor_count),
     })),
   };
 }
 
-function databaseCode(error: unknown) {
-  return error && typeof error === "object" && "code" in error ? String((error as { code?: unknown }).code ?? "") : "";
-}
-
 export default async (request: Request, context: Context) => {
+  // event_already_booked belonged to the former single-sponsor model and is no longer emitted.
   const pathname = new URL(request.url).pathname;
   const bookMatch = pathname.match(routes.book);
   const logoMatch = pathname.match(routes.logo);
@@ -174,9 +178,6 @@ export default async (request: Request, context: Context) => {
           AND starts_at >= now() - interval '12 hours'
         LIMIT 1 FOR UPDATE`, [settings.tenant_id, parsed.value.eventId]);
       if (!event.rows[0]) return { state: "event_not_found" as const };
-      const occupied = await client.query<{ id: string }>(`SELECT id FROM event_sponsorship_bookings
-        WHERE tenant_id = $1 AND event_id = $2 AND status = 'submitted' LIMIT 1`, [settings.tenant_id, parsed.value.eventId]);
-      if (occupied.rows[0]) return { state: "occupied" as const };
       const value = parsed.value;
       const amountCents = event.rows[0].price_cents + (value.includeFnMention ? event.rows[0].fn_supplement_cents : 0);
       const year = new Date().getUTCFullYear();
@@ -198,10 +199,8 @@ export default async (request: Request, context: Context) => {
     });
     if (result.state === "not_found") return json({ error: "event_sponsoring_link_invalid" }, 404);
     if (result.state === "event_not_found") return json({ error: "event_not_found" }, 404);
-    if (result.state === "occupied") return json({ error: "event_already_booked" }, 409);
     return json({ booking: { reference: result.reference, amountCents: result.amountCents, submittedAt: result.submittedAt } }, 201);
   } catch (error) {
-    if (databaseCode(error) === "23505") return json({ error: "event_already_booked" }, 409);
     console.error("event_sponsoring_public_booking_failed", { requestId: context.requestId, error });
     return json({ error: "event_sponsoring_public_booking_failed", requestId: context.requestId }, 500);
   }

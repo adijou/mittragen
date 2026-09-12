@@ -15,6 +15,7 @@ const organizationMigrationPath = new URL("../netlify/database/migrations/202609
 const signingMigrationPath = new URL("../netlify/database/migrations/20260912100000_contract_signing_requests/migration.sql", import.meta.url);
 const eventSponsoringMigrationPath = new URL("../netlify/database/migrations/20260912143000_event_sponsoring/migration.sql", import.meta.url);
 const adminLegacyContractMigrationPath = new URL("../netlify/database/migrations/20260912173000_admin_legacy_contract_confirmation/migration.sql", import.meta.url);
+const eventAllocationMigrationPath = new URL("../netlify/database/migrations/20260912223000_multiple_event_sponsors_and_package_allocations/migration.sql", import.meta.url);
 
 test("all tenant-owned tables enforce row-level security", async () => {
   const sql = await readFile(migrationPath, "utf8");
@@ -163,6 +164,16 @@ test("event sponsoring settings, matches and bookings enforce tenant isolation",
   assert.match(sql, /app\.event_sponsoring_public_key/i);
   assert.match(sql, /event_sponsorship_one_active_booking_idx/i);
   assert.match(sql, /WHERE status = 'submitted'/i);
+});
+
+test("event package allocations remain tenant-bound and enforce seasonal entitlements", async () => {
+  const sql = await readFile(eventAllocationMigrationPath, "utf8");
+  assert.match(sql, /ALTER TABLE event_package_allocations ENABLE ROW LEVEL SECURITY/i);
+  assert.match(sql, /ALTER TABLE event_package_allocations FORCE ROW LEVEL SECURITY/i);
+  assert.match(sql, /CREATE POLICY event_package_allocations_isolated/i);
+  assert.match(sql, /tenant_id = app_current_tenant_id\(\)/i);
+  assert.match(sql, /event_package_allocation_guard/i);
+  assert.match(sql, /pg_advisory_xact_lock/i);
 });
 
 test("administrative legacy contract completion keeps a distinct audited evidence mode", async () => {
