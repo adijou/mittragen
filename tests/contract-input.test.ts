@@ -69,6 +69,10 @@ test("contract dispatch validates and normalizes the designated signer", () => {
   });
   assert.deepEqual(parseContractDispatch({ signerEmail: "wrong", signerName: "Max Muster", signerRole: "Geschäftsführer" }), { ok: false, error: "invalid_signer_email" });
   assert.deepEqual(parseContractDispatch({ signerEmail: "signer@example.ch", signerName: "", signerRole: "Geschäftsführer" }), { ok: false, error: "signer_name_required" });
+  assert.deepEqual(parseContractDispatch({ signerEmail: "signer@example.ch", signerName: "Max Muster", signerRole: "" }), {
+    ok: true,
+    value: { signerEmail: "signer@example.ch", signerName: "Max Muster", signerRole: "Vertretungsberechtigte Person" },
+  });
 });
 
 test("account and one-time confirmation both require explicit acknowledgement", () => {
