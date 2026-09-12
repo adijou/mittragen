@@ -1347,7 +1347,7 @@ td small { margin-top: 3px; color: var(--ink-3); }
 .contract-settings__fields { display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; margin: 22px 0; }
 .contract-settings__fields label, .contract-editor > label, .contract-dispatch > label, .contract-legacy form > label:not(.contract-release-check) { display: grid; gap: 7px; color: var(--ink-2); font-size: 13px; font-weight: 700; }
 .contract-settings__fields label.wide { grid-column: span 2; }
-.contract-settings__fields input, .contract-settings__fields select, .contract-editor input, .contract-editor textarea, .contract-dispatch input, .contract-legacy input:not([type="checkbox"]), .contract-legacy select, .contract-legacy textarea, .sponsor-contract__confirm input { width: 100%; min-height: 46px; padding: 10px 12px; color: var(--navy); background: white; border: 1px solid var(--line-strong); border-radius: 7px; }
+.contract-settings__fields input, .contract-settings__fields select, .contract-editor input, .contract-editor select, .contract-editor textarea, .contract-dispatch input, .contract-legacy input:not([type="checkbox"]), .contract-legacy select, .contract-legacy textarea, .sponsor-contract__confirm input { width: 100%; min-height: 46px; padding: 10px 12px; color: var(--navy); background: white; border: 1px solid var(--line-strong); border-radius: 7px; }
 .contract-warning { display: grid; grid-template-columns: 1fr auto; gap: 3px 22px; align-items: center; margin-bottom: 22px; padding: 17px 19px; background: var(--gold-soft); border: 1px solid #efd79d; border-radius: 12px; }
 .contract-warning p { margin: 0; }
 .contract-warning button { grid-column: 2; grid-row: 1 / 3; border: 0; background: none; color: var(--blue); font-weight: 800; cursor: pointer; }
@@ -1374,6 +1374,8 @@ td small { margin-top: 3px; color: var(--ink-3); }
 .contract-list-item > span { min-width: 0; display: grid; gap: 2px; }
 .contract-list-item strong, .contract-list-item small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .contract-list-item small { color: var(--ink-3); }
+.contract-archive { margin-top: 18px; padding-top: 15px; border-top: 1px solid var(--line); }
+.contract-archive summary { color: var(--ink-3); font-size: 12px; font-weight: 800; cursor: pointer; }
 .contract-status { width: fit-content; display: inline-flex; padding: 4px 8px; border-radius: 999px; color: var(--ink-2); background: var(--surface-2); font-style: normal; font-size: 11px; font-weight: 800; white-space: nowrap; }
 .contract-status--draft { color: #865d00; background: var(--gold-soft); }
 .contract-status--released { color: var(--blue-dark); background: var(--blue-soft); }
@@ -1381,8 +1383,13 @@ td small { margin-top: 3px; color: var(--ink-3); }
 .contract-status--void { color: #a22d32; background: var(--red-soft); }
 .contract-detail-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; padding-bottom: 23px; border-bottom: 1px solid var(--line); }
 .contract-detail-header h2 { margin: 10px 0 4px; font-size: 30px; }
+.contract-detail-header h2 small { color: var(--ink-3); font-size: 14px; font-weight: 800; }
 .contract-detail-header p { margin: 0; }
+.contract-detail-header__revision { display: block; margin-top: 7px; color: var(--blue-dark); font-weight: 700; }
 .contract-editor { display: grid; gap: 19px; padding: 25px 0; }
+.contract-editor__selection { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; padding: 17px; border: 1px solid var(--line); border-radius: 11px; background: var(--surface-2); }
+.contract-editor__selection label { display: grid; gap: 7px; color: var(--ink-2); font-size: 13px; font-weight: 700; }
+.contract-editor__selection label:last-child { grid-column: 1 / -1; }
 .contract-editor textarea { min-height: 132px; resize: vertical; }
 .contract-editor label small { color: var(--ink-3); font-weight: 400; line-height: 1.45; }
 .contract-signing-method { display: grid; gap: 9px; padding: 17px; background: var(--surface-2); border-radius: 10px; }
@@ -1413,6 +1420,16 @@ td small { margin-top: 3px; color: var(--ink-3); }
 .contract-legacy form .wide { grid-column: 1 / -1; }
 .contract-legacy textarea { min-height: 94px; resize: vertical; }
 .contract-legacy__notice { grid-column: 1 / -1; margin: 0; color: #865d00; font-size: 13px; }
+.contract-admin-actions { display: grid; gap: 16px; margin: 0 0 25px; padding: 21px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-2); }
+.contract-admin-actions h3 { margin: 4px 0 5px; }
+.contract-admin-actions > div > p:last-child { margin: 0; color: var(--ink-3); font-size: 14px; line-height: 1.5; }
+.contract-admin-actions label { display: grid; gap: 7px; color: var(--ink-2); font-size: 13px; font-weight: 700; }
+.contract-admin-actions textarea { width: 100%; min-height: 88px; padding: 10px 12px; resize: vertical; color: var(--navy); background: white; border: 1px solid var(--line-strong); border-radius: 7px; }
+.contract-admin-actions > button { justify-self: start; }
+.contract-admin-actions--danger { border-color: #edb8bb; background: var(--red-soft); }
+.contract-danger-button { min-height: 44px; padding: 10px 15px; border: 1px solid #a22d32; border-radius: 10px; color: #8a252b; background: white; font-weight: 800; cursor: pointer; }
+.contract-danger-button:hover { color: white; background: #a22d32; }
+.contract-danger-button:disabled { opacity: .5; cursor: not-allowed; }
 .contract-events { margin-top: 10px; padding-top: 25px; border-top: 1px solid var(--line); }
 .contract-events h3 { margin: 6px 0 18px; }
 .contract-events > div { display: grid; grid-template-columns: 12px 1fr; gap: 12px; padding-bottom: 15px; }
@@ -1485,6 +1502,8 @@ td small { margin-top: 3px; color: var(--ink-3); }
   .contract-detail-header, .sponsor-contracts > header { align-items: stretch; flex-direction: column; }
   .sponsor-contracts > header { gap: 10px; }
   .contract-follow-up__actions { flex-direction: column; }
+  .contract-editor__selection { grid-template-columns: 1fr; }
+  .contract-editor__selection label:last-child { grid-column: auto; }
   .contract-legacy form { grid-template-columns: 1fr; }
   .contract-legacy form .wide { grid-column: auto; }
   .contract-signing-top { align-items: flex-start; flex-direction: column; gap: 4px; padding: 17px 20px; }

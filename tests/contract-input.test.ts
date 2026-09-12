@@ -4,9 +4,11 @@ import {
   parseContractAcknowledgement,
   parseContractAdminConfirmation,
   parseContractConfirmation,
+  parseContractCorrection,
   parseContractCreate,
   parseContractDispatch,
   parseContractRelease,
+  parseContractRemoval,
   parseContractSettings,
   parseContractUpdate,
   parseLegacyContractCreate,
@@ -42,8 +44,21 @@ test("automatic renewal requires a valid notice period", () => {
 test("contract creation and draft updates reject malformed data", () => {
   assert.deepEqual(parseContractCreate({ transitionSponsorId }), { ok: true, value: { mode: "transition", transitionSponsorId } });
   assert.deepEqual(parseContractCreate({ transitionSponsorId: "wrong" }), { ok: false, error: "invalid_transition_sponsor" });
-  assert.deepEqual(parseContractUpdate({ title: "", specialAgreements: "Keine.", signingMethod: "click" }), { ok: false, error: "invalid_contract_title" });
-  assert.equal(parseContractUpdate({ title: "Sponsoringvertrag", specialAgreements: "Keine.", signingMethod: "click" }).ok, true);
+  const selection = { sponsorId, packageVersionId, annualValueCents: 100_000 };
+  assert.deepEqual(parseContractUpdate({ ...selection, title: "", specialAgreements: "Keine.", signingMethod: "click" }), { ok: false, error: "invalid_contract_title" });
+  assert.equal(parseContractUpdate({ ...selection, title: "Sponsoringvertrag", specialAgreements: "Keine.", signingMethod: "click" }).ok, true);
+  assert.deepEqual(parseContractUpdate({ ...selection, packageVersionId: "wrong", title: "Sponsoringvertrag", specialAgreements: "Keine.", signingMethod: "click" }), { ok: false, error: "invalid_package_version" });
+});
+
+test("contract correction and removal require an audited reason", () => {
+  assert.deepEqual(parseContractCorrection({ reason: "Paketwechsel per neuer Saison" }), {
+    ok: true, value: { reason: "Paketwechsel per neuer Saison" },
+  });
+  assert.deepEqual(parseContractCorrection({ reason: "" }), { ok: false, error: "contract_correction_reason_required" });
+  assert.deepEqual(parseContractRemoval({ reason: "Irrtümlich doppelt erfasst" }), {
+    ok: true, value: { reason: "Irrtümlich doppelt erfasst" },
+  });
+  assert.deepEqual(parseContractRemoval({}), { ok: false, error: "contract_removal_reason_required" });
 });
 
 test("contract creation accepts a direct sponsor and package selection", () => {

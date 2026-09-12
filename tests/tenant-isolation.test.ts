@@ -16,6 +16,7 @@ const signingMigrationPath = new URL("../netlify/database/migrations/20260912100
 const eventSponsoringMigrationPath = new URL("../netlify/database/migrations/20260912143000_event_sponsoring/migration.sql", import.meta.url);
 const adminLegacyContractMigrationPath = new URL("../netlify/database/migrations/20260912173000_admin_legacy_contract_confirmation/migration.sql", import.meta.url);
 const eventAllocationMigrationPath = new URL("../netlify/database/migrations/20260912223000_multiple_event_sponsors_and_package_allocations/migration.sql", import.meta.url);
+const contractCorrectionMigrationPath = new URL("../netlify/database/migrations/20260913053000_contract_corrections_and_removal/migration.sql", import.meta.url);
 
 test("all tenant-owned tables enforce row-level security", async () => {
   const sql = await readFile(migrationPath, "utf8");
@@ -113,6 +114,20 @@ test("contracts and their evidence are tenant-isolated and immutable after relea
   assert.match(sql, /confirmed_contract_is_immutable/i);
   assert.match(sql, /contract_events_are_immutable/i);
   assert.match(sql, /identity_user_id = app_current_user_id\(\)/i);
+});
+
+test("contract corrections preserve released evidence while draft deletion remains possible", async () => {
+  const sql = await readFile(contractCorrectionMigrationPath, "utf8");
+  assert.match(sql, /ADD COLUMN voided_at TIMESTAMPTZ/i);
+  assert.match(sql, /ADD COLUMN void_reason TEXT/i);
+  assert.match(sql, /sponsorship_contracts_one_active_revision_idx/i);
+  assert.match(sql, /OLD\.status IN \('released', 'confirmed'\)/i);
+  assert.match(sql, /NEW\.parent_contract_id IS DISTINCT FROM OLD\.parent_contract_id/i);
+  assert.match(sql, /NEW\.status = 'void'/i);
+  assert.match(sql, /contract_void_evidence_required/i);
+  assert.match(sql, /TG_OP = 'DELETE'/i);
+  assert.match(sql, /contract\.status = 'draft'/i);
+  assert.match(sql, /contract_events_are_immutable/i);
 });
 
 test("only exact onboarding seed rows are marked as example sponsors", async () => {

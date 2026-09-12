@@ -4,7 +4,7 @@ import { AuthError, verifyRequestOrigin } from "@netlify/identity";
 import { hasPermission, isResponse, json, requireUser, type MembershipRole } from "./_shared/auth.ts";
 import { isUuid, withSession, type DatabaseClient } from "./_shared/database.ts";
 import { createContractPdf, type ContractPdfData } from "./_shared/contract-pdf.ts";
-import { parseContractAcknowledgement, parseContractAdminConfirmation, parseContractConfirmation, parseContractCreate, parseContractDispatch, parseContractRelease, parseContractSettings, parseContractUpdate, parseLegacyContractCreate, type ContractCreateInput } from "./_shared/contract-input.ts";
+import { parseContractAcknowledgement, parseContractAdminConfirmation, parseContractConfirmation, parseContractCorrection, parseContractCreate, parseContractDispatch, parseContractRelease, parseContractRemoval, parseContractSettings, parseContractUpdate, parseLegacyContractCreate, type ContractCreateInput } from "./_shared/contract-input.ts";
 import { findIdentityUserByEmail } from "./_shared/identity-user-lookup.ts";
 import { sendIdentityInvitation } from "./_shared/identity-invitations.ts";
 import { loadOrganizationPdfBrand, type OrganizationPdfBrand } from "./_shared/organization-pdf-brand.ts";
@@ -15,6 +15,7 @@ type ContractRow = {
   id: string;
   contract_number: string;
   version_number: number;
+  parent_contract_id: string | null;
   sponsor_id: string;
   transition_sponsor_id: string | null;
   package_version_id: string;
@@ -35,6 +36,9 @@ type ContractRow = {
   confirmation_mode: "authenticated_account" | "one_time_link" | "legacy_portal" | "admin_legacy" | null;
   confirmation_recorded_at: string | null;
   confirmation_note: string | null;
+  voided_at: string | null;
+  voided_by: string | null;
+  void_reason: string | null;
   created_at: string;
   updated_at: string;
   sponsor_name?: string;
@@ -61,12 +65,13 @@ type SigningRequestRow = {
 };
 
 const contractColumns = `
-  contract.id, contract.contract_number, contract.version_number, contract.sponsor_id,
+  contract.id, contract.contract_number, contract.version_number, contract.parent_contract_id, contract.sponsor_id,
   contract.transition_sponsor_id, contract.package_version_id, contract.title, contract.special_agreements,
   contract.organization_snapshot, contract.sponsor_snapshot, contract.package_snapshot, contract.terms_snapshot,
   contract.status, contract.signing_method, contract.snapshot_hash, contract.released_at::text,
   contract.confirmed_at::text, contract.confirmed_email, contract.confirmed_name, contract.confirmed_role,
   contract.confirmation_mode, contract.confirmation_recorded_at::text, contract.confirmation_note,
+  contract.voided_at::text, contract.voided_by, contract.void_reason,
   contract.created_at::text, contract.updated_at::text
 `;
 
@@ -76,6 +81,8 @@ const routes = {
   settings: /^\/api\/contracts\/([0-9a-f-]+)\/settings$/i,
   detail: /^\/api\/contracts\/([0-9a-f-]+)\/([0-9a-f-]+)$/i,
   release: /^\/api\/contracts\/([0-9a-f-]+)\/([0-9a-f-]+)\/release$/i,
+  revision: /^\/api\/contracts\/([0-9a-f-]+)\/([0-9a-f-]+)\/revision$/i,
+  void: /^\/api\/contracts\/([0-9a-f-]+)\/([0-9a-f-]+)\/void$/i,
   adminConfirm: /^\/api\/contracts\/([0-9a-f-]+)\/([0-9a-f-]+)\/admin-confirm$/i,
   send: /^\/api\/contracts\/([0-9a-f-]+)\/([0-9a-f-]+)\/send$/i,
   access: /^\/api\/contracts\/([0-9a-f-]+)\/([0-9a-f-]+)\/access$/i,
@@ -179,7 +186,7 @@ type SnapshotSource = {
     payment_plan: string; payment_terms: string | null; valid_from: string | null; valid_until: string | null;
 };
 
-async function buildSnapshots(client: DatabaseClient, tenantId: string, selection: ContractCreateInput) {
+async function buildSnapshots(client: DatabaseClient, tenantId: string, selection: ContractCreateInput, allowArchivedDirect = false) {
   const sourceResult = selection.mode === "transition"
     ? await client.query<SnapshotSource>(`
       SELECT proposal.sponsor_id, proposal.proposed_package_version_id AS package_version_id,
@@ -205,9 +212,10 @@ async function buildSnapshots(client: DatabaseClient, tenantId: string, selectio
       JOIN sponsorship_package_versions version ON version.tenant_id = sponsor.tenant_id
       JOIN sponsorship_packages package ON package.id = version.package_id AND package.tenant_id = version.tenant_id
       WHERE sponsor.tenant_id = $1 AND sponsor.id = $2 AND version.id = $3
-        AND sponsor.status <> 'inactive' AND version.status = 'published' AND package.status = 'active'
+        AND version.status = 'published'
+        AND ((sponsor.status <> 'inactive' AND package.status = 'active') OR $5::boolean)
       LIMIT 1
-    `, [tenantId, selection.sponsorId, selection.packageVersionId, selection.annualValueCents]);
+    `, [tenantId, selection.sponsorId, selection.packageVersionId, selection.annualValueCents, allowArchivedDirect]);
   const source = sourceResult.rows[0];
   if (!source) return null;
   const settings = await getSettings(client, tenantId);
@@ -350,6 +358,32 @@ async function ensureDirectReservation(client: DatabaseClient, tenantId: string,
   return true;
 }
 
+async function nextContractNumber(client: DatabaseClient, tenantId: string) {
+  const year = new Date().getUTCFullYear();
+  const counter = await client.query<{ last_value: number }>(`
+    INSERT INTO contract_number_counters (tenant_id, contract_year, last_value) VALUES ($1,$2,1)
+    ON CONFLICT (tenant_id, contract_year) DO UPDATE SET last_value = contract_number_counters.last_value + 1
+    RETURNING last_value
+  `, [tenantId, year]);
+  return `MT-${year}-${String(counter.rows[0].last_value).padStart(4, "0")}`;
+}
+
+async function releaseReservationIfUnused(client: DatabaseClient, tenantId: string, sponsorId: string, packageVersionId: string) {
+  await client.query(`UPDATE sponsorship_package_reservations reservation
+    SET status = 'released', updated_at = now()
+    WHERE reservation.tenant_id = $1
+      AND reservation.sponsor_id = $2
+      AND reservation.package_version_id = $3
+      AND reservation.status IN ('held', 'confirmed')
+      AND NOT EXISTS (
+        SELECT 1 FROM sponsorship_contracts contract
+        WHERE contract.tenant_id = reservation.tenant_id
+          AND contract.sponsor_id = reservation.sponsor_id
+          AND contract.package_version_id = reservation.package_version_id
+          AND contract.status IN ('released', 'confirmed')
+      )`, [tenantId, sponsorId, packageVersionId]);
+}
+
 function pdfData(contract: ContractRow, brand: OrganizationPdfBrand): ContractPdfData {
   return {
     contractNumber: contract.contract_number,
@@ -379,7 +413,8 @@ export default async (request: Request, context: Context) => {
   const user = await requireUser();
   if (isResponse(user)) return user;
   const pathname = new URL(request.url).pathname;
-  const match = routes.settings.exec(pathname) ?? routes.legacyCreate.exec(pathname) ?? routes.release.exec(pathname) ?? routes.adminConfirm.exec(pathname) ?? routes.send.exec(pathname)
+  const match = routes.settings.exec(pathname) ?? routes.legacyCreate.exec(pathname) ?? routes.release.exec(pathname)
+    ?? routes.revision.exec(pathname) ?? routes.void.exec(pathname) ?? routes.adminConfirm.exec(pathname) ?? routes.send.exec(pathname)
     ?? routes.access.exec(pathname) ?? routes.copy.exec(pathname) ?? routes.confirm.exec(pathname)
     ?? routes.pdf.exec(pathname) ?? routes.detail.exec(pathname) ?? routes.collection.exec(pathname);
   const tenantId = match?.[1];
@@ -652,23 +687,168 @@ export default async (request: Request, context: Context) => {
       const result = await withSession(user.id, tenantId, async (client) => {
         const role = await membershipRole(client, tenantId, user.id);
         if (!role || !hasPermission(role, "packages:write")) return { state: "denied" as const };
+        const current = await contractDetail(client, tenantId, contractId);
+        if (!current || current.contract.status !== "draft") return { state: "locked" as const };
+        const preservesExistingSelection = current.contract.sponsor_id === parsed.value.sponsorId
+          && current.contract.package_version_id === parsed.value.packageVersionId;
+        const snapshots = await buildSnapshots(client, tenantId, parsed.value, preservesExistingSelection);
+        if (!snapshots) return { state: "selection_not_found" as const };
         const updated = await client.query<{ id: string }>(`
-          UPDATE sponsorship_contracts SET title = $3, special_agreements = $4, signing_method = $5, updated_at = now()
+          UPDATE sponsorship_contracts SET
+            sponsor_id = $3,
+            transition_sponsor_id = CASE
+              WHEN sponsor_id = $3 AND package_version_id = $4
+                AND COALESCE((package_snapshot->>'priceCents')::integer, -1) = $5
+              THEN transition_sponsor_id ELSE NULL END,
+            package_version_id = $4,
+            title = $6,
+            special_agreements = $7,
+            signing_method = $8,
+            organization_snapshot = $9::jsonb,
+            sponsor_snapshot = $10::jsonb,
+            package_snapshot = $11::jsonb,
+            terms_snapshot = $12::jsonb,
+            updated_at = now()
           WHERE tenant_id = $1 AND id = $2 AND status = 'draft' RETURNING id
-        `, [tenantId, contractId, parsed.value.title, parsed.value.specialAgreements, parsed.value.signingMethod]);
+        `, [tenantId, contractId, snapshots.sponsorId, snapshots.packageVersionId, snapshots.package.priceCents,
+          parsed.value.title, parsed.value.specialAgreements, parsed.value.signingMethod,
+          JSON.stringify(snapshots.organization), JSON.stringify(snapshots.sponsor), JSON.stringify(snapshots.package),
+          JSON.stringify(snapshots.terms)]);
         if (!updated.rows[0]) return { state: "locked" as const };
         await client.query(`INSERT INTO sponsorship_contract_events
           (tenant_id, contract_id, event_type, actor_user_id, actor_email, evidence)
-          VALUES ($1,$2,'updated',$3,$4,jsonb_build_object('fields',ARRAY['title','special_agreements','signing_method']))`,
-          [tenantId, contractId, user.id, user.email ?? null]);
+          VALUES ($1,$2,'updated',$3,$4,jsonb_build_object(
+            'fields',ARRAY['sponsor','package','annual_value','title','special_agreements','signing_method'],
+            'sponsor_id',$5::text,'package_version_id',$6::text,'annual_value_cents',$7::integer))`,
+          [tenantId, contractId, user.id, user.email ?? null, snapshots.sponsorId, snapshots.packageVersionId, snapshots.package.priceCents]);
         return { state: "updated" as const, detail: await contractDetail(client, tenantId, contractId) };
       }, user.email ?? undefined);
       if (result.state === "denied") return json({ error: "permission_denied" }, 403);
+      if (result.state === "selection_not_found") return json({ error: "contract_selection_not_found" }, 409);
       if (result.state === "locked") return json({ error: "contract_locked" }, 409);
       return json({ detail: result.detail });
     } catch (error) {
       console.error("contract_update_failed", { requestId: context.requestId, tenantId, contractId, error });
       return json({ error: "contract_update_failed", requestId: context.requestId }, 500);
+    }
+  }
+
+  if (routes.revision.test(pathname) && request.method === "POST") {
+    const parsed = parseContractCorrection(body);
+    if (!parsed.ok) return json({ error: parsed.error }, 422);
+    try {
+      const result = await withSession(user.id, tenantId, async (client) => {
+        const role = await membershipRole(client, tenantId, user.id);
+        if (!role || !hasPermission(role, "packages:write")) return { state: "denied" as const };
+        const locked = await client.query<{ status: ContractStatus }>(`
+          SELECT status FROM sponsorship_contracts
+          WHERE tenant_id = $1 AND id = $2 FOR UPDATE
+        `, [tenantId, contractId]);
+        if (!locked.rows[0]) return { state: "not_found" as const };
+        if (!(["released", "confirmed"] as ContractStatus[]).includes(locked.rows[0].status)) return { state: "locked" as const };
+        const existing = await contractDetail(client, tenantId, contractId);
+        if (!existing) return { state: "not_found" as const };
+        const openRevision = await client.query<{ id: string }>(`
+          SELECT id FROM sponsorship_contracts
+          WHERE tenant_id = $1 AND parent_contract_id = $2 AND status <> 'void'
+          LIMIT 1
+        `, [tenantId, contractId]);
+        if (openRevision.rows[0]) return { state: "revision_exists" as const };
+        const contractNumber = await nextContractNumber(client, tenantId);
+        const created = await client.query<{ id: string }>(`
+          INSERT INTO sponsorship_contracts (
+            tenant_id, contract_number, version_number, parent_contract_id,
+            sponsor_id, transition_sponsor_id, package_version_id,
+            title, special_agreements, organization_snapshot, sponsor_snapshot,
+            package_snapshot, terms_snapshot, status, signing_method, created_by
+          ) VALUES (
+            $1,$2,$3,$4,$5,NULL,$6,$7,$8,$9::jsonb,$10::jsonb,$11::jsonb,$12::jsonb,'draft',$13,$14
+          ) RETURNING id
+        `, [tenantId, contractNumber, existing.contract.version_number + 1, contractId,
+          existing.contract.sponsor_id, existing.contract.package_version_id,
+          existing.contract.title, existing.contract.special_agreements,
+          JSON.stringify(existing.contract.organization_snapshot), JSON.stringify(existing.contract.sponsor_snapshot),
+          JSON.stringify(existing.contract.package_snapshot), JSON.stringify(existing.contract.terms_snapshot),
+          existing.contract.signing_method, user.id]);
+        await client.query(`INSERT INTO sponsorship_contract_events
+          (tenant_id, contract_id, event_type, actor_user_id, actor_email, evidence)
+          VALUES ($1,$2,'created',$3,$4,jsonb_build_object(
+            'source','contract_revision','parent_contract_id',$5::text,
+            'parent_contract_number',$6::text,'reason',$7::text))`,
+          [tenantId, created.rows[0].id, user.id, user.email ?? null, contractId,
+            existing.contract.contract_number, parsed.value.reason]);
+        await client.query(`INSERT INTO audit_events
+          (tenant_id, actor_user_id, action, object_type, object_id, metadata)
+          VALUES ($1,$2,'contract.revision_created','sponsorship_contract',$3,
+            jsonb_build_object('parent_contract_id',$4::text,'reason',$5::text))`,
+          [tenantId, user.id, created.rows[0].id, contractId, parsed.value.reason]);
+        return { state: "created" as const, detail: await contractDetail(client, tenantId, created.rows[0].id) };
+      }, user.email ?? undefined);
+      if (result.state === "denied") return json({ error: "permission_denied" }, 403);
+      if (result.state === "not_found") return json({ error: "contract_not_found" }, 404);
+      if (result.state === "locked") return json({ error: "contract_locked" }, 409);
+      if (result.state === "revision_exists") return json({ error: "contract_revision_exists" }, 409);
+      return json({ detail: result.detail }, 201);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      if (message.includes("sponsorship_contracts_one_active_revision_idx")) return json({ error: "contract_revision_exists" }, 409);
+      console.error("contract_revision_create_failed", { requestId: context.requestId, tenantId, contractId, error });
+      return json({ error: "contract_revision_create_failed", requestId: context.requestId }, 500);
+    }
+  }
+
+  if (routes.void.test(pathname) && request.method === "POST") {
+    const parsed = parseContractRemoval(body);
+    if (!parsed.ok) return json({ error: parsed.error }, 422);
+    try {
+      const result = await withSession(user.id, tenantId, async (client) => {
+        const role = await membershipRole(client, tenantId, user.id);
+        if (!role || !hasPermission(role, "packages:write")) return { state: "denied" as const };
+        const locked = await client.query<{
+          status: ContractStatus; contract_number: string; sponsor_id: string; package_version_id: string;
+        }>(`SELECT status, contract_number, sponsor_id, package_version_id
+            FROM sponsorship_contracts WHERE tenant_id = $1 AND id = $2 FOR UPDATE`, [tenantId, contractId]);
+        const contract = locked.rows[0];
+        if (!contract) return { state: "not_found" as const };
+        if (contract.status === "void") return { state: "already_void" as const };
+        if (contract.status === "draft") {
+          await client.query(`INSERT INTO audit_events
+            (tenant_id, actor_user_id, action, object_type, object_id, metadata)
+            VALUES ($1,$2,'contract.draft_deleted','sponsorship_contract',$3,
+              jsonb_build_object('contract_number',$4::text,'sponsor_id',$5::text,
+                'package_version_id',$6::text,'reason',$7::text))`,
+            [tenantId, user.id, contractId, contract.contract_number, contract.sponsor_id,
+              contract.package_version_id, parsed.value.reason]);
+          await client.query(`DELETE FROM contract_signing_requests WHERE tenant_id = $1 AND contract_id = $2`, [tenantId, contractId]);
+          await client.query(`DELETE FROM sponsorship_contract_events WHERE tenant_id = $1 AND contract_id = $2`, [tenantId, contractId]);
+          await client.query(`DELETE FROM sponsorship_contracts WHERE tenant_id = $1 AND id = $2`, [tenantId, contractId]);
+          return { state: "removed" as const, mode: "deleted" as const };
+        }
+        await client.query(`UPDATE sponsorship_contracts SET
+          status = 'void', voided_at = now(), voided_by = $3, void_reason = $4, updated_at = now()
+          WHERE tenant_id = $1 AND id = $2`, [tenantId, contractId, user.id, parsed.value.reason]);
+        await client.query(`UPDATE contract_signing_requests SET status = 'revoked', updated_at = now()
+          WHERE tenant_id = $1 AND contract_id = $2 AND status <> 'confirmed'`, [tenantId, contractId]);
+        await client.query(`INSERT INTO sponsorship_contract_events
+          (tenant_id, contract_id, event_type, actor_user_id, actor_email, evidence)
+          VALUES ($1,$2,'voided',$3,$4,jsonb_build_object(
+            'reason',$5::text,'previous_status',$6::text))`,
+          [tenantId, contractId, user.id, user.email ?? null, parsed.value.reason, contract.status]);
+        await releaseReservationIfUnused(client, tenantId, contract.sponsor_id, contract.package_version_id);
+        await client.query(`INSERT INTO audit_events
+          (tenant_id, actor_user_id, action, object_type, object_id, metadata)
+          VALUES ($1,$2,'contract.voided','sponsorship_contract',$3,
+            jsonb_build_object('contract_number',$4::text,'previous_status',$5::text,'reason',$6::text))`,
+          [tenantId, user.id, contractId, contract.contract_number, contract.status, parsed.value.reason]);
+        return { state: "removed" as const, mode: "voided" as const };
+      }, user.email ?? undefined);
+      if (result.state === "denied") return json({ error: "permission_denied" }, 403);
+      if (result.state === "not_found") return json({ error: "contract_not_found" }, 404);
+      if (result.state === "already_void") return json({ error: "contract_already_void" }, 409);
+      return json({ removed: true, mode: result.mode });
+    } catch (error) {
+      console.error("contract_removal_failed", { requestId: context.requestId, tenantId, contractId, error });
+      return json({ error: "contract_removal_failed", requestId: context.requestId }, 500);
     }
   }
 
@@ -695,7 +875,7 @@ export default async (request: Request, context: Context) => {
             packageVersionId: existing.contract.package_version_id,
             annualValueCents,
           };
-        const snapshots = await buildSnapshots(client, tenantId, source);
+        const snapshots = await buildSnapshots(client, tenantId, source, source.mode === "direct");
         if (!snapshots) return { state: "source_missing" as const };
         if (!snapshots.settingsComplete) return { state: "settings_incomplete" as const };
         if (!snapshots.sponsorComplete) return { state: "sponsor_incomplete" as const };
@@ -717,6 +897,34 @@ export default async (request: Request, context: Context) => {
           (tenant_id, contract_id, event_type, actor_user_id, actor_email, evidence)
           VALUES ($1,$2,'released',$3,$4,jsonb_build_object('snapshot_hash',$5::text,'legal_review_acknowledged',true))`,
           [tenantId, contractId, user.id, user.email ?? null, hash]);
+        if (existing.contract.parent_contract_id) {
+          const parent = await client.query<{
+            status: ContractStatus; contract_number: string; sponsor_id: string; package_version_id: string;
+          }>(`SELECT status, contract_number, sponsor_id, package_version_id
+              FROM sponsorship_contracts
+              WHERE tenant_id = $1 AND id = $2 FOR UPDATE`, [tenantId, existing.contract.parent_contract_id]);
+          const replaced = parent.rows[0];
+          if (replaced && (["released", "confirmed"] as ContractStatus[]).includes(replaced.status)) {
+            const reason = `Durch Korrekturvertrag ${existing.contract.contract_number} ersetzt.`;
+            await client.query(`UPDATE sponsorship_contracts SET
+              status = 'void', voided_at = now(), voided_by = $3, void_reason = $4, updated_at = now()
+              WHERE tenant_id = $1 AND id = $2`, [tenantId, existing.contract.parent_contract_id, user.id, reason]);
+            await client.query(`UPDATE contract_signing_requests SET status = 'revoked', updated_at = now()
+              WHERE tenant_id = $1 AND contract_id = $2 AND status <> 'confirmed'`, [tenantId, existing.contract.parent_contract_id]);
+            await client.query(`INSERT INTO sponsorship_contract_events
+              (tenant_id, contract_id, event_type, actor_user_id, actor_email, evidence)
+              VALUES ($1,$2,'voided',$3,$4,jsonb_build_object(
+                'reason',$5::text,'previous_status',$6::text,'replacement_contract_id',$7::text))`,
+              [tenantId, existing.contract.parent_contract_id, user.id, user.email ?? null,
+                reason, replaced.status, contractId]);
+            await releaseReservationIfUnused(client, tenantId, replaced.sponsor_id, replaced.package_version_id);
+            await client.query(`INSERT INTO audit_events
+              (tenant_id, actor_user_id, action, object_type, object_id, metadata)
+              VALUES ($1,$2,'contract.replaced','sponsorship_contract',$3,
+                jsonb_build_object('replacement_contract_id',$4::text,'reason',$5::text))`,
+              [tenantId, user.id, existing.contract.parent_contract_id, contractId, reason]);
+          }
+        }
         return { state: "released" as const, detail: await contractDetail(client, tenantId, contractId) };
       }, user.email ?? undefined);
       if (result.state === "denied") return json({ error: "permission_denied" }, 403);
@@ -1094,6 +1302,8 @@ export const config: Config = {
     "/api/contracts/:tenantId/settings",
     "/api/contracts/:tenantId/:contractId",
     "/api/contracts/:tenantId/:contractId/release",
+    "/api/contracts/:tenantId/:contractId/revision",
+    "/api/contracts/:tenantId/:contractId/void",
     "/api/contracts/:tenantId/:contractId/admin-confirm",
     "/api/contracts/:tenantId/:contractId/send",
     "/api/contracts/:tenantId/:contractId/access",
