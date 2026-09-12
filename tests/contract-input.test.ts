@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  parseContractAcknowledgement,
   parseContractConfirmation,
   parseContractCreate,
+  parseContractDispatch,
   parseContractRelease,
   parseContractSettings,
   parseContractUpdate,
@@ -58,4 +60,18 @@ test("release and sponsor confirmation require explicit acknowledgement", () => 
   assert.equal(parseContractRelease({ legalReviewAcknowledged: true }).ok, true);
   assert.deepEqual(parseContractConfirmation({ signingAuthorityName: "Max Muster", signingAuthorityRole: "Geschäftsführer", acknowledged: false }), { ok: false, error: "contract_acknowledgement_required" });
   assert.equal(parseContractConfirmation({ signingAuthorityName: "Max Muster", signingAuthorityRole: "Geschäftsführer", acknowledged: true }).ok, true);
+});
+
+test("contract dispatch validates and normalizes the designated signer", () => {
+  assert.deepEqual(parseContractDispatch({ signerEmail: " SIGNER@Example.CH ", signerName: "Max Muster", signerRole: "Geschäftsführer" }), {
+    ok: true,
+    value: { signerEmail: "signer@example.ch", signerName: "Max Muster", signerRole: "Geschäftsführer" },
+  });
+  assert.deepEqual(parseContractDispatch({ signerEmail: "wrong", signerName: "Max Muster", signerRole: "Geschäftsführer" }), { ok: false, error: "invalid_signer_email" });
+  assert.deepEqual(parseContractDispatch({ signerEmail: "signer@example.ch", signerName: "", signerRole: "Geschäftsführer" }), { ok: false, error: "signer_name_required" });
+});
+
+test("account and one-time confirmation both require explicit acknowledgement", () => {
+  assert.deepEqual(parseContractAcknowledgement({ acknowledged: false }), { ok: false, error: "contract_acknowledgement_required" });
+  assert.deepEqual(parseContractAcknowledgement({ acknowledged: true }), { ok: true, value: { acknowledged: true } });
 });

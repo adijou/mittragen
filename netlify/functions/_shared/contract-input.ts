@@ -101,3 +101,22 @@ export function parseContractConfirmation(body: unknown): Result<{ signingAuthor
   if (record.acknowledged !== true) return { ok: false, error: "contract_acknowledgement_required" };
   return { ok: true, value: { signingAuthorityName, signingAuthorityRole, acknowledged: true } };
 }
+
+export function parseContractDispatch(body: unknown): Result<{ signerEmail: string; signerName: string; signerRole: string }> {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return { ok: false, error: "invalid_body" };
+  const record = body as Record<string, unknown>;
+  const signerEmail = optionalText(record.signerEmail, 320)?.toLowerCase();
+  const signerName = optionalText(record.signerName, 160);
+  const signerRole = optionalText(record.signerRole, 120);
+  if (!signerEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(signerEmail)) return { ok: false, error: "invalid_signer_email" };
+  if (!signerName) return { ok: false, error: "signer_name_required" };
+  if (!signerRole) return { ok: false, error: "signer_role_required" };
+  return { ok: true, value: { signerEmail, signerName, signerRole } };
+}
+
+export function parseContractAcknowledgement(body: unknown): Result<{ acknowledged: true }> {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return { ok: false, error: "invalid_body" };
+  return (body as Record<string, unknown>).acknowledged === true
+    ? { ok: true, value: { acknowledged: true } }
+    : { ok: false, error: "contract_acknowledgement_required" };
+}

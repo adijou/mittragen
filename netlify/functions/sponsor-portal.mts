@@ -38,6 +38,25 @@ async function claimInvitations(user: User) {
       await client.query("UPDATE sponsor_portal_invitations SET accepted_at = COALESCE(accepted_at, now()), updated_at = now() WHERE tenant_id = $1 AND id = $2", [invitation.tenant_id, invitation.id]);
       count += 1;
     }
+    const contractInvitations = await client.query<{ id: string; tenant_id: string; sponsor_id: string }>(`
+      SELECT id, tenant_id, sponsor_id
+      FROM contract_signing_requests
+      WHERE lower(signer_email) = lower($1)
+        AND access_invited_at IS NOT NULL AND access_expires_at > now()
+        AND access_accepted_at IS NULL
+      ORDER BY created_at
+    `, [email]);
+    for (const invitation of contractInvitations.rows) {
+      await client.query("SELECT set_config('app.tenant_id', $1, true)", [invitation.tenant_id]);
+      await client.query(`INSERT INTO sponsor_portal_access (tenant_id, sponsor_id, identity_user_id, email)
+        VALUES ($1,$2,$3,$4)
+        ON CONFLICT (tenant_id, sponsor_id, identity_user_id) DO UPDATE SET email = EXCLUDED.email`,
+      [invitation.tenant_id, invitation.sponsor_id, user.id, email]);
+      await client.query(`UPDATE contract_signing_requests SET access_status = 'accepted',
+        access_accepted_at = COALESCE(access_accepted_at, now()), updated_at = now()
+        WHERE tenant_id = $1 AND id = $2`, [invitation.tenant_id, invitation.id]);
+      count += 1;
+    }
     return count;
   }, email);
   return { claimed };
@@ -105,15 +124,20 @@ async function loadSpace(client: DatabaseClient, tenantId: string, sponsorId: st
   const contracts = await client.query<{
     id: string; contract_number: string; title: string; status: "released" | "confirmed";
     package_name: string; price_cents: string; snapshot_hash: string;
-    released_at: string | null; confirmed_at: string | null;
+    released_at: string | null; confirmed_at: string | null; signer_name: string | null;
+    signer_role: string | null; can_confirm: boolean;
   }>(`
-    SELECT id, contract_number, title, status,
-           package_snapshot->>'name' AS package_name,
-           package_snapshot->>'priceCents' AS price_cents,
-           snapshot_hash, released_at::text, confirmed_at::text
-    FROM sponsorship_contracts
-    WHERE tenant_id = $1 AND sponsor_id = $2 AND status IN ('released', 'confirmed')
-    ORDER BY created_at DESC
+    SELECT contract.id, contract.contract_number, contract.title, contract.status,
+           contract.package_snapshot->>'name' AS package_name,
+           contract.package_snapshot->>'priceCents' AS price_cents,
+           contract.snapshot_hash, contract.released_at::text, contract.confirmed_at::text,
+           signing.signer_name, signing.signer_role,
+           (signing.id IS NULL OR (signing.delivery_mode = 'account' AND lower(signing.signer_email) = app_current_user_email())) AS can_confirm
+    FROM sponsorship_contracts contract
+    LEFT JOIN contract_signing_requests signing
+      ON signing.tenant_id = contract.tenant_id AND signing.contract_id = contract.id
+    WHERE contract.tenant_id = $1 AND contract.sponsor_id = $2 AND contract.status IN ('released', 'confirmed')
+    ORDER BY contract.created_at DESC
   `, [tenantId, sponsorId]);
 
   return {

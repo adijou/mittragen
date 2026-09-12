@@ -1,10 +1,13 @@
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import type { Config, Context } from "@netlify/functions";
 import { AuthError, verifyRequestOrigin } from "@netlify/identity";
 import { hasPermission, isResponse, json, requireUser, type MembershipRole } from "./_shared/auth.ts";
 import { isUuid, withSession, type DatabaseClient } from "./_shared/database.ts";
 import { createContractPdf, type ContractPdfData } from "./_shared/contract-pdf.ts";
-import { parseContractConfirmation, parseContractCreate, parseContractRelease, parseContractSettings, parseContractUpdate, type ContractCreateInput } from "./_shared/contract-input.ts";
+import { parseContractAcknowledgement, parseContractConfirmation, parseContractCreate, parseContractDispatch, parseContractRelease, parseContractSettings, parseContractUpdate, type ContractCreateInput } from "./_shared/contract-input.ts";
+import { findIdentityUserByEmail } from "./_shared/identity-user-lookup.ts";
+import { sendIdentityInvitation } from "./_shared/identity-invitations.ts";
+import { sendContractAccessEmail, sendContractCopyEmail, sendContractSigningEmail } from "./_shared/resend-contract-email.ts";
 
 type ContractStatus = "draft" | "released" | "confirmed" | "void";
 type ContractRow = {
@@ -34,6 +37,25 @@ type ContractRow = {
   package_name?: string;
 };
 
+type SigningRequestRow = {
+  id: string;
+  signer_email: string;
+  signer_name: string;
+  signer_role: string;
+  delivery_mode: "account" | "one_time";
+  identity_user_id: string | null;
+  status: "pending" | "sent" | "opened" | "confirmed" | "failed" | "revoked";
+  delivery_error: string | null;
+  expires_at: string;
+  sent_at: string | null;
+  opened_at: string | null;
+  confirmed_at: string | null;
+  access_status: "none" | "pending" | "sent" | "existing_user" | "failed" | "accepted";
+  access_error: string | null;
+  access_invited_at: string | null;
+  access_accepted_at: string | null;
+};
+
 const contractColumns = `
   contract.id, contract.contract_number, contract.version_number, contract.sponsor_id,
   contract.transition_sponsor_id, contract.package_version_id, contract.title, contract.special_agreements,
@@ -48,9 +70,26 @@ const routes = {
   settings: /^\/api\/contracts\/([0-9a-f-]+)\/settings$/i,
   detail: /^\/api\/contracts\/([0-9a-f-]+)\/([0-9a-f-]+)$/i,
   release: /^\/api\/contracts\/([0-9a-f-]+)\/([0-9a-f-]+)\/release$/i,
+  send: /^\/api\/contracts\/([0-9a-f-]+)\/([0-9a-f-]+)\/send$/i,
+  access: /^\/api\/contracts\/([0-9a-f-]+)\/([0-9a-f-]+)\/access$/i,
+  copy: /^\/api\/contracts\/([0-9a-f-]+)\/([0-9a-f-]+)\/email-copy$/i,
   confirm: /^\/api\/contracts\/([0-9a-f-]+)\/([0-9a-f-]+)\/confirm$/i,
   pdf: /^\/api\/contracts\/([0-9a-f-]+)\/([0-9a-f-]+)\/pdf$/i,
 };
+
+function emailConfig() {
+  const apiKey = Netlify.env.get("RESEND_API_KEY")?.trim();
+  if (!apiKey) throw new Error("resend_not_configured");
+  return {
+    apiKey,
+    from: Netlify.env.get("MAIL_FROM")?.trim() || "Mittragen <noreply@news.mittragen.ch>",
+    replyTo: Netlify.env.get("MAIL_REPLY_TO")?.trim() || undefined,
+  };
+}
+
+function siteUrl(request: Request, path: string) {
+  return new URL(path, Netlify.env.get("URL")?.trim() || new URL(request.url).origin).toString();
+}
 
 function verifyMutation(request: Request): Response | null {
   try {
@@ -234,7 +273,15 @@ async function contractDetail(client: DatabaseClient, tenantId: string, contract
     FROM sponsorship_contract_events WHERE tenant_id = $1 AND contract_id = $2
     ORDER BY created_at DESC, id DESC
   `, [tenantId, contractId]);
-  return { contract: contract.rows[0], events: events.rows };
+  const signing = await client.query<SigningRequestRow>(`
+    SELECT id, signer_email, signer_name, signer_role, delivery_mode, identity_user_id, status,
+           delivery_error, expires_at::text, sent_at::text, opened_at::text, confirmed_at::text,
+           access_status, access_error, access_invited_at::text, access_accepted_at::text
+    FROM contract_signing_requests
+    WHERE tenant_id = $1 AND contract_id = $2
+    LIMIT 1
+  `, [tenantId, contractId]);
+  return { contract: contract.rows[0], events: events.rows, signingRequest: signing.rows[0] ?? null };
 }
 
 async function listContracts(client: DatabaseClient, tenantId: string) {
@@ -321,7 +368,8 @@ export default async (request: Request, context: Context) => {
   const user = await requireUser();
   if (isResponse(user)) return user;
   const pathname = new URL(request.url).pathname;
-  const match = routes.settings.exec(pathname) ?? routes.release.exec(pathname) ?? routes.confirm.exec(pathname)
+  const match = routes.settings.exec(pathname) ?? routes.release.exec(pathname) ?? routes.send.exec(pathname)
+    ?? routes.access.exec(pathname) ?? routes.copy.exec(pathname) ?? routes.confirm.exec(pathname)
     ?? routes.pdf.exec(pathname) ?? routes.detail.exec(pathname) ?? routes.collection.exec(pathname);
   const tenantId = match?.[1];
   const contractId = match?.[2];
@@ -586,9 +634,213 @@ export default async (request: Request, context: Context) => {
     }
   }
 
-  if (routes.confirm.test(pathname) && request.method === "POST") {
-    const parsed = parseContractConfirmation(body);
+  if (routes.send.test(pathname) && request.method === "POST") {
+    const parsed = parseContractDispatch(body);
     if (!parsed.ok) return json({ error: parsed.error }, 422);
+    try {
+      const authorized = await withSession(user.id, tenantId, async (client) => {
+        const role = await membershipRole(client, tenantId, user.id);
+        if (!role || !hasPermission(role, "packages:write")) return { state: "denied" as const };
+        const detail = await contractDetail(client, tenantId, contractId);
+        if (!detail) return { state: "not_found" as const };
+        if (detail.contract.status === "confirmed") return { state: "confirmed" as const };
+        if (detail.contract.status !== "released" || detail.contract.signing_method !== "click") return { state: "not_released" as const };
+        if (detail.signingRequest?.delivery_mode === "account"
+          && ["sent", "opened"].includes(detail.signingRequest.status)
+          && detail.signingRequest.signer_email !== parsed.value.signerEmail) return { state: "signer_locked" as const };
+        const tenant = await client.query<{ name: string }>("SELECT name FROM tenants WHERE id = $1 LIMIT 1", [tenantId]);
+        return { state: "ready" as const, contract: detail.contract, tenantName: tenant.rows[0]?.name ?? detail.contract.organization_snapshot.legalName };
+      }, user.email ?? undefined);
+      if (authorized.state === "denied") return json({ error: "permission_denied" }, 403);
+      if (authorized.state === "not_found") return json({ error: "contract_not_found" }, 404);
+      if (authorized.state === "confirmed") return json({ error: "contract_already_confirmed" }, 409);
+      if (authorized.state === "not_released") return json({ error: "contract_not_released" }, 409);
+      if (authorized.state === "signer_locked") return json({ error: "contract_signer_locked" }, 409);
+
+      const identityUser = await findIdentityUserByEmail(parsed.value.signerEmail);
+      const mode = identityUser ? "account" as const : "one_time" as const;
+      const rawToken = identityUser ? null : randomBytes(32).toString("base64url");
+      const tokenHash = rawToken ? createHash("sha256").update(rawToken).digest("hex") : null;
+      const prepared = await withSession(user.id, tenantId, async (client) => {
+        const current = await client.query<{ status: ContractStatus }>(`
+          SELECT status FROM sponsorship_contracts WHERE tenant_id = $1 AND id = $2 FOR UPDATE
+        `, [tenantId, contractId]);
+        if (current.rows[0]?.status !== "released") return null;
+        const requestRow = await client.query<{ id: string; expires_at: string }>(`
+          INSERT INTO contract_signing_requests (
+            tenant_id, contract_id, sponsor_id, signer_email, signer_name, signer_role,
+            delivery_mode, identity_user_id, token_hash, status, expires_at, created_by
+          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'pending',now() + interval '7 days',$10)
+          ON CONFLICT (contract_id) DO UPDATE SET
+            signer_email = EXCLUDED.signer_email, signer_name = EXCLUDED.signer_name,
+            signer_role = EXCLUDED.signer_role, delivery_mode = EXCLUDED.delivery_mode,
+            identity_user_id = EXCLUDED.identity_user_id, token_hash = EXCLUDED.token_hash,
+            status = 'pending', delivery_error = NULL, resend_email_id = NULL,
+            expires_at = EXCLUDED.expires_at, sent_at = NULL, opened_at = NULL,
+            confirmed_at = NULL, updated_at = now()
+          RETURNING id, expires_at::text
+        `, [tenantId, contractId, authorized.contract.sponsor_id, parsed.value.signerEmail,
+          parsed.value.signerName, parsed.value.signerRole, mode, identityUser?.id ?? null, tokenHash, user.id]);
+        return requestRow.rows[0];
+      }, user.email ?? undefined);
+      if (!prepared) return json({ error: "contract_not_released" }, 409);
+
+      const confirmationUrl = mode === "account"
+        ? siteUrl(request, "/sponsor")
+        : siteUrl(request, `/unterzeichnen?token=${encodeURIComponent(rawToken!)}`);
+      let resendEmailId: string;
+      try {
+        resendEmailId = await sendContractSigningEmail({
+          email: parsed.value.signerEmail,
+          signerName: parsed.value.signerName,
+          organizationName: authorized.tenantName,
+          sponsorName: authorized.contract.sponsor_snapshot.legalName,
+          contractNumber: authorized.contract.contract_number,
+          packageName: authorized.contract.package_snapshot.name,
+          annualValueCents: Number(authorized.contract.package_snapshot.priceCents),
+          confirmationUrl,
+          deliveryMode: mode,
+          expiresAt: prepared.expires_at,
+        }, emailConfig());
+      } catch (error) {
+        await withSession(user.id, tenantId, async (client) => {
+          await client.query(`UPDATE contract_signing_requests SET status = 'failed', delivery_error = $3, updated_at = now()
+            WHERE tenant_id = $1 AND contract_id = $2`, [tenantId, contractId, error instanceof Error ? error.message.slice(0, 500) : "delivery_failed"]);
+        }, user.email ?? undefined);
+        return json({ error: "contract_signing_delivery_failed", requestId: context.requestId }, 502);
+      }
+      const detail = await withSession(user.id, tenantId, async (client) => {
+        await client.query(`UPDATE contract_signing_requests SET status = 'sent', delivery_error = NULL,
+          resend_email_id = $3, sent_at = now(), updated_at = now()
+          WHERE tenant_id = $1 AND contract_id = $2`, [tenantId, contractId, resendEmailId]);
+        if (identityUser) {
+          await client.query(`INSERT INTO sponsor_portal_access (tenant_id, sponsor_id, identity_user_id, email)
+            VALUES ($1,$2,$3,$4)
+            ON CONFLICT (tenant_id, sponsor_id, identity_user_id) DO UPDATE SET email = EXCLUDED.email`,
+          [tenantId, authorized.contract.sponsor_id, identityUser.id, parsed.value.signerEmail]);
+          await client.query(`UPDATE contract_signing_requests SET access_status = 'existing_user',
+            access_invited_at = now(), access_accepted_at = now(), updated_at = now()
+            WHERE tenant_id = $1 AND contract_id = $2`, [tenantId, contractId]);
+        }
+        await client.query(`INSERT INTO sponsorship_contract_events
+          (tenant_id, contract_id, event_type, actor_user_id, actor_email, evidence)
+          VALUES ($1,$2,'signing_invited',$3,$4,jsonb_build_object('delivery_mode',$5::text,'signer_email',$6::text,'expires_at',$7::text))`,
+        [tenantId, contractId, user.id, user.email ?? null, mode, parsed.value.signerEmail, prepared.expires_at]);
+        return contractDetail(client, tenantId, contractId);
+      }, user.email ?? undefined);
+      return json({ detail, deliveryMode: mode });
+    } catch (error) {
+      console.error("contract_signing_send_failed", { requestId: context.requestId, tenantId, contractId, error });
+      return json({ error: "contract_signing_send_failed", requestId: context.requestId }, 500);
+    }
+  }
+
+  if (routes.access.test(pathname) && request.method === "POST") {
+    try {
+      const authorized = await withSession(user.id, tenantId, async (client) => {
+        const role = await membershipRole(client, tenantId, user.id);
+        if (!role || !hasPermission(role, "packages:write")) return { state: "denied" as const };
+        const detail = await contractDetail(client, tenantId, contractId);
+        if (!detail) return { state: "not_found" as const };
+        if (detail.contract.status !== "confirmed" || !detail.signingRequest) return { state: "not_confirmed" as const };
+        const tenant = await client.query<{ name: string }>("SELECT name FROM tenants WHERE id = $1 LIMIT 1", [tenantId]);
+        await client.query(`UPDATE contract_signing_requests SET access_status = 'pending', access_error = NULL,
+          access_invited_at = now(), access_expires_at = now() + interval '7 days', updated_at = now()
+          WHERE tenant_id = $1 AND contract_id = $2`, [tenantId, contractId]);
+        return { state: "ready" as const, detail, tenantName: tenant.rows[0]?.name ?? detail.contract.organization_snapshot.legalName };
+      }, user.email ?? undefined);
+      if (authorized.state === "denied") return json({ error: "permission_denied" }, 403);
+      if (authorized.state === "not_found") return json({ error: "contract_not_found" }, 404);
+      if (authorized.state === "not_confirmed") return json({ error: "confirmed_contract_required" }, 409);
+      const signing = authorized.detail.signingRequest!;
+      let identityUser = await findIdentityUserByEmail(signing.signer_email);
+      let delivery: "sent" | "existing_user" = "sent";
+      if (!identityUser) {
+        delivery = await sendIdentityInvitation(signing.signer_email);
+        if (delivery === "existing_user") identityUser = await findIdentityUserByEmail(signing.signer_email);
+      }
+      if (identityUser) {
+        await withSession(user.id, tenantId, async (client) => {
+          await client.query(`INSERT INTO sponsor_portal_access (tenant_id, sponsor_id, identity_user_id, email)
+            VALUES ($1,$2,$3,$4)
+            ON CONFLICT (tenant_id, sponsor_id, identity_user_id) DO UPDATE SET email = EXCLUDED.email`,
+          [tenantId, authorized.detail.contract.sponsor_id, identityUser!.id, signing.signer_email]);
+        }, user.email ?? undefined);
+        await sendContractAccessEmail({
+          email: signing.signer_email,
+          signerName: signing.signer_name,
+          organizationName: authorized.tenantName,
+          sponsorName: authorized.detail.contract.sponsor_snapshot.legalName,
+          portalUrl: siteUrl(request, "/sponsor"),
+        }, emailConfig());
+        delivery = "existing_user";
+      }
+      const detail = await withSession(user.id, tenantId, async (client) => {
+        await client.query(`UPDATE contract_signing_requests SET access_status = $3,
+          access_accepted_at = CASE WHEN $3 = 'existing_user' THEN now() ELSE access_accepted_at END,
+          access_error = NULL, updated_at = now()
+          WHERE tenant_id = $1 AND contract_id = $2`, [tenantId, contractId, delivery]);
+        await client.query(`INSERT INTO sponsorship_contract_events
+          (tenant_id, contract_id, event_type, actor_user_id, actor_email, evidence)
+          VALUES ($1,$2,'access_invited',$3,$4,jsonb_build_object('delivery',$5::text,'signer_email',$6::text))`,
+        [tenantId, contractId, user.id, user.email ?? null, delivery, signing.signer_email]);
+        return contractDetail(client, tenantId, contractId);
+      }, user.email ?? undefined);
+      return json({ detail });
+    } catch (error) {
+      await withSession(user.id, tenantId, async (client) => {
+        await client.query(`UPDATE contract_signing_requests SET access_status = 'failed', access_error = $3, updated_at = now()
+          WHERE tenant_id = $1 AND contract_id = $2`, [tenantId, contractId, error instanceof Error ? error.message.slice(0, 500) : "access_delivery_failed"]);
+      }, user.email ?? undefined).catch(() => undefined);
+      console.error("contract_access_invitation_failed", { requestId: context.requestId, tenantId, contractId, error });
+      return json({ error: "contract_access_invitation_failed", requestId: context.requestId }, 502);
+    }
+  }
+
+  if (routes.copy.test(pathname) && request.method === "POST") {
+    try {
+      const authorized = await withSession(user.id, tenantId, async (client) => {
+        const role = await membershipRole(client, tenantId, user.id);
+        if (!role || !hasPermission(role, "packages:write")) return { state: "denied" as const };
+        const detail = await contractDetail(client, tenantId, contractId);
+        if (!detail) return { state: "not_found" as const };
+        if (detail.contract.status !== "confirmed" || !detail.signingRequest) return { state: "not_confirmed" as const };
+        const tenant = await client.query<{ name: string }>("SELECT name FROM tenants WHERE id = $1 LIMIT 1", [tenantId]);
+        return { state: "ready" as const, detail, tenantName: tenant.rows[0]?.name ?? detail.contract.organization_snapshot.legalName };
+      }, user.email ?? undefined);
+      if (authorized.state === "denied") return json({ error: "permission_denied" }, 403);
+      if (authorized.state === "not_found") return json({ error: "contract_not_found" }, 404);
+      if (authorized.state === "not_confirmed") return json({ error: "confirmed_contract_required" }, 409);
+      const contract = authorized.detail.contract;
+      const signing = authorized.detail.signingRequest!;
+      const bytes = await createContractPdf(pdfData(contract));
+      await sendContractCopyEmail({
+        email: signing.signer_email,
+        signerName: signing.signer_name,
+        organizationName: authorized.tenantName,
+        sponsorName: contract.sponsor_snapshot.legalName,
+        contractNumber: contract.contract_number,
+        packageName: contract.package_snapshot.name,
+        annualValueCents: Number(contract.package_snapshot.priceCents),
+        pdfBase64: Buffer.from(bytes).toString("base64"),
+      }, emailConfig());
+      const detail = await withSession(user.id, tenantId, async (client) => {
+        await client.query(`INSERT INTO sponsorship_contract_events
+          (tenant_id, contract_id, event_type, actor_user_id, actor_email, evidence)
+          VALUES ($1,$2,'copy_sent',$3,$4,jsonb_build_object('recipient',$5::text,'snapshot_hash',$6::text))`,
+        [tenantId, contractId, user.id, user.email ?? null, signing.signer_email, contract.snapshot_hash]);
+        return contractDetail(client, tenantId, contractId);
+      }, user.email ?? undefined);
+      return json({ detail });
+    } catch (error) {
+      console.error("contract_copy_delivery_failed", { requestId: context.requestId, tenantId, contractId, error });
+      return json({ error: "contract_copy_delivery_failed", requestId: context.requestId }, 502);
+    }
+  }
+
+  if (routes.confirm.test(pathname) && request.method === "POST") {
+    const acknowledgement = parseContractAcknowledgement(body);
+    if (!acknowledgement.ok) return json({ error: acknowledgement.error }, 422);
     try {
       const result = await withSession(user.id, tenantId, async (client) => {
         const existing = await contractDetail(client, tenantId, contractId);
@@ -598,18 +850,37 @@ export default async (request: Request, context: Context) => {
         if (existing.contract.status !== "released" || existing.contract.signing_method !== "click") return { state: "not_released" as const };
         const email = user.email?.trim().toLowerCase();
         if (!email) return { state: "email_required" as const };
-        await client.query(`UPDATE sponsorship_contracts SET status = 'confirmed', confirmed_at = now(),
+        const signing = existing.signingRequest;
+        let signingAuthorityName: string;
+        let signingAuthorityRole: string;
+        if (signing) {
+          if (signing.delivery_mode !== "account" || signing.signer_email !== email) return { state: "wrong_signer" as const };
+          if (!["sent", "opened"].includes(signing.status) || new Date(signing.expires_at).getTime() <= Date.now()) return { state: "invitation_expired" as const };
+          signingAuthorityName = signing.signer_name;
+          signingAuthorityRole = signing.signer_role;
+        } else {
+          const legacy = parseContractConfirmation(body);
+          if (!legacy.ok) return { state: "legacy_invalid" as const, error: legacy.error };
+          signingAuthorityName = legacy.value.signingAuthorityName;
+          signingAuthorityRole = legacy.value.signingAuthorityRole;
+        }
+        const confirmed = await client.query<{ id: string }>(`UPDATE sponsorship_contracts SET status = 'confirmed', confirmed_at = now(),
           confirmed_by = $3, confirmed_email = $4, confirmed_name = $5, confirmed_role = $6, updated_at = now()
-          WHERE tenant_id = $1 AND id = $2 AND status = 'released'`,
-          [tenantId, contractId, user.id, email, parsed.value.signingAuthorityName, parsed.value.signingAuthorityRole]);
+          WHERE tenant_id = $1 AND id = $2 AND status = 'released' RETURNING id`,
+          [tenantId, contractId, user.id, email, signingAuthorityName, signingAuthorityRole]);
+        if (!confirmed.rows[0]) return { state: "already_confirmed" as const };
+        if (signing) {
+          await client.query(`UPDATE contract_signing_requests SET status = 'confirmed', confirmed_at = now(), updated_at = now()
+            WHERE tenant_id = $1 AND contract_id = $2`, [tenantId, contractId]);
+        }
         await client.query(`INSERT INTO sponsorship_contract_events
           (tenant_id, contract_id, event_type, actor_user_id, actor_email, evidence)
           VALUES ($1,$2,'confirmed',$3,$4,jsonb_build_object(
             'snapshot_hash',$5::text,'signing_authority_name',$6::text,'signing_authority_role',$7::text,
-            'user_agent',$8::text,'acknowledged',true))`,
+            'user_agent',$8::text,'acknowledged',true,'confirmation_mode',$9::text))`,
           [tenantId, contractId, user.id, email, existing.contract.snapshot_hash,
-            parsed.value.signingAuthorityName, parsed.value.signingAuthorityRole,
-            (request.headers.get("user-agent") ?? "unknown").slice(0, 500)]);
+            signingAuthorityName, signingAuthorityRole,
+            (request.headers.get("user-agent") ?? "unknown").slice(0, 500), signing ? "authenticated_account" : "legacy_portal"]);
         return { state: "confirmed" as const };
       }, user.email ?? undefined);
       if (result.state === "not_found") return json({ error: "contract_not_found" }, 404);
@@ -617,6 +888,9 @@ export default async (request: Request, context: Context) => {
       if (result.state === "already_confirmed") return json({ error: "contract_already_confirmed" }, 409);
       if (result.state === "not_released") return json({ error: "contract_not_released" }, 409);
       if (result.state === "email_required") return json({ error: "verified_email_required" }, 422);
+      if (result.state === "wrong_signer") return json({ error: "contract_signer_mismatch" }, 403);
+      if (result.state === "invitation_expired") return json({ error: "contract_signing_invitation_expired" }, 410);
+      if (result.state === "legacy_invalid") return json({ error: result.error }, 422);
       return json({ confirmed: true });
     } catch (error) {
       console.error("contract_confirmation_failed", { requestId: context.requestId, tenantId, contractId, error });
@@ -633,6 +907,9 @@ export const config: Config = {
     "/api/contracts/:tenantId/settings",
     "/api/contracts/:tenantId/:contractId",
     "/api/contracts/:tenantId/:contractId/release",
+    "/api/contracts/:tenantId/:contractId/send",
+    "/api/contracts/:tenantId/:contractId/access",
+    "/api/contracts/:tenantId/:contractId/email-copy",
     "/api/contracts/:tenantId/:contractId/confirm",
     "/api/contracts/:tenantId/:contractId/pdf",
   ],

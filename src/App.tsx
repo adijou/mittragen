@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { ProductiveAccess } from "./ProductiveAccess";
 import { SponsorPortal } from "./SponsorPortal";
+import { ContractSigning } from "./ContractSigning";
 
-type Route = "/" | "/admin" | "/space" | "/sponsor" | "/ueberfuehren" | "/login" | "/workspace";
+type Route = "/" | "/admin" | "/space" | "/sponsor" | "/ueberfuehren" | "/login" | "/workspace" | "/unterzeichnen";
 type IconName =
   | "arrow"
   | "bell"
@@ -91,7 +92,7 @@ function usePersistentState<T>(key: string, initialValue: T) {
 const routeFromPath = (): Route => {
   if (/#(?:confirmation_token|invite_token|recovery_token|access_token)=/.test(window.location.hash)) return "/login";
   const path = window.location.pathname.replace(/\/$/, "") || "/";
-  if (path === "/admin" || path === "/space" || path === "/sponsor" || path === "/ueberfuehren" || path === "/login" || path === "/workspace") return path;
+  if (path === "/admin" || path === "/space" || path === "/sponsor" || path === "/ueberfuehren" || path === "/login" || path === "/workspace" || path === "/unterzeichnen") return path;
   return "/";
 };
 
@@ -711,6 +712,7 @@ export default function App() {
 
   if (route === "/login" || route === "/workspace") return <ProductiveAccess page={route === "/login" ? "login" : "workspace"} onHome={() => navigate("/")} onLogin={() => navigate("/login")} onWorkspace={() => navigate("/workspace")} onSponsor={() => navigate("/sponsor")} onPrototype={() => navigate("/ueberfuehren")}/>;
   if (route === "/sponsor") return <SponsorPortal onHome={() => navigate("/")} onLogin={() => navigate("/login")}/>;
+  if (route === "/unterzeichnen") return <ContractSigning onHome={() => navigate("/")}/>;
   if (route === "/admin") return <AdminPage navigate={navigate} sponsors={sponsors} auditEvents={auditEvents}/>;
   if (route === "/space") return <SponsorSpace navigate={navigate} sponsors={sponsors} updateSponsor={updateSponsor} addAudit={addAudit}/>;
   if (route === "/ueberfuehren") return <TransitionPage navigate={navigate} sponsors={sponsors} updateSponsor={updateSponsor} addAudit={addAudit} resetSponsors={resetSponsors}/>;

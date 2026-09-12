@@ -12,6 +12,7 @@ const contractMigrationPath = new URL("../netlify/database/migrations/2026090909
 const demoSponsorMigrationPath = new URL("../netlify/database/migrations/20260910090000_mark-demo-sponsors/migration.sql", import.meta.url);
 const dossierMigrationPath = new URL("../netlify/database/migrations/20260910193000_excel_import_dossier/migration.sql", import.meta.url);
 const organizationMigrationPath = new URL("../netlify/database/migrations/20260911120000_organization_profile_branding/migration.sql", import.meta.url);
+const signingMigrationPath = new URL("../netlify/database/migrations/20260912100000_contract_signing_requests/migration.sql", import.meta.url);
 
 test("all tenant-owned tables enforce row-level security", async () => {
   const sql = await readFile(migrationPath, "utf8");
@@ -134,4 +135,18 @@ test("organization profile consolidates dossier contacts and validates branding 
   assert.match(sql, /contact_email = COALESCE\(tenant_contract_settings\.contact_email, EXCLUDED\.contact_email\)/i);
   assert.match(sql, /logo_content_type IN \('image\/png', 'image\/jpeg'\)/i);
   assert.match(sql, /brand_primary_color ~ '\^#\[0-9A-F\]\{6\}\$'/i);
+});
+
+test("contract signing links are hashed, expiring and tenant-isolated", async () => {
+  const sql = await readFile(signingMigrationPath, "utf8");
+  assert.match(sql, /token_hash TEXT UNIQUE/i);
+  assert.match(sql, /token_hash ~ '\^\[0-9a-f\]\{64\}\$'/i);
+  assert.match(sql, /expires_at TIMESTAMPTZ NOT NULL/i);
+  assert.match(sql, /ALTER TABLE contract_signing_requests ENABLE ROW LEVEL SECURITY/i);
+  assert.match(sql, /ALTER TABLE contract_signing_requests FORCE ROW LEVEL SECURITY/i);
+  assert.match(sql, /app\.contract_signing_token_hash/i);
+  assert.match(sql, /expires_at > now\(\)/i);
+  assert.match(sql, /status IN \('sent', 'opened', 'confirmed'\)/i);
+  assert.match(sql, /lower\(signer_email\) = app_current_user_email\(\)/i);
+  assert.match(sql, /UNIQUE \(contract_id\)/i);
 });

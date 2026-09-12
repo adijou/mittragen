@@ -139,10 +139,16 @@ function AuthPage({ availability, user, callback, setCallback, setUser, onHome, 
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
-  const finishLogin = () => {
+  const finishLogin = async () => {
     const target = sessionStorage.getItem("mittragen-login-target");
     sessionStorage.removeItem("mittragen-login-target");
-    if (target === "sponsor") onSponsor(); else onWorkspace();
+    if (target === "sponsor") { onSponsor(); return; }
+    try {
+      const response = await fetch("/api/sponsor-portal/claim", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+      const result = await response.json().catch(() => ({})) as { claimed?: number };
+      if (response.ok && Number(result.claimed) > 0) { onSponsor(); return; }
+    } catch { /* Fall back to the organization workspace. */ }
+    onWorkspace();
   };
 
   useEffect(() => {
@@ -159,12 +165,12 @@ function AuthPage({ availability, user, callback, setCallback, setUser, onHome, 
       if (mode === "login") {
         const currentUser = await login(email, password);
         setUser(currentUser);
-        finishLogin();
+        await finishLogin();
       } else if (mode === "signup") {
         const currentUser = await signup(email, password, { full_name: name });
         if (currentUser.confirmedAt) {
           setUser(currentUser);
-          finishLogin();
+          await finishLogin();
         } else {
           setMessage("Konto erstellt. Bitte bestätigen Sie Ihre E-Mail-Adresse.");
         }
@@ -172,12 +178,12 @@ function AuthPage({ availability, user, callback, setCallback, setUser, onHome, 
         const currentUser = await acceptInvite(callback.token, password);
         setCallback(null);
         setUser(currentUser);
-        finishLogin();
+        await finishLogin();
       } else if (mode === "recovery") {
         const currentUser = await updateUser({ password });
         setCallback(null);
         setUser(currentUser);
-        finishLogin();
+        await finishLogin();
       }
     } catch (reason) {
       setError(reason instanceof AuthError ? reason.message : "Die Aktion konnte nicht abgeschlossen werden.");
