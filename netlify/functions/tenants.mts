@@ -186,6 +186,11 @@ export default async (request: Request, _context: Context) => {
         VALUES ($1, $2, $3, $4, 'owner')
       `, ownerMembershipParams(tenantId, user));
 
+      await client.query(`
+        INSERT INTO tenant_event_sponsoring_settings (tenant_id, headline)
+        VALUES ($1, $2)
+      `, [tenantId, `Matchball-Sponsoring bei ${name}`]);
+
       if (includeDemo) {
         for (const sponsor of demoSponsors) {
           await client.query(`

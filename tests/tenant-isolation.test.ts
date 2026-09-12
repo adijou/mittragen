@@ -13,6 +13,7 @@ const demoSponsorMigrationPath = new URL("../netlify/database/migrations/2026091
 const dossierMigrationPath = new URL("../netlify/database/migrations/20260910193000_excel_import_dossier/migration.sql", import.meta.url);
 const organizationMigrationPath = new URL("../netlify/database/migrations/20260911120000_organization_profile_branding/migration.sql", import.meta.url);
 const signingMigrationPath = new URL("../netlify/database/migrations/20260912100000_contract_signing_requests/migration.sql", import.meta.url);
+const eventSponsoringMigrationPath = new URL("../netlify/database/migrations/20260912143000_event_sponsoring/migration.sql", import.meta.url);
 
 test("all tenant-owned tables enforce row-level security", async () => {
   const sql = await readFile(migrationPath, "utf8");
@@ -149,4 +150,16 @@ test("contract signing links are hashed, expiring and tenant-isolated", async ()
   assert.match(sql, /status IN \('sent', 'opened', 'confirmed'\)/i);
   assert.match(sql, /lower\(signer_email\) = app_current_user_email\(\)/i);
   assert.match(sql, /UNIQUE \(contract_id\)/i);
+});
+
+test("event sponsoring settings, matches and bookings enforce tenant isolation", async () => {
+  const sql = await readFile(eventSponsoringMigrationPath, "utf8");
+  for (const table of ["tenant_event_sponsoring_settings", "sponsorship_events", "event_sponsorship_bookings"]) {
+    assert.match(sql, new RegExp(`ALTER TABLE ${table} ENABLE ROW LEVEL SECURITY`, "i"));
+    assert.match(sql, new RegExp(`ALTER TABLE ${table} FORCE ROW LEVEL SECURITY`, "i"));
+    assert.match(sql, new RegExp(`CREATE POLICY ${table}_isolated`, "i"));
+  }
+  assert.match(sql, /app\.event_sponsoring_public_key/i);
+  assert.match(sql, /event_sponsorship_one_active_booking_idx/i);
+  assert.match(sql, /WHERE status = 'submitted'/i);
 });
