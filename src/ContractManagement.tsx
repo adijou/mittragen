@@ -81,6 +81,14 @@ export function ContractManagement({ tenantId, canWrite, canManage, onOpenOrgani
   const [sponsorId, setSponsorId] = useState("");
   const [packageVersionId, setPackageVersionId] = useState("");
   const [annualValue, setAnnualValue] = useState("");
+  const [legacyCreateSponsorId, setLegacyCreateSponsorId] = useState("");
+  const [legacyCreatePackageVersionId, setLegacyCreatePackageVersionId] = useState("");
+  const [legacyCreateAnnualValue, setLegacyCreateAnnualValue] = useState("");
+  const [legacyCreateSignerName, setLegacyCreateSignerName] = useState("");
+  const [legacyCreateSignerRole, setLegacyCreateSignerRole] = useState("");
+  const [legacyCreateConfirmedOn, setLegacyCreateConfirmedOn] = useState("");
+  const [legacyCreateEvidenceNote, setLegacyCreateEvidenceNote] = useState("");
+  const [legacyCreateAcknowledged, setLegacyCreateAcknowledged] = useState(false);
   const [settings, setSettings] = useState<Settings>(emptySettings);
   const [detail, setDetail] = useState<ContractDetail | null>(null);
   const [title, setTitle] = useState("Sponsoringvertrag");
@@ -126,6 +134,11 @@ export function ContractManagement({ tenantId, canWrite, canManage, onOpenOrgani
     setSponsorId(nextSponsorId);
     setPackageVersionId(selectedPackage?.id ?? "");
     if (!selectedPackage || selectedPackage.id !== packageVersionId) setAnnualValue(selectedPackage ? String(selectedPackage.price_cents / 100) : "");
+    const nextLegacySponsorId = result.sponsors.some((sponsor) => sponsor.id === legacyCreateSponsorId) ? legacyCreateSponsorId : (result.sponsors[0]?.id ?? "");
+    const selectedLegacyPackage = result.catalog.find((option) => option.id === legacyCreatePackageVersionId) ?? result.catalog[0];
+    setLegacyCreateSponsorId(nextLegacySponsorId);
+    setLegacyCreatePackageVersionId(selectedLegacyPackage?.id ?? "");
+    if (!selectedLegacyPackage || selectedLegacyPackage.id !== legacyCreatePackageVersionId) setLegacyCreateAnnualValue(selectedLegacyPackage ? String(selectedLegacyPackage.price_cents / 100) : "");
     const id = preferredId ?? detail?.contract.id ?? result.contracts[0]?.id;
     if (id) {
       const loaded = await api<{ detail: ContractDetail }>(`/api/contracts/${tenantId}/${id}`);
@@ -135,12 +148,19 @@ export function ContractManagement({ tenantId, canWrite, canManage, onOpenOrgani
 
   useEffect(() => {
     setLoading(true); setError(""); setDetail(null); setSponsorId(""); setPackageVersionId(""); setAnnualValue("");
+    setLegacyCreateSponsorId(""); setLegacyCreatePackageVersionId(""); setLegacyCreateAnnualValue("");
+    setLegacyCreateSignerName(""); setLegacyCreateSignerRole(""); setLegacyCreateConfirmedOn(""); setLegacyCreateEvidenceNote(""); setLegacyCreateAcknowledged(false);
     void load().catch(() => setError("Die Verträge konnten nicht geladen werden.")).finally(() => setLoading(false));
   }, [tenantId]);
 
   const selectPackage = (id: string) => {
     setPackageVersionId(id);
     setAnnualValue(annualValueForPackage(id, catalog) ?? "");
+  };
+
+  const selectLegacyPackage = (id: string) => {
+    setLegacyCreatePackageVersionId(id);
+    setLegacyCreateAnnualValue(annualValueForPackage(id, catalog) ?? "");
   };
 
   const createDirectContract = async (event: FormEvent) => {
@@ -158,6 +178,37 @@ export function ContractManagement({ tenantId, canWrite, canManage, onOpenOrgani
     } catch (reason) {
       const code = reason instanceof Error ? reason.message : "contract_create_failed";
       setError(errorLabels[code] ?? "Der Vertragsentwurf konnte nicht erstellt werden.");
+    } finally { setBusy(""); }
+  };
+
+  const createLegacyContract = async (event: FormEvent) => {
+    event.preventDefault();
+    const amount = Number(legacyCreateAnnualValue.replace(/[’']/g, "").replace(",", "."));
+    if (!window.confirm(`Den bereits abgeschlossenen Altvertrag mit Abschlussdatum ${legacyCreateConfirmedOn} direkt und ohne E-Mail-Versand übernehmen?`)) return;
+    setBusy("legacy-create"); setError(""); setMessage("");
+    try {
+      const result = await api<{ detail: ContractDetail }>(`/api/contracts/${tenantId}/legacy`, {
+        method: "POST",
+        body: JSON.stringify({
+          sponsorId: legacyCreateSponsorId,
+          packageVersionId: legacyCreatePackageVersionId,
+          annualValueCents: Number.isFinite(amount) ? Math.round(amount * 100) : -1,
+          signingAuthorityName: legacyCreateSignerName,
+          signingAuthorityRole: legacyCreateSignerRole,
+          confirmedOn: legacyCreateConfirmedOn,
+          evidenceNote: legacyCreateEvidenceNote,
+          acknowledged: legacyCreateAcknowledged,
+        }),
+      });
+      applyDetail(result.detail);
+      setLegacyCreateConfirmedOn("");
+      setLegacyCreateEvidenceNote("");
+      setLegacyCreateAcknowledged(false);
+      setMessage(`Altvertrag ${result.detail.contract.contract_number} wurde ohne E-Mail-Versand als abgeschlossener Altbestand übernommen.`);
+      await load(result.detail.contract.id);
+    } catch (reason) {
+      const code = reason instanceof Error ? reason.message : "contract_admin_confirmation_failed";
+      setError(errorLabels[code] ?? "Der Altvertrag konnte nicht direkt übernommen werden.");
     } finally { setBusy(""); }
   };
 
@@ -281,6 +332,21 @@ export function ContractManagement({ tenantId, canWrite, canManage, onOpenOrgani
       <button className="access-primary" disabled={busy === "direct" || !sponsorId || !packageVersionId}>{busy === "direct" ? "Wird erstellt …" : "Entwurf erstellen"}</button>
       {(sponsors.length === 0 || catalog.length === 0) && <p className="contract-create__missing">{sponsors.length === 0 ? "Zuerst einen aktiven Sponsor erfassen. " : ""}{catalog.length === 0 ? "Zuerst ein gültiges Paket publizieren." : ""}</p>}
     </form>}
+    {!loading && canWrite && <section className="contract-legacy contract-legacy--create">
+      <div><p className="eyebrow">Altbestand</p><h2>Altvertrag für einen Sponsor erfassen</h2><p>Einen bereits rechtsgültig abgeschlossenen Vertrag direkt übernehmen. Es wird keine Bestätigungs- oder sonstige E-Mail versendet.</p></div>
+      <form onSubmit={createLegacyContract}>
+        <label><span>Sponsor</span><select required value={legacyCreateSponsorId} onChange={(event) => setLegacyCreateSponsorId(event.target.value)}><option value="">Sponsor wählen</option>{sponsors.map((sponsor) => <option key={sponsor.id} value={sponsor.id}>{sponsor.legal_name}</option>)}</select></label>
+        <label><span>Sponsoringpaket</span><select required value={legacyCreatePackageVersionId} onChange={(event) => selectLegacyPackage(event.target.value)}><option value="">Paket wählen</option>{catalog.map((option) => <option key={option.id} value={option.id}>{option.name} · {formatChf(option.price_cents)} · {option.duration_months} Monate</option>)}</select></label>
+        <label><span>Jahreswert in CHF</span><input required min="0" step="0.01" inputMode="decimal" value={legacyCreateAnnualValue} onChange={(event) => setLegacyCreateAnnualValue(event.target.value)}/></label>
+        <label><span>Ursprüngliches Abschlussdatum</span><input type="date" required value={legacyCreateConfirmedOn} onChange={(event) => setLegacyCreateConfirmedOn(event.target.value)}/></label>
+        <label><span>Unterzeichnende Person</span><input required maxLength={160} value={legacyCreateSignerName} onChange={(event) => setLegacyCreateSignerName(event.target.value)} autoComplete="name"/></label>
+        <label><span>Funktion beim Sponsor (optional)</span><input maxLength={120} value={legacyCreateSignerRole} onChange={(event) => setLegacyCreateSignerRole(event.target.value)} placeholder="Standard: vertretungsberechtigte Person"/></label>
+        <label className="wide"><span>Nachweis / Bemerkung</span><textarea required maxLength={600} value={legacyCreateEvidenceNote} onChange={(event) => setLegacyCreateEvidenceNote(event.target.value)} placeholder="z. B. beidseitig unterzeichneter Papiervertrag vom 15.06.2024 liegt im Vereinsarchiv"/></label>
+        <label className="contract-release-check wide"><input type="checkbox" checked={legacyCreateAcknowledged} onChange={(event) => setLegacyCreateAcknowledged(event.target.checked)}/><span>Ich bestätige, dass dieser Vertrag bereits rechtsgültig abgeschlossen wurde, die Angaben dem vorhandenen Nachweis entsprechen und der Vertrag als Altbestand übernommen werden darf.</span></label>
+        <button className="access-secondary wide" disabled={busy !== "" || !legacyCreateSponsorId || !legacyCreatePackageVersionId || !legacyCreateAcknowledged || !legacyCreateConfirmedOn || !legacyCreateSignerName.trim() || !legacyCreateEvidenceNote.trim()}>{busy === "legacy-create" ? "Wird übernommen …" : "Altvertrag direkt übernehmen"}</button>
+        {(sponsors.length === 0 || catalog.length === 0) && <p className="contract-create__missing wide">{sponsors.length === 0 ? "Zuerst einen aktiven Sponsor erfassen. " : ""}{catalog.length === 0 ? "Zuerst ein gültiges Paket publizieren." : ""}</p>}
+      </form>
+    </section>}
     {loading ? <div className="transition-empty">Verträge werden geladen …</div> : <div className="contract-layout">
       <aside>
         <section><p className="eyebrow">Aus Überführung</p>{eligible.length === 0 ? <p className="contract-empty">Keine bestätigte Überführung ohne Vertrag.</p> : eligible.map((item) => <article className="eligible-contract" key={item.transition_sponsor_id}><div><strong>{item.sponsor_name}</strong><span>{item.package_name} · {formatChf(item.proposed_value_cents)}</span></div>{canWrite && <button disabled={busy === item.transition_sponsor_id} onClick={() => void createTransitionContract(item)}>Entwurf erstellen</button>}</article>)}</section>
