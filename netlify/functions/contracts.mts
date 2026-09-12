@@ -4,7 +4,7 @@ import { AuthError, verifyRequestOrigin } from "@netlify/identity";
 import { hasPermission, isResponse, json, requireUser, type MembershipRole } from "./_shared/auth.ts";
 import { isUuid, withSession, type DatabaseClient } from "./_shared/database.ts";
 import { createContractPdf, type ContractPdfData } from "./_shared/contract-pdf.ts";
-import { parseContractAcknowledgement, parseContractConfirmation, parseContractCreate, parseContractDispatch, parseContractRelease, parseContractSettings, parseContractUpdate, type ContractCreateInput } from "./_shared/contract-input.ts";
+import { parseContractAcknowledgement, parseContractAdminConfirmation, parseContractConfirmation, parseContractCreate, parseContractDispatch, parseContractRelease, parseContractSettings, parseContractUpdate, type ContractCreateInput } from "./_shared/contract-input.ts";
 import { findIdentityUserByEmail } from "./_shared/identity-user-lookup.ts";
 import { sendIdentityInvitation } from "./_shared/identity-invitations.ts";
 import { loadOrganizationPdfBrand, type OrganizationPdfBrand } from "./_shared/organization-pdf-brand.ts";
@@ -32,6 +32,9 @@ type ContractRow = {
   confirmed_email: string | null;
   confirmed_name: string | null;
   confirmed_role: string | null;
+  confirmation_mode: "authenticated_account" | "one_time_link" | "legacy_portal" | "admin_legacy" | null;
+  confirmation_recorded_at: string | null;
+  confirmation_note: string | null;
   created_at: string;
   updated_at: string;
   sponsor_name?: string;
@@ -63,6 +66,7 @@ const contractColumns = `
   contract.organization_snapshot, contract.sponsor_snapshot, contract.package_snapshot, contract.terms_snapshot,
   contract.status, contract.signing_method, contract.snapshot_hash, contract.released_at::text,
   contract.confirmed_at::text, contract.confirmed_email, contract.confirmed_name, contract.confirmed_role,
+  contract.confirmation_mode, contract.confirmation_recorded_at::text, contract.confirmation_note,
   contract.created_at::text, contract.updated_at::text
 `;
 
@@ -71,6 +75,7 @@ const routes = {
   settings: /^\/api\/contracts\/([0-9a-f-]+)\/settings$/i,
   detail: /^\/api\/contracts\/([0-9a-f-]+)\/([0-9a-f-]+)$/i,
   release: /^\/api\/contracts\/([0-9a-f-]+)\/([0-9a-f-]+)\/release$/i,
+  adminConfirm: /^\/api\/contracts\/([0-9a-f-]+)\/([0-9a-f-]+)\/admin-confirm$/i,
   send: /^\/api\/contracts\/([0-9a-f-]+)\/([0-9a-f-]+)\/send$/i,
   access: /^\/api\/contracts\/([0-9a-f-]+)\/([0-9a-f-]+)\/access$/i,
   copy: /^\/api\/contracts\/([0-9a-f-]+)\/([0-9a-f-]+)\/email-copy$/i,
@@ -354,6 +359,9 @@ function pdfData(contract: ContractRow, brand: OrganizationPdfBrand): ContractPd
     releasedAt: contract.released_at,
     confirmedAt: contract.confirmed_at,
     confirmedEmail: contract.confirmed_email,
+    confirmationMode: contract.confirmation_mode,
+    confirmationRecordedAt: contract.confirmation_recorded_at,
+    confirmationNote: contract.confirmation_note,
     snapshotHash: contract.snapshot_hash,
     brand,
     organization: contract.organization_snapshot,
@@ -370,7 +378,7 @@ export default async (request: Request, context: Context) => {
   const user = await requireUser();
   if (isResponse(user)) return user;
   const pathname = new URL(request.url).pathname;
-  const match = routes.settings.exec(pathname) ?? routes.release.exec(pathname) ?? routes.send.exec(pathname)
+  const match = routes.settings.exec(pathname) ?? routes.release.exec(pathname) ?? routes.adminConfirm.exec(pathname) ?? routes.send.exec(pathname)
     ?? routes.access.exec(pathname) ?? routes.copy.exec(pathname) ?? routes.confirm.exec(pathname)
     ?? routes.pdf.exec(pathname) ?? routes.detail.exec(pathname) ?? routes.collection.exec(pathname);
   const tenantId = match?.[1];
@@ -744,6 +752,80 @@ export default async (request: Request, context: Context) => {
     }
   }
 
+  if (routes.adminConfirm.test(pathname) && request.method === "POST") {
+    const parsed = parseContractAdminConfirmation(body);
+    if (!parsed.ok) return json({ error: parsed.error }, 422);
+    const adminEmail = user.email?.trim().toLowerCase();
+    if (!adminEmail) return json({ error: "verified_email_required" }, 422);
+    try {
+      const result = await withSession(user.id, tenantId, async (client) => {
+        const role = await membershipRole(client, tenantId, user.id);
+        if (!role || !hasPermission(role, "packages:write")) return { state: "denied" as const };
+        const current = await client.query<{ status: ContractStatus; snapshot_hash: string | null; current_date: string }>(`
+          SELECT status, snapshot_hash,
+                 (CURRENT_TIMESTAMP AT TIME ZONE 'Europe/Zurich')::date::text AS current_date
+          FROM sponsorship_contracts
+          WHERE tenant_id = $1 AND id = $2
+          FOR UPDATE
+        `, [tenantId, contractId]);
+        if (!current.rows[0]) return { state: "not_found" as const };
+        if (current.rows[0].status === "confirmed") return { state: "already_confirmed" as const };
+        if (current.rows[0].status !== "released") return { state: "not_released" as const };
+        if (parsed.value.confirmedOn > current.rows[0].current_date) return { state: "future_date" as const };
+
+        const revoked = await client.query<{ id: string }>(`
+          UPDATE contract_signing_requests
+          SET status = 'revoked', updated_at = now()
+          WHERE tenant_id = $1 AND contract_id = $2 AND status <> 'confirmed'
+          RETURNING id
+        `, [tenantId, contractId]);
+        const confirmed = await client.query<{ id: string }>(`
+          UPDATE sponsorship_contracts SET
+            status = 'confirmed',
+            confirmed_at = ($3::date + time '12:00') AT TIME ZONE 'Europe/Zurich',
+            confirmed_by = $4,
+            confirmed_email = $5,
+            confirmed_name = $6,
+            confirmed_role = $7,
+            confirmation_mode = 'admin_legacy',
+            confirmation_recorded_at = now(),
+            confirmation_note = $8,
+            updated_at = now()
+          WHERE tenant_id = $1 AND id = $2 AND status = 'released'
+          RETURNING id
+        `, [tenantId, contractId, parsed.value.confirmedOn, user.id, adminEmail,
+          parsed.value.signingAuthorityName, parsed.value.signingAuthorityRole, parsed.value.evidenceNote]);
+        if (!confirmed.rows[0]) return { state: "already_confirmed" as const };
+        await client.query(`INSERT INTO sponsorship_contract_events
+          (tenant_id, contract_id, event_type, actor_user_id, actor_email, evidence)
+          VALUES ($1,$2,'admin_confirmed',$3,$4,jsonb_build_object(
+            'snapshot_hash',$5::text,'original_confirmed_on',$6::text,
+            'signing_authority_name',$7::text,'signing_authority_role',$8::text,
+            'source_note',$9::text,'acknowledged',true,'confirmation_mode','admin_legacy',
+            'signing_request_revoked',$10::boolean,'user_agent',$11::text))`,
+          [tenantId, contractId, user.id, adminEmail, current.rows[0].snapshot_hash,
+            parsed.value.confirmedOn, parsed.value.signingAuthorityName, parsed.value.signingAuthorityRole,
+            parsed.value.evidenceNote, Boolean(revoked.rows[0]),
+            (request.headers.get("user-agent") ?? "unknown").slice(0, 500)]);
+        await client.query(`INSERT INTO audit_events
+          (tenant_id, actor_user_id, action, object_type, object_id, metadata)
+          VALUES ($1,$2,'contract.admin_legacy_confirmed','sponsorship_contract',$3,
+            jsonb_build_object('original_confirmed_on',$4::text,'snapshot_hash',$5::text))`,
+          [tenantId, user.id, contractId, parsed.value.confirmedOn, current.rows[0].snapshot_hash]);
+        return { state: "confirmed" as const, detail: await contractDetail(client, tenantId, contractId) };
+      }, adminEmail);
+      if (result.state === "denied") return json({ error: "permission_denied" }, 403);
+      if (result.state === "not_found") return json({ error: "contract_not_found" }, 404);
+      if (result.state === "already_confirmed") return json({ error: "contract_already_confirmed" }, 409);
+      if (result.state === "not_released") return json({ error: "contract_not_released" }, 409);
+      if (result.state === "future_date") return json({ error: "legacy_confirmation_date_in_future" }, 422);
+      return json({ detail: result.detail });
+    } catch (error) {
+      console.error("contract_admin_confirmation_failed", { requestId: context.requestId, tenantId, contractId, error });
+      return json({ error: "contract_admin_confirmation_failed", requestId: context.requestId }, 500);
+    }
+  }
+
   if (routes.access.test(pathname) && request.method === "POST") {
     try {
       const authorized = await withSession(user.id, tenantId, async (client) => {
@@ -874,10 +956,12 @@ export default async (request: Request, context: Context) => {
           signingAuthorityName = legacy.value.signingAuthorityName;
           signingAuthorityRole = legacy.value.signingAuthorityRole;
         }
+        const confirmationMode = signing ? "authenticated_account" : "legacy_portal";
         const confirmed = await client.query<{ id: string }>(`UPDATE sponsorship_contracts SET status = 'confirmed', confirmed_at = now(),
-          confirmed_by = $3, confirmed_email = $4, confirmed_name = $5, confirmed_role = $6, updated_at = now()
+          confirmed_by = $3, confirmed_email = $4, confirmed_name = $5, confirmed_role = $6,
+          confirmation_mode = $7, confirmation_recorded_at = now(), confirmation_note = NULL, updated_at = now()
           WHERE tenant_id = $1 AND id = $2 AND status = 'released' RETURNING id`,
-          [tenantId, contractId, user.id, email, signingAuthorityName, signingAuthorityRole]);
+          [tenantId, contractId, user.id, email, signingAuthorityName, signingAuthorityRole, confirmationMode]);
         if (!confirmed.rows[0]) return { state: "already_confirmed" as const };
         if (signing) {
           await client.query(`UPDATE contract_signing_requests SET status = 'confirmed', confirmed_at = now(), updated_at = now()
@@ -890,7 +974,7 @@ export default async (request: Request, context: Context) => {
             'user_agent',$8::text,'acknowledged',true,'confirmation_mode',$9::text))`,
           [tenantId, contractId, user.id, email, existing.contract.snapshot_hash,
             signingAuthorityName, signingAuthorityRole,
-            (request.headers.get("user-agent") ?? "unknown").slice(0, 500), signing ? "authenticated_account" : "legacy_portal"]);
+            (request.headers.get("user-agent") ?? "unknown").slice(0, 500), confirmationMode]);
         return { state: "confirmed" as const };
       }, user.email ?? undefined);
       if (result.state === "not_found") return json({ error: "contract_not_found" }, 404);
@@ -917,6 +1001,7 @@ export const config: Config = {
     "/api/contracts/:tenantId/settings",
     "/api/contracts/:tenantId/:contractId",
     "/api/contracts/:tenantId/:contractId/release",
+    "/api/contracts/:tenantId/:contractId/admin-confirm",
     "/api/contracts/:tenantId/:contractId/send",
     "/api/contracts/:tenantId/:contractId/access",
     "/api/contracts/:tenantId/:contractId/email-copy",

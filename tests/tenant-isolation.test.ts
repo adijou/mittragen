@@ -14,6 +14,7 @@ const dossierMigrationPath = new URL("../netlify/database/migrations/20260910193
 const organizationMigrationPath = new URL("../netlify/database/migrations/20260911120000_organization_profile_branding/migration.sql", import.meta.url);
 const signingMigrationPath = new URL("../netlify/database/migrations/20260912100000_contract_signing_requests/migration.sql", import.meta.url);
 const eventSponsoringMigrationPath = new URL("../netlify/database/migrations/20260912143000_event_sponsoring/migration.sql", import.meta.url);
+const adminLegacyContractMigrationPath = new URL("../netlify/database/migrations/20260912173000_admin_legacy_contract_confirmation/migration.sql", import.meta.url);
 
 test("all tenant-owned tables enforce row-level security", async () => {
   const sql = await readFile(migrationPath, "utf8");
@@ -162,4 +163,12 @@ test("event sponsoring settings, matches and bookings enforce tenant isolation",
   assert.match(sql, /app\.event_sponsoring_public_key/i);
   assert.match(sql, /event_sponsorship_one_active_booking_idx/i);
   assert.match(sql, /WHERE status = 'submitted'/i);
+});
+
+test("administrative legacy contract completion keeps a distinct audited evidence mode", async () => {
+  const sql = await readFile(adminLegacyContractMigrationPath, "utf8");
+  assert.match(sql, /confirmation_mode IN \('authenticated_account', 'one_time_link', 'legacy_portal', 'admin_legacy'\)/i);
+  assert.match(sql, /confirmation_recorded_at TIMESTAMPTZ/i);
+  assert.match(sql, /confirmation_note TEXT/i);
+  assert.match(sql, /'admin_confirmed'/i);
 });

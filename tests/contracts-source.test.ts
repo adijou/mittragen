@@ -47,6 +47,22 @@ test("access creation and PDF delivery remain explicit admin follow-up actions",
   assert.match(contracts, /sendContractCopyEmail/);
 });
 
+test("legacy contracts can be closed by an authorized admin without email delivery", async () => {
+  const contracts = await readFile(new URL("../netlify/functions/contracts.mts", import.meta.url), "utf8");
+  const routeStart = contracts.indexOf("if (routes.adminConfirm.test(pathname)");
+  const routeEnd = contracts.indexOf("if (routes.access.test(pathname)", routeStart);
+  const adminFlow = contracts.slice(routeStart, routeEnd);
+
+  assert.notEqual(routeStart, -1);
+  assert.match(adminFlow, /hasPermission\(role, "packages:write"\)/);
+  assert.match(adminFlow, /confirmation_mode = 'admin_legacy'/);
+  assert.match(adminFlow, /event_type, actor_user_id, actor_email, evidence/);
+  assert.match(adminFlow, /'admin_confirmed'/);
+  assert.match(adminFlow, /status = 'revoked'/);
+  assert.doesNotMatch(adminFlow, /sendContractSigningEmail/);
+  assert.doesNotMatch(adminFlow, /emailConfig\(/);
+});
+
 test("every contract PDF path loads the current organization branding", async () => {
   const contracts = await readFile(new URL("../netlify/functions/contracts.mts", import.meta.url), "utf8");
   const publicSigning = await readFile(new URL("../netlify/functions/contract-signing.mts", import.meta.url), "utf8");

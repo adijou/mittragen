@@ -114,3 +114,16 @@ test("long addresses, rights and agreements flow over pages without renderer fai
   assert.ok(document.getPageCount() >= 5);
   assert.ok(document.getPageCount() <= 14);
 });
+
+test("administratively recorded legacy contracts render with their separate evidence mode", async () => {
+  const bytes = await createContractPdf(fixture({
+    confirmationMode: "admin_legacy",
+    confirmedAt: "2024-06-15T10:00:00Z",
+    confirmationRecordedAt: "2026-09-12T14:00:00Z",
+    confirmationNote: "Beidseitig unterzeichneter Papiervertrag liegt im Vereinsarchiv. Die Angaben wurden anhand des Originals geprüft.",
+    confirmedEmail: "admin@fc-beispiel.ch",
+  }));
+  const document = await PDFDocument.load(bytes);
+  assert.ok(document.getPageCount() >= 2);
+  assert.equal(document.getTitle(), "Sponsoringvertrag Bronze MT-2026-0042");
+});

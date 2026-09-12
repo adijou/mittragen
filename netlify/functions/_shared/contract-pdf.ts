@@ -19,6 +19,9 @@ export type ContractPdfData = {
   releasedAt: string | null;
   confirmedAt: string | null;
   confirmedEmail: string | null;
+  confirmationMode?: "authenticated_account" | "one_time_link" | "legacy_portal" | "admin_legacy" | null;
+  confirmationRecordedAt?: string | null;
+  confirmationNote?: string | null;
   snapshotHash: string | null;
   brand: OrganizationPdfBrand;
   organization: {
@@ -110,7 +113,7 @@ const paymentLabels: Record<string, string> = {
   custom: "individuell",
 };
 
-function swissDate(value: string | null) {
+function swissDate(value: string | null | undefined) {
   if (!value) return "-";
   const parsed = new Date(value.length === 10 ? `${value}T12:00:00Z` : value);
   return Number.isNaN(parsed.valueOf()) ? "-" : new Intl.DateTimeFormat("de-CH", { dateStyle: "long", timeZone: "Europe/Zurich" }).format(parsed);
@@ -169,10 +172,10 @@ function fitLine(text: string, font: PDFFont, size: number, width: number) {
   return `${shortened.trimEnd()}...`;
 }
 
-function statusLabel(status: ContractPdfData["status"]) {
-  if (status === "draft") return "Entwurf - noch nicht freigegeben";
-  if (status === "released") return "Zur Bestätigung freigegeben";
-  if (status === "confirmed") return "Elektronisch bestätigt";
+function statusLabel(data: ContractPdfData) {
+  if (data.status === "draft") return "Entwurf - noch nicht freigegeben";
+  if (data.status === "released") return "Zur Bestätigung freigegeben";
+  if (data.status === "confirmed") return data.confirmationMode === "admin_legacy" ? "Als Altbestand übernommen" : "Elektronisch bestätigt";
   return "Aufgehoben";
 }
 
@@ -204,7 +207,7 @@ export async function createContractPdf(data: ContractPdfData): Promise<Uint8Arr
   const created = new Date(data.createdAt);
   if (!Number.isNaN(created.valueOf())) {
     pdf.setCreationDate(created);
-    pdf.setModificationDate(new Date(data.confirmedAt ?? data.releasedAt ?? data.createdAt));
+    pdf.setModificationDate(new Date(data.confirmationRecordedAt ?? data.confirmedAt ?? data.releasedAt ?? data.createdAt));
   }
   pdf.setTitle(`${data.title} ${data.contractNumber}`);
   pdf.setAuthor(data.organization.legalName);
@@ -346,20 +349,39 @@ export async function createContractPdf(data: ContractPdfData): Promise<Uint8Arr
   };
 
   const drawConfirmation = () => {
+    const isAdminLegacy = data.confirmationMode === "admin_legacy";
     const name = `${data.signingAuthorityName ?? data.sponsor.contactName ?? "Sponsor"} · ${data.signingAuthorityRole ?? "vertretungsberechtigte Person"}`;
-    const detail = `${data.confirmedEmail ?? "-"} · ${swissDate(data.confirmedAt)}`;
+    const detail = isAdminLegacy
+      ? `Ursprünglicher Vertragsabschluss: ${swissDate(data.confirmedAt)}`
+      : `${data.confirmedEmail ?? "-"} · ${swissDate(data.confirmedAt)}`;
+    const recorded = isAdminLegacy
+      ? `Administrativ erfasst: ${data.confirmedEmail ?? "-"} · ${swissDate(data.confirmationRecordedAt)}`
+      : null;
     const fingerprint = `Dokument-Fingerabdruck: ${data.snapshotHash ?? "-"}`;
     const nameLines = linesFor(name, bold, 9.2, CONTENT_WIDTH - 28);
     const detailLines = linesFor(detail, regular, 8.2, CONTENT_WIDTH - 28);
+    const recordedLines = recorded ? linesFor(recorded, regular, 8.2, CONTENT_WIDTH - 28) : [];
+    const allNoteLines = isAdminLegacy && data.confirmationNote
+      ? linesFor(`Nachweis: ${data.confirmationNote}`, regular, 8.2, CONTENT_WIDTH - 28)
+      : [];
+    const noteLines = allNoteLines.length > 6
+      ? [...allNoteLines.slice(0, 5), fitLine(`${allNoteLines[5]}...`, regular, 8.2, CONTENT_WIDTH - 28)]
+      : allNoteLines;
+    const jurisdictionLines = data.terms.placeOfJurisdiction
+      ? linesFor(`Vereinbarter Gerichtsstand: ${data.terms.placeOfJurisdiction}.`, regular, 8.2, CONTENT_WIDTH - 28)
+      : [];
     const fingerprintLines = linesFor(fingerprint, regular, 6.8, CONTENT_WIDTH - 28);
-    const height = 28 + nameLines.length * 12 + detailLines.length * 11 + fingerprintLines.length * 9;
+    const height = 28 + nameLines.length * 12 + (detailLines.length + recordedLines.length + noteLines.length + jurisdictionLines.length) * 11 + fingerprintLines.length * 9;
     ensure(height + 8);
     const top = y;
     page.drawRectangle({ x: MARGIN, y: top - height + 7, width: CONTENT_WIDTH, height, color: SOFT_ACCENT, borderColor: ACCENT, borderWidth: 0.8 });
-    page.drawText("ELEKTRONISCH BESTÄTIGT", { x: MARGIN + 14, y: top - 10, size: 7.2, font: bold, color: ACCENT });
+    page.drawText(isAdminLegacy ? "ALTVERTRAG ÜBERNOMMEN" : "ELEKTRONISCH BESTÄTIGT", { x: MARGIN + 14, y: top - 10, size: 7.2, font: bold, color: ACCENT });
     let lineY = top - 28;
     for (const line of nameLines) { page.drawText(line, { x: MARGIN + 14, y: lineY, size: 9.2, font: bold, color: INK }); lineY -= 12; }
     for (const line of detailLines) { page.drawText(line, { x: MARGIN + 14, y: lineY, size: 8.2, font: regular, color: MUTED }); lineY -= 11; }
+    for (const line of recordedLines) { page.drawText(line, { x: MARGIN + 14, y: lineY, size: 8.2, font: regular, color: MUTED }); lineY -= 11; }
+    for (const line of noteLines) { page.drawText(line, { x: MARGIN + 14, y: lineY, size: 8.2, font: regular, color: MUTED }); lineY -= 11; }
+    for (const line of jurisdictionLines) { page.drawText(line, { x: MARGIN + 14, y: lineY, size: 8.2, font: regular, color: MUTED }); lineY -= 11; }
     for (const line of fingerprintLines) { page.drawText(line, { x: MARGIN + 14, y: lineY, size: 6.8, font: regular, color: MUTED }); lineY -= 9; }
     y -= height + 8;
   };
@@ -389,7 +411,7 @@ export async function createContractPdf(data: ContractPdfData): Promise<Uint8Arr
   const metadata: Array<[string, string]> = [
     ["Vertragsnummer", data.contractNumber],
     ["Datum", swissDate(data.createdAt)],
-    ["Status", statusLabel(data.status)],
+    ["Status", statusLabel(data)],
     ["Version", String(data.versionNumber)],
   ];
   let metaY = gridTop - 5;
@@ -483,7 +505,9 @@ export async function createContractPdf(data: ContractPdfData): Promise<Uint8Arr
   drawFlowingCallout(data.specialAgreements);
 
   section("8", "Bestätigung");
-  drawText("Mit der ausdrücklichen Bestätigung erklären beide Parteien ihr Einverständnis mit dem dokumentierten Vertragsinhalt. Mittragen protokolliert Identität, E-Mail-Adresse, Zeitpunkt, Vertragsversion und Dokument-Fingerabdruck.", { after: 7 });
+  drawText(data.confirmationMode === "admin_legacy"
+    ? "Mittragen protokolliert diesen bestehenden Abschluss als Altbestand mit ursprünglichem Abschlussdatum, Admin-Identität, Nachweis und Dokument-Fingerabdruck."
+    : "Mit der ausdrücklichen Bestätigung erklären beide Parteien ihr Einverständnis mit dem dokumentierten Vertragsinhalt. Mittragen protokolliert Identität, E-Mail-Adresse, Zeitpunkt, Vertragsversion und Dokument-Fingerabdruck.", { after: 7 });
   if (data.status === "confirmed" && data.confirmedAt) {
     drawConfirmation();
   } else {
@@ -494,7 +518,7 @@ export async function createContractPdf(data: ContractPdfData): Promise<Uint8Arr
     });
   }
 
-  if (data.terms.placeOfJurisdiction) {
+  if (data.terms.placeOfJurisdiction && !(data.status === "confirmed" && data.confirmedAt)) {
     y -= 7;
     drawText(`Vereinbarter Gerichtsstand: ${data.terms.placeOfJurisdiction}.`, { size: 8.3, color: MUTED });
   }

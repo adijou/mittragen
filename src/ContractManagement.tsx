@@ -6,7 +6,10 @@ type ContractItem = {
   id: string; contract_number: string; version_number: number; title: string; sponsor_name: string;
   package_name: string; package_snapshot: { priceCents: number; durationMonths: number };
   special_agreements: string; status: ContractStatus; signing_method: "click" | "advanced" | "qualified";
-  snapshot_hash: string | null; released_at: string | null; confirmed_at: string | null; confirmed_name: string | null; confirmed_role: string | null;
+  snapshot_hash: string | null; released_at: string | null; confirmed_at: string | null; confirmed_email: string | null;
+  confirmed_name: string | null; confirmed_role: string | null;
+  confirmation_mode: "authenticated_account" | "one_time_link" | "legacy_portal" | "admin_legacy" | null;
+  confirmation_recorded_at: string | null; confirmation_note: string | null;
   sponsor_snapshot: { legalName: string; contactName: string | null; contactEmail: string | null };
 };
 type SigningRequest = {
@@ -27,7 +30,7 @@ type Settings = {
 };
 
 const statusLabels: Record<ContractStatus, string> = { draft: "Entwurf", released: "Zur Bestätigung", confirmed: "Bestätigt", void: "Aufgehoben" };
-const eventLabels: Record<string, string> = { created: "Entwurf erstellt", updated: "Entwurf bearbeitet", released: "Freigegeben", viewed: "Geöffnet", downloaded: "PDF heruntergeladen", confirmed: "Elektronisch bestätigt", voided: "Aufgehoben", signing_invited: "Zur Bestätigung versendet", access_invited: "Sponsorzugang eingerichtet", copy_sent: "PDF-Kopie versendet" };
+const eventLabels: Record<string, string> = { created: "Entwurf erstellt", updated: "Entwurf bearbeitet", released: "Freigegeben", viewed: "Geöffnet", downloaded: "PDF heruntergeladen", confirmed: "Elektronisch bestätigt", admin_confirmed: "Altbestand administrativ übernommen", voided: "Aufgehoben", signing_invited: "Zur Bestätigung versendet", access_invited: "Sponsorzugang eingerichtet", copy_sent: "PDF-Kopie versendet" };
 const errorLabels: Record<string, string> = {
   invalid_sponsor: "Bitte einen Sponsor auswählen.",
   invalid_package_version: "Bitte ein publiziertes Paket auswählen.",
@@ -48,6 +51,13 @@ const errorLabels: Record<string, string> = {
   contract_access_invitation_failed: "Der Sponsorzugang konnte nicht eingerichtet oder versendet werden.",
   contract_copy_delivery_failed: "Die PDF-Kopie konnte nicht per E-Mail versendet werden.",
   contract_signer_locked: "Dieser Vertrag wurde bereits an ein bestehendes Konto gesendet. Die Empfängeradresse kann aus Sicherheitsgründen nicht mehr geändert werden.",
+  signing_authority_name_required: "Bitte den Namen der unterzeichnenden Person eintragen.",
+  legacy_confirmation_date_required: "Bitte das ursprüngliche Abschlussdatum eintragen.",
+  invalid_legacy_confirmation_date: "Bitte ein gültiges ursprüngliches Abschlussdatum eintragen.",
+  legacy_confirmation_date_in_future: "Das ursprüngliche Abschlussdatum darf nicht in der Zukunft liegen.",
+  legacy_confirmation_evidence_required: "Bitte festhalten, worauf der administrative Abschluss gestützt wird.",
+  admin_contract_acknowledgement_required: "Bitte die Übernahme des bereits abgeschlossenen Vertrags ausdrücklich bestätigen.",
+  contract_admin_confirmation_failed: "Der Altvertrag konnte nicht administrativ übernommen werden.",
 };
 const formatChf = (cents: number) => new Intl.NumberFormat("de-CH", { style: "currency", currency: "CHF", maximumFractionDigits: 0 }).format(cents / 100);
 
@@ -79,6 +89,11 @@ export function ContractManagement({ tenantId, canWrite, canManage, onOpenOrgani
   const [signerEmail, setSignerEmail] = useState("");
   const [signerName, setSignerName] = useState("");
   const [signerRole, setSignerRole] = useState("");
+  const [legacySignerName, setLegacySignerName] = useState("");
+  const [legacySignerRole, setLegacySignerRole] = useState("");
+  const [legacyConfirmedOn, setLegacyConfirmedOn] = useState("");
+  const [legacyEvidenceNote, setLegacyEvidenceNote] = useState("");
+  const [legacyAcknowledged, setLegacyAcknowledged] = useState(false);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
@@ -92,6 +107,11 @@ export function ContractManagement({ tenantId, canWrite, canManage, onOpenOrgani
     setSignerEmail(next.signingRequest?.signer_email ?? next.contract.sponsor_snapshot.contactEmail ?? "");
     setSignerName(next.signingRequest?.signer_name ?? next.contract.sponsor_snapshot.contactName ?? "");
     setSignerRole(next.signingRequest?.signer_role ?? "");
+    setLegacySignerName(next.contract.sponsor_snapshot.contactName ?? next.signingRequest?.signer_name ?? "");
+    setLegacySignerRole(next.signingRequest?.signer_role ?? "");
+    setLegacyConfirmedOn("");
+    setLegacyEvidenceNote("");
+    setLegacyAcknowledged(false);
   };
 
   const load = async (preferredId?: string) => {
@@ -199,6 +219,30 @@ export function ContractManagement({ tenantId, canWrite, canManage, onOpenOrgani
     } finally { setBusy(""); }
   };
 
+  const confirmLegacyContract = async (event: FormEvent) => {
+    event.preventDefault(); if (!detail) return;
+    if (!window.confirm(`Altvertrag ${detail.contract.contract_number} mit Abschlussdatum ${legacyConfirmedOn} endgültig als abgeschlossen übernehmen?`)) return;
+    setBusy("admin-confirm"); setError(""); setMessage("");
+    try {
+      const result = await api<{ detail: ContractDetail }>(`/api/contracts/${tenantId}/${detail.contract.id}/admin-confirm`, {
+        method: "POST",
+        body: JSON.stringify({
+          signingAuthorityName: legacySignerName,
+          signingAuthorityRole: legacySignerRole,
+          confirmedOn: legacyConfirmedOn,
+          evidenceNote: legacyEvidenceNote,
+          acknowledged: legacyAcknowledged,
+        }),
+      });
+      applyDetail(result.detail);
+      setMessage("Der bestehende Vertrag wurde ohne E-Mail-Versand als Altbestand übernommen und revisionssicher protokolliert.");
+      await load(detail.contract.id);
+    } catch (reason) {
+      const code = reason instanceof Error ? reason.message : "contract_admin_confirmation_failed";
+      setError(errorLabels[code] ?? "Der Altvertrag konnte nicht administrativ übernommen werden.");
+    } finally { setBusy(""); }
+  };
+
   const createAccess = async () => {
     if (!detail) return;
     setBusy("access"); setError(""); setMessage("");
@@ -252,7 +296,7 @@ export function ContractManagement({ tenantId, canWrite, canManage, onOpenOrgani
           <label className="contract-release-check"><input type="checkbox" checked={legalReview} onChange={(event) => setLegalReview(event.target.checked)}/><span>Ich bestätige, dass Vertragsinhalt, Absender, Paket, Beitrag, Laufzeit, Verlängerung und besondere Vereinbarungen fachlich sowie rechtlich geprüft wurden.</span></label>
           <button className="access-primary" type="button" disabled={!legalReview || busy === "release" || !canWrite} onClick={() => void releaseContract()}>{busy === "release" ? "Wird freigegeben …" : "Unveränderlich freigeben"}</button>
         </form> : <>
-          <section className="contract-proof"><h3>{detail.contract.status === "confirmed" ? "Elektronisch bestätigt" : detail.signingRequest ? "Zur Bestätigung versendet" : "Bereit zum Versand"}</h3>{detail.contract.confirmed_at && <p>{detail.contract.confirmed_name} · {detail.contract.confirmed_role}<br/>{new Intl.DateTimeFormat("de-CH", { dateStyle: "long", timeStyle: "short" }).format(new Date(detail.contract.confirmed_at))}</p>}<code>{detail.contract.snapshot_hash}</code></section>
+          <section className="contract-proof"><h3>{detail.contract.status === "confirmed" ? detail.contract.confirmation_mode === "admin_legacy" ? "Altbestand übernommen" : "Elektronisch bestätigt" : detail.signingRequest ? "Zur Bestätigung versendet" : "Bereit zum Versand"}</h3>{detail.contract.confirmed_at && <p>{detail.contract.confirmed_name} · {detail.contract.confirmed_role}<br/>{detail.contract.confirmation_mode === "admin_legacy" ? "Ursprünglicher Abschluss: " : "Bestätigt: "}{new Intl.DateTimeFormat("de-CH", detail.contract.confirmation_mode === "admin_legacy" ? { dateStyle: "long" } : { dateStyle: "long", timeStyle: "short" }).format(new Date(detail.contract.confirmed_at))}{detail.contract.confirmation_mode === "admin_legacy" && detail.contract.confirmation_recorded_at && <><br/>Administrativ erfasst: {new Intl.DateTimeFormat("de-CH", { dateStyle: "long", timeStyle: "short" }).format(new Date(detail.contract.confirmation_recorded_at))} · {detail.contract.confirmed_email}</>}</p>}{detail.contract.confirmation_mode === "admin_legacy" && detail.contract.confirmation_note && <p className="contract-proof__note"><strong>Nachweis:</strong> {detail.contract.confirmation_note}</p>}<code>{detail.contract.snapshot_hash}</code></section>
           {detail.contract.status === "released" && <form className="contract-dispatch" onSubmit={sendForConfirmation}>
             <div><p className="eyebrow">Unterzeichnende Person</p><h3>Vertrag zur Bestätigung senden</h3><p>Mittragen erkennt automatisch, ob diese E-Mail-Adresse bereits ein Konto hat.</p></div>
             <label><span>E-Mail-Adresse</span><input type="email" required value={signerEmail} onChange={(event) => setSignerEmail(event.target.value)} autoComplete="email"/></label>
@@ -261,6 +305,18 @@ export function ContractManagement({ tenantId, canWrite, canManage, onOpenOrgani
             {detail.signingRequest && <div className={`contract-delivery-status contract-delivery-status--${detail.signingRequest.status}`}><strong>{detail.signingRequest.delivery_mode === "account" ? "Mittragen-Konto erkannt" : "Persönlicher Einmallink"}</strong><span>{detail.signingRequest.status === "failed" ? "Versand fehlgeschlagen" : detail.signingRequest.opened_at ? "Vertrag geöffnet" : "E-Mail versendet"} · gültig bis {new Intl.DateTimeFormat("de-CH", { dateStyle: "medium", timeStyle: "short" }).format(new Date(detail.signingRequest.expires_at))}</span></div>}
             <button className="access-primary" disabled={busy !== "" || !canWrite}>{busy === "send" ? "Wird versendet …" : detail.signingRequest ? "Erneut zur Bestätigung senden" : "Zur Bestätigung senden"}</button>
           </form>}
+          {detail.contract.status === "released" && canWrite && <section className="contract-legacy">
+            <div><p className="eyebrow">Bestehende Verträge</p><h3>Altvertrag direkt übernehmen</h3><p>Für einen bereits rechtsgültig abgeschlossenen Vertrag. Dieser Weg versendet keine E-Mail und ersetzt keine fehlende Zustimmung; er protokolliert den vorhandenen Abschluss als Altbestand.</p></div>
+            <form onSubmit={confirmLegacyContract}>
+              <label><span>Ursprüngliches Abschlussdatum</span><input type="date" required value={legacyConfirmedOn} onChange={(event) => setLegacyConfirmedOn(event.target.value)}/></label>
+              <label><span>Unterzeichnende Person</span><input required maxLength={160} value={legacySignerName} onChange={(event) => setLegacySignerName(event.target.value)} autoComplete="name"/></label>
+              <label><span>Funktion beim Sponsor (optional)</span><input maxLength={120} value={legacySignerRole} onChange={(event) => setLegacySignerRole(event.target.value)} placeholder="Standard: vertretungsberechtigte Person"/></label>
+              <label className="wide"><span>Nachweis / Bemerkung</span><textarea required maxLength={600} value={legacyEvidenceNote} onChange={(event) => setLegacyEvidenceNote(event.target.value)} placeholder="z. B. beidseitig unterzeichneter Papiervertrag vom 15.06.2024 liegt im Vereinsarchiv"/></label>
+              {detail.signingRequest && <p className="contract-legacy__notice">Eine bereits vorbereitete oder versandte digitale Einladung wird beim Abschluss widerrufen.</p>}
+              <label className="contract-release-check wide"><input type="checkbox" checked={legacyAcknowledged} onChange={(event) => setLegacyAcknowledged(event.target.checked)}/><span>Ich bestätige, dass dieser Vertrag bereits rechtsgültig abgeschlossen wurde, die Angaben dem vorhandenen Nachweis entsprechen und der Vertrag als Altbestand übernommen werden darf.</span></label>
+              <button className="access-secondary wide" disabled={busy !== "" || !legacyAcknowledged || !legacyConfirmedOn || !legacySignerName.trim() || !legacyEvidenceNote.trim()}>{busy === "admin-confirm" ? "Wird übernommen …" : "Altvertrag als abgeschlossen übernehmen"}</button>
+            </form>
+          </section>}
           {detail.contract.status === "confirmed" && detail.signingRequest && <section className="contract-follow-up">
             <div><p className="eyebrow">Nach der Bestätigung</p><h3>Zugang und Vertragskopie</h3><p>Beide Schritte sind getrennt. Ein neuer Zugang wird per sicherer Einladung eingerichtet; Passwörter werden nie versendet.</p></div>
             <div className="contract-follow-up__actions"><button className="access-secondary" disabled={busy !== "" || !canWrite} onClick={() => void createAccess()}>{busy === "access" ? "Zugang wird eingerichtet …" : detail.signingRequest.access_status === "accepted" || detail.signingRequest.access_status === "existing_user" ? "Zugang erneut zustellen" : "Zugang einrichten"}</button><button className="access-secondary" disabled={busy !== "" || !canWrite} onClick={() => void emailCopy()}>{busy === "copy" ? "PDF wird versendet …" : "PDF-Kopie senden"}</button></div>

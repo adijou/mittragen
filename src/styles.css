@@ -1330,9 +1330,9 @@ td small { margin-top: 3px; color: var(--ink-3); }
 .contract-settings { margin-bottom: 22px; padding: 26px; background: white; border: 1px solid var(--line); border-radius: 16px; box-shadow: 0 14px 42px rgba(11,33,68,.07); }
 .contract-settings > div:first-child h2 { margin: 5px 0 7px; }
 .contract-settings__fields { display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; margin: 22px 0; }
-.contract-settings__fields label, .contract-editor > label, .contract-dispatch > label { display: grid; gap: 7px; color: var(--ink-2); font-size: 13px; font-weight: 700; }
+.contract-settings__fields label, .contract-editor > label, .contract-dispatch > label, .contract-legacy form > label:not(.contract-release-check) { display: grid; gap: 7px; color: var(--ink-2); font-size: 13px; font-weight: 700; }
 .contract-settings__fields label.wide { grid-column: span 2; }
-.contract-settings__fields input, .contract-settings__fields select, .contract-editor input, .contract-editor textarea, .contract-dispatch input, .sponsor-contract__confirm input { width: 100%; min-height: 46px; padding: 10px 12px; color: var(--navy); background: white; border: 1px solid var(--line-strong); border-radius: 7px; }
+.contract-settings__fields input, .contract-settings__fields select, .contract-editor input, .contract-editor textarea, .contract-dispatch input, .contract-legacy input:not([type="checkbox"]), .contract-legacy textarea, .sponsor-contract__confirm input { width: 100%; min-height: 46px; padding: 10px 12px; color: var(--navy); background: white; border: 1px solid var(--line-strong); border-radius: 7px; }
 .contract-warning { display: grid; grid-template-columns: 1fr auto; gap: 3px 22px; align-items: center; margin-bottom: 22px; padding: 17px 19px; background: var(--gold-soft); border: 1px solid #efd79d; border-radius: 12px; }
 .contract-warning p { margin: 0; }
 .contract-warning button { grid-column: 2; grid-row: 1 / 3; border: 0; background: none; color: var(--blue); font-weight: 800; cursor: pointer; }
@@ -1379,6 +1379,7 @@ td small { margin-top: 3px; color: var(--ink-3); }
 .contract-proof { margin: 25px 0; padding: 20px; background: var(--blue-soft); border: 1px solid #b7ceff; border-radius: 12px; }
 .contract-proof h3 { margin-bottom: 8px; }
 .contract-proof p { margin-bottom: 10px; }
+.contract-proof__note { padding-top: 10px; border-top: 1px solid #b7ceff; line-height: 1.5; }
 .contract-proof code, .sponsor-contract__proof code { display: block; overflow-wrap: anywhere; color: var(--ink-3); font-size: 11px; }
 .contract-dispatch, .contract-follow-up { display: grid; gap: 16px; margin: 0 0 25px; padding: 21px; border: 1px solid var(--line); border-radius: 12px; background: white; }
 .contract-dispatch h3, .contract-follow-up h3 { margin: 4px 0 5px; }
@@ -1389,6 +1390,13 @@ td small { margin-top: 3px; color: var(--ink-3); }
 .contract-follow-up { background: #fbfefc; }
 .contract-follow-up__actions { display: flex; flex-wrap: wrap; gap: 10px; }
 .contract-follow-up > small { color: var(--ink-3); }
+.contract-legacy { display: grid; gap: 17px; margin: 0 0 25px; padding: 21px; border: 1px solid #efd79d; border-radius: 12px; background: var(--gold-soft); }
+.contract-legacy h3 { margin: 4px 0 5px; }
+.contract-legacy > div > p:last-child { margin: 0; color: var(--ink-3); font-size: 14px; line-height: 1.5; }
+.contract-legacy form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 15px; }
+.contract-legacy form .wide { grid-column: 1 / -1; }
+.contract-legacy textarea { min-height: 94px; resize: vertical; }
+.contract-legacy__notice { grid-column: 1 / -1; margin: 0; color: #865d00; font-size: 13px; }
 .contract-events { margin-top: 10px; padding-top: 25px; border-top: 1px solid var(--line); }
 .contract-events h3 { margin: 6px 0 18px; }
 .contract-events > div { display: grid; grid-template-columns: 12px 1fr; gap: 12px; padding-bottom: 15px; }
@@ -1461,6 +1469,8 @@ td small { margin-top: 3px; color: var(--ink-3); }
   .contract-detail-header, .sponsor-contracts > header { align-items: stretch; flex-direction: column; }
   .sponsor-contracts > header { gap: 10px; }
   .contract-follow-up__actions { flex-direction: column; }
+  .contract-legacy form { grid-template-columns: 1fr; }
+  .contract-legacy form .wide { grid-column: auto; }
   .contract-signing-top { align-items: flex-start; flex-direction: column; gap: 4px; padding: 17px 20px; }
   .contract-signing-page > main { margin: 22px auto; }
   .contract-signing-intro dl { grid-template-columns: 1fr; }
