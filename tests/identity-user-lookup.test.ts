@@ -14,3 +14,15 @@ test("identity lookup reports a missing account", async () => {
   const fakeAdmin = { listUsers: async () => [] } as unknown as IdentityAdmin;
   assert.equal(await findIdentityUserByEmail("missing@example.ch", fakeAdmin), null);
 });
+
+test("identity lookup uses bounded pages accepted by the Identity admin API", async () => {
+  const calls: Array<{ page?: number; perPage?: number }> = [];
+  const fakeAdmin = {
+    listUsers: async (options?: { page?: number; perPage?: number }) => {
+      calls.push(options ?? {});
+      return [];
+    },
+  } as unknown as IdentityAdmin;
+  await findIdentityUserByEmail("missing@example.ch", fakeAdmin);
+  assert.deepEqual(calls, [{ page: 1, perPage: 100 }]);
+});
