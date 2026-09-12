@@ -32,8 +32,8 @@ export async function getOrganizationProfile(client: DatabaseClient, tenantId: s
            COALESCE(settings.renewal_mode, 'manual') AS renewal_mode,
            settings.notice_months, settings.place_of_jurisdiction,
            settings.logo_blob_key, settings.logo_content_type, settings.logo_updated_at::text,
-           COALESCE(settings.brand_primary_color, '#0B2144') AS brand_primary_color,
-           COALESCE(settings.brand_accent_color, '#1967FF') AS brand_accent_color
+           COALESCE(settings.brand_primary_color, '#0B2142') AS brand_primary_color,
+           COALESCE(settings.brand_accent_color, '#1F6BFF') AS brand_accent_color
     FROM tenants tenant
     LEFT JOIN tenant_contract_settings settings ON settings.tenant_id = tenant.id
     WHERE tenant.id = $1 LIMIT 1

@@ -1,13 +1,13 @@
-# Mittragen Dokumentenstil
+# mittragen.ch Dokumentenstil
 
-Version 1.0 · 9. September 2026
+Version 1.1 · 12. September 2026
 
-Dieser Leitfaden gilt für Verträge, Briefe, Rechnungen und weitere automatisch erzeugte Dokumente von Mittragen. Die Grundwirkung ist klar, ruhig, glaubwürdig, funktional und nahbar.
+Dieser Leitfaden gilt für Verträge, Briefe, Rechnungen und weitere automatisch erzeugte Dokumente von mittragen.ch. Die Grundwirkung ist klar, ruhig, glaubwürdig, funktional und nahbar.
 
 ## Absender und Marke
 
 - Vertragspartner und rechtlich verantwortliche Organisation stehen als Absender im Vordergrund.
-- Mittragen erscheint als erzeugende Plattform, ersetzt aber nie den Absender.
+- mittragen.ch erscheint als erzeugende Plattform, ersetzt aber nie den Absender.
 - Organisationslogos stehen ausschliesslich auf Weiss, proportional und ohne Verzerrung.
 - Fehlt ein Organisationslogo, wird der Organisationsname typografisch dargestellt; es wird kein Ersatzlogo erfunden.
 
@@ -15,10 +15,10 @@ Dieser Leitfaden gilt für Verträge, Briefe, Rechnungen und weitere automatisch
 
 | Funktion | Farbe | Verwendung |
 | --- | --- | --- |
-| Mittragen Navy | `#0B2144` | Haupttext, Titel, Footer |
-| Mittragen Blau | `#1967FF` | Abschnittstitel, Links, Kopflinie |
-| Gönner-Gold | `#E9B44C` | Status, besondere Hinweise, Akzent |
-| Helles Blau | `#EDF4FF` | Metadaten-, Adress- und Hinweisflächen |
+| Tiefes Navy | `#0B2142` | Haupttext, Titel, Footer |
+| Mittragen Blau | `#1F6BFF` | Abschnittstitel, Links, Kopflinie |
+| Warmes Gold | `#F2B632` | Status, besondere Hinweise, Akzent |
+| Off-White | `#F4F7FB` | Metadaten-, Adress- und Hinweisflächen |
 | Neutralfläche | `#F7F9FC` | Tabellenzeilen und Informationsblöcke |
 | Linienfarbe | `#DCE3EC` | Trennlinien und Tabellenraster |
 
@@ -37,7 +37,7 @@ Informationen dürfen nie ausschliesslich über Farbe vermittelt werden. Navy au
 
 ### Header
 
-Oben steht eine 2-mm-Linie in Mittragen Blau. Darunter folgt eine weisse Organisationsfläche. Der Organisationsname ist links, der dezente Hinweis «erstellt mit Mittragen» rechts angeordnet. Eine feine Linie schliesst den Header ab.
+Oben steht eine 2-mm-Linie in Mittragen Blau. Darunter folgt eine weisse Organisationsfläche. Der Organisationsname ist links, der dezente Hinweis «erstellt mit mittragen.ch» rechts angeordnet. Eine feine Linie schliesst den Header ab.
 
 ### Metadaten und Adressen
 
@@ -49,7 +49,7 @@ Rechtlich oder organisatorisch offene Punkte erhalten eine helle Goldfläche mit
 
 ### Footer
 
-Eine feine Linie trennt den Footer. Er enthält Organisation, Dokumentnummer, «Seite X von Y» und bei Plattformdokumenten dezent «erstellt mit Mittragen». Interne IDs oder Speicherpfade werden nie gezeigt.
+Eine feine Linie trennt den Footer. Er enthält Organisation, Dokumentnummer, «Seite X von Y» und bei Plattformdokumenten dezent «erstellt mit mittragen.ch». Interne IDs oder Speicherpfade werden nie gezeigt.
 
 ## Verträge
 

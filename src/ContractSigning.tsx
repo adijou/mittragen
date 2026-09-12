@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Brand } from "./ProductBrand";
 
 type SigningData = {
   contract: {
@@ -73,7 +74,7 @@ export function ContractSigning({ onHome }: { onHome: () => void }) {
       const url = URL.createObjectURL(await response.blob());
       const link = document.createElement("a");
       link.href = url;
-      link.download = `Sponsoringvertrag_${data?.contract.contractNumber ?? "Mittragen"}.pdf`;
+      link.download = `Sponsoringvertrag_${data?.contract.contractNumber ?? "mittragen.ch"}.pdf`;
       link.click();
       URL.revokeObjectURL(url);
     } catch (reason) {
@@ -95,7 +96,7 @@ export function ContractSigning({ onHome }: { onHome: () => void }) {
   };
 
   return <div className="contract-signing-page">
-    <header className="contract-signing-top"><button className="brand" onClick={onHome}>mittragen</button><span>Sichere Vertragsbestätigung</span></header>
+    <header className="contract-signing-top"><button className="brand-button" onClick={onHome}><Brand compact/></button><span>Sichere Vertragsbestätigung</span></header>
     <main>
       {busy === "load" && <section className="contract-signing-card"><p>Vertrag wird sicher geladen …</p></section>}
       {error && !data && <section className="contract-signing-card contract-signing-error"><p className="eyebrow">Link nicht verfügbar</p><h1>Der Vertrag kann nicht geöffnet werden.</h1><p>{error}</p></section>}

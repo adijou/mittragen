@@ -121,8 +121,8 @@ export async function createEventFlyerPdf(data: EventFlyerPdfData): Promise<Uint
   const pdf = await PDFDocument.create();
   const regular = await pdf.embedFont(StandardFonts.Helvetica);
   const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
-  const primaryTuple = tuple(data.brand.primaryColor, "#0B2144");
-  const accentTuple = tuple(data.brand.accentColor, "#1967FF");
+  const primaryTuple = tuple(data.brand.primaryColor, "#0B2142");
+  const accentTuple = tuple(data.brand.accentColor, "#1F6BFF");
   const PRIMARY = color(darken(primaryTuple));
   const ACCENT = color(readableAccent(accentTuple));
   const ACCENT_ON_DARK = color(luminance(accentTuple) < 0.48 ? mix(accentTuple, [1, 1, 1], 0.42) : accentTuple);
@@ -145,8 +145,8 @@ export async function createEventFlyerPdf(data: EventFlyerPdfData): Promise<Uint
   const partners = data.partners ?? [];
   pdf.setTitle(`${legacyInput ? "Matchblatt" : "Matchinfo"} ${data.event.teamName} - ${data.event.opponent}`);
   pdf.setAuthor(data.organization.name);
-  pdf.setCreator("Mittragen");
-  pdf.setProducer("Mittragen");
+  pdf.setCreator("mittragen.ch");
+  pdf.setProducer("mittragen.ch");
 
   page.drawRectangle({ x: 0, y: A4.height - 9, width: A4.width, height: 9, color: ACCENT });
   if (logo) {
@@ -228,7 +228,7 @@ export async function createEventFlyerPdf(data: EventFlyerPdfData): Promise<Uint
 
   page.drawRectangle({ x: 0, y: 0, width: A4.width, height: 52, color: PRIMARY });
   page.drawText("Wir wünschen ein faires und spannendes Spiel.", { x: MARGIN, y: 29, font: bold, size: 9, color: WHITE });
-  const footer = safe(data.organization.contactName || data.organization.name);
+  const footer = limitedLines(`${safe(data.organization.contactName || data.organization.name)} · mittragen.ch`, regular, 7, 245, 1)[0] ?? "mittragen.ch";
   page.drawText(footer, { x: A4.width - MARGIN - regular.widthOfTextAtSize(footer, 7), y: 29, font: regular, size: 7, color: ACCENT_ON_DARK });
 
   return pdf.save();

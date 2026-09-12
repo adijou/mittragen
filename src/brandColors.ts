@@ -2,7 +2,7 @@ export type BrandColors = { primary: string; accent: string };
 export type Pixel = { red: number; green: number; blue: number; alpha?: number };
 export type PreparedLogo = { file: File; colors: BrandColors; optimized: boolean };
 
-const FALLBACK: BrandColors = { primary: "#0B2144", accent: "#1967FF" };
+const FALLBACK: BrandColors = { primary: "#0B2142", accent: "#1F6BFF" };
 const MAX_UPLOAD_BYTES = 2 * 1024 * 1024;
 const MAX_RENDER_DIMENSION = 2400;
 const MIN_RENDER_DIMENSION = 16;

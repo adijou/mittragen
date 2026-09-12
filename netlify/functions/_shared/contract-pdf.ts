@@ -183,8 +183,8 @@ export async function createContractPdf(data: ContractPdfData): Promise<Uint8Arr
   const pdf = await PDFDocument.create();
   const regular = await pdf.embedFont(StandardFonts.Helvetica);
   const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
-  const primary = colorTuple(data.brand.primaryColor, "#0B2144");
-  const accent = colorTuple(data.brand.accentColor, "#1967FF");
+  const primary = colorTuple(data.brand.primaryColor, "#0B2142");
+  const accent = colorTuple(data.brand.accentColor, "#1F6BFF");
   const INK = pdfColor(darkSurface(primary));
   const PRIMARY = pdfColor(accentOnWhite(primary));
   const ACCENT = pdfColor(accentOnWhite(accent));
@@ -211,8 +211,8 @@ export async function createContractPdf(data: ContractPdfData): Promise<Uint8Arr
   }
   pdf.setTitle(`${data.title} ${data.contractNumber}`);
   pdf.setAuthor(data.organization.legalName);
-  pdf.setCreator("Mittragen");
-  pdf.setProducer("Mittragen");
+  pdf.setCreator("mittragen.ch");
+  pdf.setProducer("mittragen.ch");
 
   const pages: PDFPage[] = [];
   let page = pdf.addPage([A4.width, A4.height]);
@@ -235,7 +235,7 @@ export async function createContractPdf(data: ContractPdfData): Promise<Uint8Arr
     target.drawText(fitLine(data.organization.legalName, bold, 11, Math.max(120, nameWidth)), {
       x: nameX, y: A4.height - 45, size: 11, font: bold, color: INK,
     });
-    const platform = "erstellt mit Mittragen";
+    const platform = "erstellt mit mittragen.ch";
     target.drawText(platform, { x: A4.width - MARGIN - regular.widthOfTextAtSize(platform, 7.5), y: A4.height - 44, size: 7.5, font: regular, color: MUTED });
     target.drawLine({ start: { x: MARGIN, y: A4.height - 67 }, end: { x: A4.width - MARGIN, y: A4.height - 67 }, thickness: 0.7, color: ACCENT });
   };
@@ -506,8 +506,8 @@ export async function createContractPdf(data: ContractPdfData): Promise<Uint8Arr
 
   section("8", "Bestätigung");
   drawText(data.confirmationMode === "admin_legacy"
-    ? "Mittragen protokolliert diesen bestehenden Abschluss als Altbestand mit ursprünglichem Abschlussdatum, Admin-Identität, Nachweis und Dokument-Fingerabdruck."
-    : "Mit der ausdrücklichen Bestätigung erklären beide Parteien ihr Einverständnis mit dem dokumentierten Vertragsinhalt. Mittragen protokolliert Identität, E-Mail-Adresse, Zeitpunkt, Vertragsversion und Dokument-Fingerabdruck.", { after: 7 });
+    ? "mittragen.ch protokolliert diesen bestehenden Abschluss als Altbestand mit ursprünglichem Abschlussdatum, Admin-Identität, Nachweis und Dokument-Fingerabdruck."
+    : "Mit der ausdrücklichen Bestätigung erklären beide Parteien ihr Einverständnis mit dem dokumentierten Vertragsinhalt. mittragen.ch protokolliert Identität, E-Mail-Adresse, Zeitpunkt, Vertragsversion und Dokument-Fingerabdruck.", { after: 7 });
   if (data.status === "confirmed" && data.confirmedAt) {
     drawConfirmation();
   } else {

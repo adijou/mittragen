@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1180 184" role="img" aria-labelledby="title">
+  <title id="title">mittragen.ch</title>
+  <path d="M32 148v-30c0-44 27-67 60-67s60 23 60 67v30M152 148v-30c0-44 27-67 60-67s60 23 60 67v30" fill="none" stroke="#1F6BFF" stroke-width="34" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="152" cy="24" r="22" fill="#F2B632"/>
+  <text x="330" y="139" fill="#0B2142" font-family="Inter, Arial, sans-serif" font-size="120" font-weight="760" letter-spacing="-6">mittragen<tspan fill="#1F6BFF">.ch</tspan></text>
+</svg>

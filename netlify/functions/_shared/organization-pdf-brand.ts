@@ -15,8 +15,8 @@ export async function loadOrganizationPdfBrand(
 ): Promise<OrganizationPdfBrand> {
   const profile = await getOrganizationProfile(client, tenantId);
   const brand: OrganizationPdfBrand = {
-    primaryColor: profile?.brand_primary_color ?? "#0B2144",
-    accentColor: profile?.brand_accent_color ?? "#1967FF",
+    primaryColor: profile?.brand_primary_color ?? "#0B2142",
+    accentColor: profile?.brand_accent_color ?? "#1F6BFF",
   };
   if (!profile?.logo_blob_key || !profile.logo_content_type) return brand;
 
