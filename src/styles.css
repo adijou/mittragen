@@ -61,9 +61,20 @@
 .event-card__main h3 { margin: 4px 0 7px; font-size: 18px; }
 .event-card__main h3 i { color: var(--ink-2); font-size: 12px; font-style: normal; font-weight: 500; }
 .event-card__main > p, .event-card__meta { margin: 0; color: var(--ink-2); font-size: 12px; }
-.event-booking { display: grid; gap: 3px; margin-top: 13px; padding: 12px 14px; border-radius: 12px; background: #eff9f3; }
+.event-sponsor-list { display: grid; gap: 8px; margin-top: 13px; }
+.event-booking { display: flex; align-items: start; justify-content: space-between; gap: 14px; padding: 12px 14px; border-radius: 12px; background: #eff9f3; }
+.event-booking > div { display: grid; gap: 3px; min-width: 0; }
 .event-booking strong { color: #155d38; }
 .event-booking span, .event-booking small { color: #47705a; }
+.event-card__empty-sponsors { margin-top: 12px !important; padding: 10px 12px; border: 1px dashed var(--line); border-radius: 10px; }
+.event-admin-details { margin-top: 11px; border: 1px solid var(--line); border-radius: 12px; background: #fbfcfe; }
+.event-admin-details summary { padding: 12px 14px; color: var(--navy); font-size: 12px; font-weight: 800; cursor: pointer; }
+.event-allocation-form, .event-matchinfo-form { display: grid; gap: 12px; padding: 0 14px 14px; }
+.event-allocation-form label, .event-matchinfo-form label { display: grid; gap: 6px; }
+.event-allocation-form label > span, .event-matchinfo-form label > span { color: var(--ink-2); font-size: 11px; font-weight: 750; }
+.event-allocation-form input, .event-allocation-form select, .event-matchinfo-form input, .event-matchinfo-form textarea { width: 100%; min-width: 0; padding: 10px 11px; border: 1px solid var(--line); border-radius: 9px; background: #fff; color: var(--navy); font: inherit; }
+.event-matchinfo-form textarea { min-height: 76px; resize: vertical; }
+.event-allocation-form .access-primary, .event-matchinfo-form .access-primary { justify-self: start; }
 .event-card__actions { display: grid; justify-items: stretch; gap: 7px; min-width: 150px; }
 .event-card__actions a { display: inline-flex; justify-content: center; text-decoration: none; }
 .event-status { justify-self: end; padding: 5px 9px; border-radius: 999px; font-size: 11px; font-weight: 800; }
@@ -161,6 +172,7 @@
   .event-public-footer { flex-direction: column; }
   .event-public-success { width: min(100% - 28px, 720px); padding: 30px 20px; }
   .event-public-success dl { grid-template-columns: 1fr; }
+  .event-booking { align-items: stretch; flex-direction: column; }
 }
 
 * { box-sizing: border-box; }

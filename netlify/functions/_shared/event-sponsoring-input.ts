@@ -34,6 +34,17 @@ function email(value: unknown) {
   return normalized;
 }
 
+function webUrl(value: unknown) {
+  const normalized = optionalText(value, 1000);
+  if (!normalized) return normalized;
+  try {
+    const url = new URL(normalized);
+    return ["http:", "https:"].includes(url.protocol) ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
 export function parseEventSponsoringSettings(input: unknown) {
   const record = recordOf(input);
   if (!record) return { ok: false as const, error: "invalid_event_settings" };
@@ -55,6 +66,11 @@ export function parseSponsorshipEvent(input: unknown) {
   const opponent = requiredText(record.opponent, 160);
   const competition = optionalText(record.competition, 160);
   const venue = optionalText(record.venue, 240);
+  const homeCoach = optionalText(record.homeCoach, 160);
+  const opponentCoach = optionalText(record.opponentCoach, 160);
+  const refereeName = optionalText(record.refereeName, 160);
+  const matchInfoUrl = webUrl(record.matchInfoUrl);
+  const speakerNote = optionalText(record.speakerNote, 2000);
   const timeTbd = record.timeTbd === true;
   const startsAt = typeof record.startsAt === "string" ? new Date(record.startsAt) : new Date(Number.NaN);
   const priceCents = cents(record.priceCents);
@@ -64,6 +80,7 @@ export function parseSponsorshipEvent(input: unknown) {
     : null;
   if (!teamName) return { ok: false as const, error: "invalid_event_team" };
   if (!opponent) return { ok: false as const, error: "invalid_event_opponent" };
+  if (record.matchInfoUrl && !matchInfoUrl) return { ok: false as const, error: "invalid_event_match_info_url" };
   if (Number.isNaN(startsAt.valueOf()) || startsAt.getUTCFullYear() < 2020 || startsAt.getUTCFullYear() > 2100) {
     return { ok: false as const, error: "invalid_event_date" };
   }
@@ -72,7 +89,10 @@ export function parseSponsorshipEvent(input: unknown) {
   if (!status) return { ok: false as const, error: "invalid_event_status" };
   return {
     ok: true as const,
-    value: { teamName, opponent, competition, venue, startsAt: startsAt.toISOString(), timeTbd, priceCents, fnSupplementCents, status },
+    value: {
+      teamName, opponent, competition, venue, homeCoach, opponentCoach, refereeName, matchInfoUrl, speakerNote,
+      startsAt: startsAt.toISOString(), timeTbd, priceCents, fnSupplementCents, status,
+    },
   };
 }
 
@@ -125,4 +145,17 @@ export function parseBookingCancellation(input: unknown) {
   return record?.cancelled === true
     ? { ok: true as const, value: { cancelled: true as const } }
     : { ok: false as const, error: "invalid_booking_cancellation" };
+}
+
+export function parsePackageAllocation(input: unknown) {
+  const record = recordOf(input);
+  if (!record) return { ok: false as const, error: "invalid_package_allocation" };
+  if (!isUuid(record.sponsorId)) return { ok: false as const, error: "invalid_sponsor" };
+  if (!isUuid(record.packageVersionId)) return { ok: false as const, error: "invalid_package_version" };
+  if (!isUuid(record.rightId)) return { ok: false as const, error: "invalid_sponsorship_right" };
+  const note = optionalText(record.note, 500);
+  return {
+    ok: true as const,
+    value: { sponsorId: record.sponsorId, packageVersionId: record.packageVersionId, rightId: record.rightId, note },
+  };
 }

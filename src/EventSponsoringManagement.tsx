@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 
-type Booking = {
+type DirectSponsor = {
   id: string;
+  kind: "direct";
   reference: string;
+  sponsorId: string | null;
   sponsorName: string;
   address: string;
   postalCode: string;
@@ -14,8 +16,24 @@ type Booking = {
   includeFnMention: boolean;
   paymentMode: "invoice" | "cash";
   amountCents: number;
-  submittedAt: string;
+  assignedAt: string;
 };
+
+type PackageSponsor = {
+  id: string;
+  kind: "package";
+  sponsorId: string;
+  sponsorName: string;
+  packageVersionId: string;
+  packageName: string;
+  rightId: string;
+  rightName: string;
+  seasonKey: string;
+  note: string | null;
+  assignedAt: string;
+};
+
+type EventSponsor = DirectSponsor | PackageSponsor;
 
 type SponsorshipEvent = {
   id: string;
@@ -29,7 +47,24 @@ type SponsorshipEvent = {
   fnSupplementCents: number;
   status: "draft" | "published" | "cancelled";
   createdAt: string;
-  booking: Booking | null;
+  homeCoach: string | null;
+  opponentCoach: string | null;
+  refereeName: string | null;
+  matchInfoUrl: string | null;
+  speakerNote: string | null;
+  sponsors: EventSponsor[];
+};
+
+type MatchballEntitlement = {
+  sponsorId: string;
+  sponsorName: string;
+  packageVersionId: string;
+  packageName: string;
+  rightId: string;
+  rightName: string;
+  allowance: number;
+  usedCount: number;
+  remainingCount: number;
 };
 
 type EventSponsoringData = {
@@ -45,7 +80,10 @@ type EventSponsoringData = {
     updatedAt: string;
   };
   events: SponsorshipEvent[];
+  entitlements: MatchballEntitlement[];
 };
+
+type MatchInfoDraft = Pick<SponsorshipEvent, "homeCoach" | "opponentCoach" | "refereeName" | "matchInfoUrl" | "speakerNote">;
 
 const emptyEvent = {
   teamName: "",
@@ -83,6 +121,9 @@ export function EventSponsoringManagement({ tenantId, canWrite, canManage }: {
   const [data, setData] = useState<EventSponsoringData | null>(null);
   const [settings, setSettings] = useState({ headline: "", seasonLabel: "", introduction: "", termsText: "", isPublished: false });
   const [eventForm, setEventForm] = useState(emptyEvent);
+  const [allocationByEvent, setAllocationByEvent] = useState<Record<string, string>>({});
+  const [allocationNoteByEvent, setAllocationNoteByEvent] = useState<Record<string, string>>({});
+  const [matchInfoByEvent, setMatchInfoByEvent] = useState<Record<string, MatchInfoDraft>>({});
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
@@ -90,6 +131,13 @@ export function EventSponsoringManagement({ tenantId, canWrite, canManage }: {
 
   const apply = (next: EventSponsoringData) => {
     setData(next);
+    setMatchInfoByEvent(Object.fromEntries(next.events.map((item) => [item.id, {
+      homeCoach: item.homeCoach,
+      opponentCoach: item.opponentCoach,
+      refereeName: item.refereeName,
+      matchInfoUrl: item.matchInfoUrl,
+      speakerNote: item.speakerNote,
+    }])));
     setSettings({
       headline: next.settings.headline,
       seasonLabel: next.settings.seasonLabel ?? "",
@@ -111,7 +159,7 @@ export function EventSponsoringManagement({ tenantId, canWrite, canManage }: {
   }, [tenantId]);
 
   const upcoming = useMemo(() => data?.events.filter((event) => event.status !== "cancelled") ?? [], [data]);
-  const bookedCount = useMemo(() => upcoming.filter((event) => event.booking).length, [upcoming]);
+  const bookedCount = useMemo(() => upcoming.reduce((total, event) => total + event.sponsors.length, 0), [upcoming]);
 
   const saveSettings = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -145,6 +193,11 @@ export function EventSponsoringManagement({ tenantId, canWrite, canManage }: {
           priceCents: Math.round(Number(eventForm.price.replace(",", ".")) * 100),
           fnSupplementCents: Math.round(Number(eventForm.fnSupplement.replace(",", ".")) * 100),
           status: eventForm.publishNow ? "published" : "draft",
+          homeCoach: null,
+          opponentCoach: null,
+          refereeName: null,
+          matchInfoUrl: null,
+          speakerNote: null,
         }),
       });
       apply(result.eventSponsoring);
@@ -175,6 +228,11 @@ export function EventSponsoringManagement({ tenantId, canWrite, canManage }: {
           priceCents: item.priceCents,
           fnSupplementCents: item.fnSupplementCents,
           status,
+          homeCoach: item.homeCoach,
+          opponentCoach: item.opponentCoach,
+          refereeName: item.refereeName,
+          matchInfoUrl: item.matchInfoUrl,
+          speakerNote: item.speakerNote,
         }),
       });
       apply(result.eventSponsoring);
@@ -184,18 +242,85 @@ export function EventSponsoringManagement({ tenantId, canWrite, canManage }: {
     } finally { setBusy(""); }
   };
 
-  const cancelBooking = async (item: SponsorshipEvent) => {
-    if (!item.booking || !window.confirm(`Matchball-Zusage ${item.booking.reference} von ${item.booking.sponsorName} wirklich stornieren? Das Spiel wird danach wieder buchbar.`)) return;
-    setBusy(item.id); setError(""); setMessage("");
+  const cancelSponsor = async (item: SponsorshipEvent, sponsor: EventSponsor) => {
+    if (!window.confirm(`${sponsor.sponsorName} wirklich von diesem Spiel entfernen?`)) return;
+    setBusy(sponsor.id); setError(""); setMessage("");
     try {
-      const result = await request<{ eventSponsoring: EventSponsoringData }>(`/api/event-sponsoring/${tenantId}/events/${item.id}/booking`, {
+      const path = sponsor.kind === "direct"
+        ? `/api/event-sponsoring/${tenantId}/events/${item.id}/bookings/${sponsor.id}/cancel`
+        : `/api/event-sponsoring/${tenantId}/events/${item.id}/allocations/${sponsor.id}/cancel`;
+      const result = await request<{ eventSponsoring: EventSponsoringData }>(path, {
         method: "POST", body: JSON.stringify({ cancelled: true }),
       });
       apply(result.eventSponsoring);
-      setMessage("Die Matchball-Zusage wurde storniert; das Spiel ist wieder verfügbar.");
+      setMessage(`${sponsor.sponsorName} wurde von diesem Spiel entfernt.`);
     } catch {
-      setError("Die Matchball-Zusage konnte nicht storniert werden.");
+      setError("Die Zuordnung konnte nicht entfernt werden.");
     } finally { setBusy(""); }
+  };
+
+  const allocateEntitlement = async (item: SponsorshipEvent) => {
+    if (!data) return;
+    const selectedKey = allocationByEvent[item.id] ?? "";
+    const entitlement = data.entitlements.find((entry) => `${entry.sponsorId}:${entry.packageVersionId}:${entry.rightId}` === selectedKey);
+    if (!entitlement) return;
+    setBusy(`allocation:${item.id}`); setError(""); setMessage("");
+    try {
+      const result = await request<{ eventSponsoring: EventSponsoringData }>(`/api/event-sponsoring/${tenantId}/events/${item.id}/allocations`, {
+        method: "POST",
+        body: JSON.stringify({
+          sponsorId: entitlement.sponsorId,
+          packageVersionId: entitlement.packageVersionId,
+          rightId: entitlement.rightId,
+          note: allocationNoteByEvent[item.id] || null,
+        }),
+      });
+      apply(result.eventSponsoring);
+      setAllocationByEvent((current) => ({ ...current, [item.id]: "" }));
+      setAllocationNoteByEvent((current) => ({ ...current, [item.id]: "" }));
+      setMessage(`${entitlement.sponsorName} wurde diesem Spiel aus dem ${entitlement.packageName} zugeordnet.`);
+    } catch (reason) {
+      const code = reason instanceof Error ? reason.message : "event_package_allocation_failed";
+      setError(code === "matchball_entitlement_exhausted"
+        ? "Das Matchball-Kontingent dieses Sponsors ist für die Saison ausgeschöpft."
+        : code === "sponsor_already_assigned_to_event"
+          ? "Dieser Sponsor ist dem Spiel bereits zugeordnet."
+          : "Die Sponsorenleistung konnte nicht zugeordnet werden.");
+    } finally { setBusy(""); }
+  };
+
+  const saveMatchInfo = async (item: SponsorshipEvent) => {
+    const info = matchInfoByEvent[item.id];
+    if (!info) return;
+    setBusy(`info:${item.id}`); setError(""); setMessage("");
+    try {
+      const result = await request<{ eventSponsoring: EventSponsoringData }>(`/api/event-sponsoring/${tenantId}/events/${item.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          ...info,
+          teamName: item.teamName,
+          opponent: item.opponent,
+          competition: item.competition,
+          venue: item.venue,
+          startsAt: item.startsAt,
+          timeTbd: item.timeTbd,
+          priceCents: item.priceCents,
+          fnSupplementCents: item.fnSupplementCents,
+          status: item.status,
+        }),
+      });
+      apply(result.eventSponsoring);
+      setMessage("Die Angaben für das Matchinfo-PDF wurden gespeichert.");
+    } catch {
+      setError("Die Matchinformationen konnten nicht gespeichert werden. Bitte URL und Eingaben prüfen.");
+    } finally { setBusy(""); }
+  };
+
+  const updateMatchInfo = (eventId: string, field: keyof MatchInfoDraft, value: string) => {
+    setMatchInfoByEvent((current) => ({
+      ...current,
+      [eventId]: { ...current[eventId], [field]: value || null },
+    }));
   };
 
   const copyLink = async () => {
@@ -212,12 +337,12 @@ export function EventSponsoringManagement({ tenantId, canWrite, canManage }: {
   if (!data) return <section className="event-sponsoring-management"><div className="workspace-error"><strong>Event-Sponsoring nicht verfügbar.</strong><p>{error}</p></div></section>;
 
   return <section className="event-sponsoring-management">
-    <header className="event-sponsoring-heading"><div><p className="eyebrow">Einzelne Spieltage unterstützen</p><h1>Matchball-Sponsoring</h1><p>Heimspiele veröffentlichen, Matchballsponsoren direkt erfassen und ein gebrandetes Matchblatt erzeugen.</p></div><div className="event-sponsoring-heading__metrics"><span><strong>{upcoming.length}</strong> Spiele</span><span><strong>{bookedCount}</strong> vergeben</span></div></header>
+    <header className="event-sponsoring-heading"><div><p className="eyebrow">Einzelne Spieltage unterstützen</p><h1>Matchball-Sponsoring</h1><p>Mehrere Matchballsponsoren pro Spiel verwalten, Paketleistungen einlösen und eine gebrandete Matchinfo erzeugen.</p></div><div className="event-sponsoring-heading__metrics"><span><strong>{upcoming.length}</strong> Spiele</span><span><strong>{bookedCount}</strong> Zuordnungen</span></div></header>
     {error && <p className="form-error" role="alert">{error}</p>}
     {message && <p className="form-success" role="status">{message}</p>}
 
     <section className="event-public-card">
-      <div><p className="eyebrow">Öffentliches Formular</p><h2>Link für Interessierte</h2><p>Der Link funktioniert ohne Konto. Eine vollständige Anmeldung reserviert das Spiel unmittelbar.</p></div>
+      <div><p className="eyebrow">Öffentliches Formular</p><h2>Link für Interessierte</h2><p>Der Link funktioniert ohne Konto. Pro Spiel können sich mehrere Matchballsponsoren anmelden.</p></div>
       <label><span>Öffentlicher Link</span><input readOnly value={data.settings.publicUrl}/></label>
       <div className="event-public-card__actions"><button className="access-secondary" type="button" onClick={() => void copyLink()}>Link kopieren</button><a className="access-primary" href={data.settings.publicUrl} target="_blank" rel="noreferrer">Formular öffnen</a></div>
       <span className={`event-public-state event-public-state--${data.settings.isPublished ? "published" : "draft"}`}>{data.settings.isPublished ? "Öffentlich" : "Noch deaktiviert"}</span>
@@ -248,13 +373,25 @@ export function EventSponsoringManagement({ tenantId, canWrite, canManage }: {
     </div>
 
     <section className="event-list-section"><div><p className="eyebrow">Spielübersicht</p><h2>Matchball-Termine</h2></div>
-      {data.events.length === 0 ? <div className="transition-empty">Noch keine Spiele erfasst.</div> : <div className="event-list">{data.events.map((item) => <article className={`event-card event-card--${item.booking ? "booked" : item.status}`} key={item.id}>
-        <div className="event-card__date"><strong>{new Intl.DateTimeFormat("de-CH", { day: "2-digit" }).format(new Date(item.startsAt))}</strong><span>{new Intl.DateTimeFormat("de-CH", { month: "short" }).format(new Date(item.startsAt))}</span></div>
-        <div className="event-card__main"><span className="event-card__meta">{item.timeTbd ? `${new Intl.DateTimeFormat("de-CH", { weekday: "short", day: "2-digit", month: "2-digit", year: "numeric" }).format(new Date(item.startsAt))} · Anspielzeit offen` : formatDate(item.startsAt)}{item.venue ? ` · ${item.venue}` : ""}</span><h3>{item.teamName} <i>gegen</i> {item.opponent}</h3><p>{item.competition || "Heimspiel"} · {formatChf(item.priceCents)}{item.fnSupplementCents ? ` + ${formatChf(item.fnSupplementCents)} FN` : ""}</p>
-          {item.booking && <div className="event-booking"><strong>{item.booking.sponsorName}</strong><span>{item.booking.reference} · {formatChf(item.booking.amountCents)} · {item.booking.paymentMode === "invoice" ? "Rechnung" : "Barzahlung"}</span><small>{item.booking.contactName} · {item.booking.contactEmail}{item.booking.contactPhone ? ` · ${item.booking.contactPhone}` : ""}</small></div>}
-        </div>
-        <div className="event-card__actions"><span className={`event-status event-status--${item.booking ? "booked" : item.status}`}>{item.booking ? "Vergeben" : item.status === "published" ? "Öffentlich" : item.status === "draft" ? "Entwurf" : "Abgesagt"}</span><a className="access-secondary" href={`/api/event-sponsoring/${tenantId}/events/${item.id}/flyer`} target="_blank" rel="noreferrer">Matchblatt PDF</a>{canWrite && !item.booking && item.status !== "cancelled" && <button className="access-secondary" disabled={busy !== ""} onClick={() => void changeStatus(item, item.status === "published" ? "draft" : "published")}>{item.status === "published" ? "Ausblenden" : "Veröffentlichen"}</button>}{canWrite && item.booking && <button className="access-text event-cancel" disabled={busy !== ""} onClick={() => void cancelBooking(item)}>Zusage stornieren</button>}</div>
-      </article>)}</div>}
+      {data.events.length === 0 ? <div className="transition-empty">Noch keine Spiele erfasst.</div> : <div className="event-list">{data.events.map((item) => {
+        const info = matchInfoByEvent[item.id];
+        const selectedAllocation = allocationByEvent[item.id] ?? "";
+        return <article className={`event-card event-card--${item.sponsors.length ? "booked" : item.status}`} key={item.id}>
+          <div className="event-card__date"><strong>{new Intl.DateTimeFormat("de-CH", { day: "2-digit" }).format(new Date(item.startsAt))}</strong><span>{new Intl.DateTimeFormat("de-CH", { month: "short" }).format(new Date(item.startsAt))}</span></div>
+          <div className="event-card__main"><span className="event-card__meta">{item.timeTbd ? `${new Intl.DateTimeFormat("de-CH", { weekday: "short", day: "2-digit", month: "2-digit", year: "numeric" }).format(new Date(item.startsAt))} · Anspielzeit offen` : formatDate(item.startsAt)}{item.venue ? ` · ${item.venue}` : ""}</span><h3>{item.teamName} <i>gegen</i> {item.opponent}</h3><p>{item.competition || "Heimspiel"} · {formatChf(item.priceCents)}{item.fnSupplementCents ? ` + ${formatChf(item.fnSupplementCents)} FN` : ""}</p>
+            {item.sponsors.length === 0 ? <p className="event-card__empty-sponsors">Noch keine Matchballsponsoren zugeordnet.</p> : <div className="event-sponsor-list">{item.sponsors.map((sponsor) => <div className="event-booking" key={`${sponsor.kind}:${sponsor.id}`}><div><strong>{sponsor.sponsorName}</strong><span>{sponsor.kind === "direct" ? `${sponsor.reference} · ${formatChf(sponsor.amountCents)} · ${sponsor.paymentMode === "invoice" ? "Rechnung" : "Barzahlung"}` : `${sponsor.packageName} · Paketleistung · ${sponsor.seasonKey}`}</span>{sponsor.kind === "direct" ? <small>{sponsor.contactName} · {sponsor.contactEmail}{sponsor.contactPhone ? ` · ${sponsor.contactPhone}` : ""}</small> : sponsor.note ? <small>{sponsor.note}</small> : null}</div>{canWrite && <button className="access-text event-cancel" type="button" disabled={busy !== ""} onClick={() => void cancelSponsor(item, sponsor)}>Entfernen</button>}</div>)}</div>}
+
+            {canWrite && item.status !== "cancelled" && <details className="event-admin-details"><summary>Sponsorenleistung zuordnen</summary><div className="event-allocation-form"><label><span>Sponsor und Matchball-Kontingent</span><select value={selectedAllocation} onChange={(event) => setAllocationByEvent((current) => ({ ...current, [item.id]: event.target.value }))}><option value="">Leistung wählen</option>{data.entitlements.map((entry) => {
+              const key = `${entry.sponsorId}:${entry.packageVersionId}:${entry.rightId}`;
+              const alreadyAssigned = item.sponsors.some((sponsor) => sponsor.sponsorId === entry.sponsorId);
+              return <option key={key} value={key} disabled={entry.remainingCount === 0 || alreadyAssigned}>{entry.sponsorName} · {entry.packageName} · {entry.usedCount}/{entry.allowance} eingesetzt{alreadyAssigned ? " · bereits hier" : ""}</option>;
+            })}</select></label><label><span>Bemerkung (optional)</span><input maxLength={500} value={allocationNoteByEvent[item.id] ?? ""} onChange={(event) => setAllocationNoteByEvent((current) => ({ ...current, [item.id]: event.target.value }))} placeholder="z. B. Termin mit Sponsor abgestimmt"/></label><button className="access-primary" type="button" disabled={!selectedAllocation || busy !== ""} onClick={() => void allocateEntitlement(item)}>{busy === `allocation:${item.id}` ? "Wird zugeordnet …" : "Paketleistung einsetzen"}</button></div></details>}
+
+            {canWrite && info && <details className="event-admin-details"><summary>Matchinfo bearbeiten</summary><div className="event-matchinfo-form"><div className="event-form-row"><label><span>Trainer {item.teamName}</span><input maxLength={160} value={info.homeCoach ?? ""} onChange={(event) => updateMatchInfo(item.id, "homeCoach", event.target.value)}/></label><label><span>Trainer {item.opponent}</span><input maxLength={160} value={info.opponentCoach ?? ""} onChange={(event) => updateMatchInfo(item.id, "opponentCoach", event.target.value)}/></label></div><div className="event-form-row"><label><span>Schiedsrichter</span><input maxLength={160} value={info.refereeName ?? ""} onChange={(event) => updateMatchInfo(item.id, "refereeName", event.target.value)}/></label><label><span>Matchcenter / Aufstellungen URL</span><input type="url" maxLength={1000} value={info.matchInfoUrl ?? ""} onChange={(event) => updateMatchInfo(item.id, "matchInfoUrl", event.target.value)}/></label></div><label><span>Speaker-Hinweis (optional)</span><textarea maxLength={2000} value={info.speakerNote ?? ""} onChange={(event) => updateMatchInfo(item.id, "speakerNote", event.target.value)}/></label><button className="access-primary" type="button" disabled={busy !== ""} onClick={() => void saveMatchInfo(item)}>{busy === `info:${item.id}` ? "Speichert …" : "Matchinfo speichern"}</button></div></details>}
+          </div>
+          <div className="event-card__actions"><span className={`event-status event-status--${item.sponsors.length ? "booked" : item.status}`}>{item.sponsors.length ? `${item.sponsors.length} Sponsor${item.sponsors.length === 1 ? "" : "en"}` : item.status === "published" ? "Öffentlich" : item.status === "draft" ? "Entwurf" : "Abgesagt"}</span><a className="access-secondary" href={`/api/event-sponsoring/${tenantId}/events/${item.id}/flyer`} target="_blank" rel="noreferrer">Matchinfo PDF</a>{canWrite && item.status !== "cancelled" && <button className="access-secondary" type="button" disabled={busy !== ""} onClick={() => void changeStatus(item, item.status === "published" ? "draft" : "published")}>{item.status === "published" ? "Ausblenden" : "Veröffentlichen"}</button>}</div>
+        </article>;
+      })}</div>}
     </section>
   </section>;
 }

@@ -11,6 +11,7 @@ type PublicEvent = {
   priceCents: number;
   fnSupplementCents: number;
   available: boolean;
+  sponsorCount: number;
 };
 
 type PublicData = {
@@ -78,7 +79,7 @@ export function EventSponsoringPublic({ onHome }: { onHome: () => void }) {
     if (!key) { setError("Dieser Matchball-Link ist ungültig."); setLoading(false); return; }
     void request<{ eventSponsoring: PublicData }>(`/api/event-sponsoring-public/${key}`).then((result) => {
       setData(result.eventSponsoring);
-      setSelectedId(result.eventSponsoring.events.find((event) => event.available)?.id ?? "");
+      setSelectedId(result.eventSponsoring.events[0]?.id ?? "");
     }).catch(() => setError("Diese Matchballseite ist nicht verfügbar oder noch nicht veröffentlicht.")).finally(() => setLoading(false));
   }, [key]);
 
@@ -99,9 +100,7 @@ export function EventSponsoringPublic({ onHome }: { onHome: () => void }) {
       window.scrollTo({ top: 0, behavior: "smooth" });
     } catch (reason) {
       const code = reason instanceof Error ? reason.message : "event_sponsoring_public_booking_failed";
-      setError(code === "event_already_booked"
-        ? "Dieses Spiel wurde gerade bereits vergeben. Bitte wählen Sie einen anderen Termin."
-        : code === "event_booking_terms_required"
+      setError(code === "event_booking_terms_required"
           ? "Bitte bestätigen Sie die verbindliche Anmeldung."
           : "Die Anmeldung konnte nicht gespeichert werden. Bitte prüfen Sie alle Angaben und versuchen Sie es erneut.");
     } finally { setBusy(false); }
@@ -113,15 +112,15 @@ export function EventSponsoringPublic({ onHome }: { onHome: () => void }) {
 
   if (booking && selected) return <main className="event-public-page" style={style}>
     <header className="event-public-header"><button onClick={onHome} aria-label="Zur Startseite">mittragen</button>{data.organization.logoAvailable ? <img src={`/api/event-sponsoring-public/${key}/logo`} alt={`${data.organization.name} Logo`}/> : <strong>{data.organization.name}</strong>}</header>
-    <section className="event-public-success"><span>✓</span><p className="eyebrow">Direkt reserviert</p><h1>Vielen Dank für das Matchball-Sponsoring.</h1><p><strong>{selected.teamName} gegen {selected.opponent}</strong><br/>{formatDate(selected.startsAt)}</p><dl><div><dt>Referenz</dt><dd>{booking.reference}</dd></div><div><dt>Betrag</dt><dd>{formatChf(booking.amountCents)}</dd></div><div><dt>Abrechnung</dt><dd>{form.paymentMode === "invoice" ? "Der Verein stellt eine Rechnung." : "Barzahlung wurde gewählt."}</dd></div></dl><p>Die Anmeldung ist gespeichert. Es ist keine Konto- oder E-Mail-Bestätigung notwendig.</p></section>
+    <section className="event-public-success"><span>✓</span><p className="eyebrow">Anmeldung gespeichert</p><h1>Vielen Dank für das Matchball-Sponsoring.</h1><p><strong>{selected.teamName} gegen {selected.opponent}</strong><br/>{formatDate(selected.startsAt)}</p><dl><div><dt>Referenz</dt><dd>{booking.reference}</dd></div><div><dt>Betrag</dt><dd>{formatChf(booking.amountCents)}</dd></div><div><dt>Abrechnung</dt><dd>{form.paymentMode === "invoice" ? "Der Verein stellt eine Rechnung." : "Barzahlung wurde gewählt."}</dd></div></dl><p>Die Anmeldung ist gespeichert. Es ist keine Konto- oder E-Mail-Bestätigung notwendig.</p></section>
   </main>;
 
   return <main className="event-public-page" style={style}>
     <header className="event-public-header"><button onClick={onHome} aria-label="Zur Startseite">mittragen</button>{data.organization.logoAvailable ? <img src={`/api/event-sponsoring-public/${key}/logo`} alt={`${data.organization.name} Logo`}/> : <strong>{data.organization.name}</strong>}</header>
-    <section className="event-public-hero"><div><p className="eyebrow">{data.settings.seasonLabel || "Matchball-Sponsoring"}</p><h1>{data.settings.headline}</h1><p>{data.settings.introduction}</p></div><aside><span>Direkt anmelden</span><strong>Kein Konto nötig</strong><small>Das gewählte Spiel wird nach dem Absenden unmittelbar reserviert.</small></aside></section>
+    <section className="event-public-hero"><div><p className="eyebrow">{data.settings.seasonLabel || "Matchball-Sponsoring"}</p><h1>{data.settings.headline}</h1><p>{data.settings.introduction}</p></div><aside><span>Direkt anmelden</span><strong>Mehrere Sponsoren möglich</strong><small>Kein Konto und keine E-Mail-Bestätigung nötig.</small></aside></section>
 
-    <section className="event-public-selection"><div><p className="eyebrow">Spielplan</p><h2>Heimspiel auswählen</h2><p>Bereits vergebene Spiele bleiben sichtbar, können aber nicht nochmals gewählt werden.</p></div>
-      {data.events.length === 0 ? <div className="event-public-empty">Aktuell sind noch keine Spiele ausgeschrieben.</div> : <div className="event-public-games">{data.events.map((item) => <button type="button" disabled={!item.available} className={`${selectedId === item.id ? "selected" : ""} ${!item.available ? "unavailable" : ""}`} key={item.id} onClick={() => setSelectedId(item.id)}><span>{item.timeTbd ? `${new Intl.DateTimeFormat("de-CH", { weekday: "long", day: "2-digit", month: "long", year: "numeric" }).format(new Date(item.startsAt))} · Anspielzeit offen` : formatDate(item.startsAt)}</span><strong>{item.teamName} <i>gegen</i> {item.opponent}</strong><small>{item.venue || "Heimspiel"} · {formatChf(item.priceCents)}</small><em>{item.available ? "Verfügbar" : "Bereits vergeben"}</em></button>)}</div>}
+    <section className="event-public-selection"><div><p className="eyebrow">Spielplan</p><h2>Heimspiel auswählen</h2><p>Pro Spiel können sich mehrere Matchballsponsoren engagieren; jede Anmeldung wird unmittelbar reserviert.</p></div>
+      {data.events.length === 0 ? <div className="event-public-empty">Aktuell sind noch keine Spiele ausgeschrieben.</div> : <div className="event-public-games">{data.events.map((item) => <button type="button" className={selectedId === item.id ? "selected" : ""} key={item.id} onClick={() => setSelectedId(item.id)}><span>{item.timeTbd ? `${new Intl.DateTimeFormat("de-CH", { weekday: "long", day: "2-digit", month: "long", year: "numeric" }).format(new Date(item.startsAt))} · Anspielzeit offen` : formatDate(item.startsAt)}</span><strong>{item.teamName} <i>gegen</i> {item.opponent}</strong><small>{item.venue || "Heimspiel"} · {formatChf(item.priceCents)}</small><em>{item.sponsorCount === 0 ? "Noch ohne Matchballsponsor" : `${item.sponsorCount} Matchballsponsor${item.sponsorCount === 1 ? "" : "en"}`}</em></button>)}</div>}
     </section>
 
     {selected && <form className="event-public-form" onSubmit={submit}>
