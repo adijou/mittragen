@@ -93,3 +93,56 @@ test("every contract PDF path loads the current organization branding", async ()
   assert.match(contracts, /pdfData\(contract, authorized\.brand\)/);
   assert.match(publicSigning, /pdfData\(contract, brand\)/);
 });
+
+test("draft contracts can update sponsor, package, negotiated value and document text", async () => {
+  const contracts = await readFile(new URL("../netlify/functions/contracts.mts", import.meta.url), "utf8");
+  const management = await readFile(new URL("../src/ContractManagement.tsx", import.meta.url), "utf8");
+  const updateStart = contracts.indexOf('if (routes.detail.test(pathname) && request.method === "PATCH")');
+  const updateEnd = contracts.indexOf("if (routes.revision.test(pathname)", updateStart);
+  const updateFlow = contracts.slice(updateStart, updateEnd);
+
+  assert.match(updateFlow, /buildSnapshots\(client, tenantId, parsed\.value, preservesExistingSelection\)/);
+  assert.match(updateFlow, /sponsor_id = \$3/);
+  assert.match(updateFlow, /package_version_id = \$4/);
+  assert.match(updateFlow, /package_snapshot = \$11::jsonb/);
+  assert.match(updateFlow, /WHERE tenant_id = \$1 AND id = \$2 AND status = 'draft'/);
+  assert.match(management, /selectDraftPackage/);
+  assert.match(management, /draftAnnualValue/);
+});
+
+test("released contracts use linked correction versions instead of in-place mutation", async () => {
+  const contracts = await readFile(new URL("../netlify/functions/contracts.mts", import.meta.url), "utf8");
+  const revisionStart = contracts.indexOf("if (routes.revision.test(pathname)");
+  const revisionEnd = contracts.indexOf("if (routes.void.test(pathname)", revisionStart);
+  const revisionFlow = contracts.slice(revisionStart, revisionEnd);
+  const releaseStart = contracts.indexOf("if (routes.release.test(pathname)");
+  const releaseEnd = contracts.indexOf("if (routes.send.test(pathname)", releaseStart);
+  const releaseFlow = contracts.slice(releaseStart, releaseEnd);
+
+  assert.match(revisionFlow, /parent_contract_id/);
+  assert.match(revisionFlow, /existing\.contract\.version_number \+ 1/);
+  assert.match(revisionFlow, /'contract\.revision_created'/);
+  assert.doesNotMatch(revisionFlow, /sendContractSigningEmail/);
+  assert.match(releaseFlow, /existing\.contract\.parent_contract_id/);
+  assert.match(releaseFlow, /'contract\.replaced'/);
+  assert.match(releaseFlow, /status = 'void'/);
+});
+
+test("draft deletion and released-contract voiding are separate audited operations", async () => {
+  const contracts = await readFile(new URL("../netlify/functions/contracts.mts", import.meta.url), "utf8");
+  const management = await readFile(new URL("../src/ContractManagement.tsx", import.meta.url), "utf8");
+  const removeStart = contracts.indexOf("if (routes.void.test(pathname)");
+  const removeEnd = contracts.indexOf("if (routes.release.test(pathname)", removeStart);
+  const removeFlow = contracts.slice(removeStart, removeEnd);
+
+  assert.match(removeFlow, /contract\.status === "draft"/);
+  assert.match(removeFlow, /DELETE FROM sponsorship_contract_events/);
+  assert.match(removeFlow, /DELETE FROM sponsorship_contracts/);
+  assert.match(removeFlow, /'contract\.draft_deleted'/);
+  assert.match(removeFlow, /status = 'void', voided_at = now\(\)/);
+  assert.match(removeFlow, /'contract\.voided'/);
+  assert.match(removeFlow, /releaseReservationIfUnused/);
+  assert.match(management, /Archivierte Verträge/);
+  assert.match(management, /Entwurf endgültig löschen/);
+  assert.match(management, /Vertrag nachvollziehbar aufheben/);
+});

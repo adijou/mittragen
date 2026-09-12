@@ -73,15 +73,36 @@ export function parseContractCreate(body: unknown): Result<ContractCreateInput> 
   };
 }
 
-export function parseContractUpdate(body: unknown): Result<{ title: string; specialAgreements: string; signingMethod: SigningMethod }> {
+export function parseContractUpdate(body: unknown): Result<Extract<ContractCreateInput, { mode: "direct" }> & {
+  title: string;
+  specialAgreements: string;
+  signingMethod: SigningMethod;
+}> {
   if (!body || typeof body !== "object" || Array.isArray(body)) return { ok: false, error: "invalid_body" };
   const record = body as Record<string, unknown>;
+  const selection = parseContractCreate(body);
+  if (!selection.ok) return selection;
+  if (selection.value.mode !== "direct") return { ok: false, error: "invalid_sponsor" };
   const title = optionalText(record.title, 160);
   const specialAgreements = optionalText(record.specialAgreements, 5000);
   if (!title) return { ok: false, error: "invalid_contract_title" };
   if (!specialAgreements) return { ok: false, error: "invalid_special_agreements" };
   if (!["click", "advanced", "qualified"].includes(String(record.signingMethod))) return { ok: false, error: "invalid_signing_method" };
-  return { ok: true, value: { title, specialAgreements, signingMethod: record.signingMethod as SigningMethod } };
+  return { ok: true, value: { ...selection.value, title, specialAgreements, signingMethod: record.signingMethod as SigningMethod } };
+}
+
+function parseReason(body: unknown, error: string): Result<{ reason: string }> {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return { ok: false, error: "invalid_body" };
+  const reason = optionalText((body as Record<string, unknown>).reason, 600);
+  return reason ? { ok: true, value: { reason } } : { ok: false, error };
+}
+
+export function parseContractCorrection(body: unknown) {
+  return parseReason(body, "contract_correction_reason_required");
+}
+
+export function parseContractRemoval(body: unknown) {
+  return parseReason(body, "contract_removal_reason_required");
 }
 
 export function parseContractRelease(body: unknown): Result<{ legalReviewAcknowledged: true }> {

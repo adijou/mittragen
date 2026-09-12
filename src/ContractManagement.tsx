@@ -4,12 +4,14 @@ import { annualValueForPackage } from "./sponsorPackagePricing";
 type ContractStatus = "draft" | "released" | "confirmed" | "void";
 type ContractItem = {
   id: string; contract_number: string; version_number: number; title: string; sponsor_name: string;
+  parent_contract_id: string | null; sponsor_id: string; package_version_id: string;
   package_name: string; package_snapshot: { priceCents: number; durationMonths: number };
   special_agreements: string; status: ContractStatus; signing_method: "click" | "advanced" | "qualified";
   snapshot_hash: string | null; released_at: string | null; confirmed_at: string | null; confirmed_email: string | null;
   confirmed_name: string | null; confirmed_role: string | null;
   confirmation_mode: "authenticated_account" | "one_time_link" | "legacy_portal" | "admin_legacy" | null;
   confirmation_recorded_at: string | null; confirmation_note: string | null;
+  voided_at: string | null; voided_by: string | null; void_reason: string | null;
   sponsor_snapshot: { legalName: string; contactName: string | null; contactEmail: string | null };
 };
 type SigningRequest = {
@@ -58,6 +60,11 @@ const errorLabels: Record<string, string> = {
   legacy_confirmation_evidence_required: "Bitte festhalten, worauf der administrative Abschluss gestützt wird.",
   admin_contract_acknowledgement_required: "Bitte die Übernahme des bereits abgeschlossenen Vertrags ausdrücklich bestätigen.",
   contract_admin_confirmation_failed: "Der Altvertrag konnte nicht administrativ übernommen werden.",
+  contract_correction_reason_required: "Bitte den Grund für die Korrektur festhalten.",
+  contract_removal_reason_required: "Bitte den Grund für das Löschen oder Aufheben festhalten.",
+  contract_revision_exists: "Für diesen Vertrag besteht bereits ein offener Korrekturvertrag.",
+  contract_locked: "Dieser Vertragsstand kann nicht direkt bearbeitet werden. Erstellen Sie stattdessen einen Korrekturentwurf.",
+  contract_already_void: "Dieser Vertrag ist bereits aufgehoben.",
 };
 const formatChf = (cents: number) => new Intl.NumberFormat("de-CH", { style: "currency", currency: "CHF", maximumFractionDigits: 0 }).format(cents / 100);
 
@@ -93,6 +100,11 @@ export function ContractManagement({ tenantId, canWrite, canManage, onOpenOrgani
   const [detail, setDetail] = useState<ContractDetail | null>(null);
   const [title, setTitle] = useState("Sponsoringvertrag");
   const [specialAgreements, setSpecialAgreements] = useState("Keine besonderen Vereinbarungen.");
+  const [draftSponsorId, setDraftSponsorId] = useState("");
+  const [draftPackageVersionId, setDraftPackageVersionId] = useState("");
+  const [draftAnnualValue, setDraftAnnualValue] = useState("");
+  const [correctionReason, setCorrectionReason] = useState("");
+  const [removalReason, setRemovalReason] = useState("");
   const [legalReview, setLegalReview] = useState(false);
   const [signerEmail, setSignerEmail] = useState("");
   const [signerName, setSignerName] = useState("");
@@ -111,6 +123,11 @@ export function ContractManagement({ tenantId, canWrite, canManage, onOpenOrgani
     setDetail(next);
     setTitle(next.contract.title);
     setSpecialAgreements(next.contract.special_agreements);
+    setDraftSponsorId(next.contract.sponsor_id);
+    setDraftPackageVersionId(next.contract.package_version_id);
+    setDraftAnnualValue(String(next.contract.package_snapshot.priceCents / 100));
+    setCorrectionReason("");
+    setRemovalReason("");
     setLegalReview(false);
     setSignerEmail(next.signingRequest?.signer_email ?? next.contract.sponsor_snapshot.contactEmail ?? "");
     setSignerName(next.signingRequest?.signer_name ?? next.contract.sponsor_snapshot.contactName ?? "");
@@ -122,7 +139,7 @@ export function ContractManagement({ tenantId, canWrite, canManage, onOpenOrgani
     setLegacyAcknowledged(false);
   };
 
-  const load = async (preferredId?: string) => {
+  const load = async (preferredId?: string | null) => {
     const result = await api<{ contracts: ContractItem[]; eligible: Eligible[]; sponsors: SponsorOption[]; catalog: PackageOption[]; settings: Settings }>(`/api/contracts/${tenantId}`);
     setContracts(result.contracts);
     setEligible(result.eligible);
@@ -139,7 +156,9 @@ export function ContractManagement({ tenantId, canWrite, canManage, onOpenOrgani
     setLegacyCreateSponsorId(nextLegacySponsorId);
     setLegacyCreatePackageVersionId(selectedLegacyPackage?.id ?? "");
     if (!selectedLegacyPackage || selectedLegacyPackage.id !== legacyCreatePackageVersionId) setLegacyCreateAnnualValue(selectedLegacyPackage ? String(selectedLegacyPackage.price_cents / 100) : "");
-    const id = preferredId ?? detail?.contract.id ?? result.contracts[0]?.id;
+    const id = preferredId === null
+      ? result.contracts.find((contract) => contract.status !== "void")?.id ?? result.contracts[0]?.id
+      : preferredId ?? detail?.contract.id ?? result.contracts.find((contract) => contract.status !== "void")?.id ?? result.contracts[0]?.id;
     if (id) {
       const loaded = await api<{ detail: ContractDetail }>(`/api/contracts/${tenantId}/${id}`);
       applyDetail(loaded.detail);
@@ -161,6 +180,11 @@ export function ContractManagement({ tenantId, canWrite, canManage, onOpenOrgani
   const selectLegacyPackage = (id: string) => {
     setLegacyCreatePackageVersionId(id);
     setLegacyCreateAnnualValue(annualValueForPackage(id, catalog) ?? "");
+  };
+
+  const selectDraftPackage = (id: string) => {
+    setDraftPackageVersionId(id);
+    setDraftAnnualValue(annualValueForPackage(id, catalog) ?? "");
   };
 
   const createDirectContract = async (event: FormEvent) => {
@@ -232,12 +256,63 @@ export function ContractManagement({ tenantId, canWrite, canManage, onOpenOrgani
 
   const saveDraft = async (event: FormEvent) => {
     event.preventDefault(); if (!detail) return;
+    const amount = Number(draftAnnualValue.replace(/[’']/g, "").replace(",", "."));
     setBusy("save"); setError(""); setMessage("");
     try {
-      const result = await api<{ detail: ContractDetail }>(`/api/contracts/${tenantId}/${detail.contract.id}`, { method: "PATCH", body: JSON.stringify({ title, specialAgreements, signingMethod: "click" }) });
+      const result = await api<{ detail: ContractDetail }>(`/api/contracts/${tenantId}/${detail.contract.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          sponsorId: draftSponsorId,
+          packageVersionId: draftPackageVersionId,
+          annualValueCents: Number.isFinite(amount) ? Math.round(amount * 100) : -1,
+          title,
+          specialAgreements,
+          signingMethod: "click",
+        }),
+      });
       applyDetail(result.detail); setMessage("Vertragsentwurf gespeichert."); await load(result.detail.contract.id);
-    } catch { setError("Der Vertragsentwurf konnte nicht gespeichert werden."); }
+    } catch (reason) {
+      const code = reason instanceof Error ? reason.message : "contract_update_failed";
+      setError(errorLabels[code] ?? "Der Vertragsentwurf konnte nicht gespeichert werden.");
+    }
     finally { setBusy(""); }
+  };
+
+  const createCorrection = async () => {
+    if (!detail || !correctionReason.trim()) return;
+    setBusy("revision"); setError(""); setMessage("");
+    try {
+      const result = await api<{ detail: ContractDetail }>(`/api/contracts/${tenantId}/${detail.contract.id}/revision`, {
+        method: "POST", body: JSON.stringify({ reason: correctionReason }),
+      });
+      applyDetail(result.detail);
+      setMessage(`Korrekturentwurf ${result.detail.contract.contract_number} wurde als Version ${result.detail.contract.version_number} erstellt.`);
+      await load(result.detail.contract.id);
+    } catch (reason) {
+      const code = reason instanceof Error ? reason.message : "contract_revision_create_failed";
+      setError(errorLabels[code] ?? "Der Korrekturentwurf konnte nicht erstellt werden.");
+    } finally { setBusy(""); }
+  };
+
+  const removeContract = async () => {
+    if (!detail || !removalReason.trim()) return;
+    const isDraft = detail.contract.status === "draft";
+    const prompt = isDraft
+      ? `Entwurf ${detail.contract.contract_number} endgültig löschen?`
+      : `Vertrag ${detail.contract.contract_number} nachvollziehbar aufheben? Der bisherige Vertragsstand und sein Nachweis bleiben erhalten.`;
+    if (!window.confirm(prompt)) return;
+    setBusy("remove"); setError(""); setMessage("");
+    try {
+      const result = await api<{ removed: true; mode: "deleted" | "voided" }>(`/api/contracts/${tenantId}/${detail.contract.id}/void`, {
+        method: "POST", body: JSON.stringify({ reason: removalReason }),
+      });
+      setDetail(null);
+      setMessage(result.mode === "deleted" ? "Der Vertragsentwurf wurde endgültig gelöscht." : "Der Vertrag wurde aufgehoben und ins Archiv verschoben.");
+      await load(null);
+    } catch (reason) {
+      const code = reason instanceof Error ? reason.message : "contract_removal_failed";
+      setError(errorLabels[code] ?? "Der Vertrag konnte nicht gelöscht oder aufgehoben werden.");
+    } finally { setBusy(""); }
   };
 
   const releaseContract = async () => {
@@ -320,6 +395,9 @@ export function ContractManagement({ tenantId, canWrite, canManage, onOpenOrgani
     } finally { setBusy(""); }
   };
 
+  const activeContracts = contracts.filter((contract) => contract.status !== "void");
+  const archivedContracts = contracts.filter((contract) => contract.status === "void");
+
   return <section className="contract-management">
     <header><div><p className="eyebrow">Vertragscenter</p><h1>Verträge nachvollziehbar abschliessen</h1><p>Hier werden Sponsor, publiziertes Paket und der verhandelte Jahreswert zusammengeführt. Die Überführung bleibt ein separater Weg für bestehende Sponsorings.</p></div>{canManage && <button className="access-secondary" onClick={onOpenOrganization}>Organisationsangaben</button>}</header>
     {error && <p className="form-error" role="alert">{error}</p>}{message && <p className="form-success" role="status">{message}</p>}
@@ -350,11 +428,16 @@ export function ContractManagement({ tenantId, canWrite, canManage, onOpenOrgani
     {loading ? <div className="transition-empty">Verträge werden geladen …</div> : <div className="contract-layout">
       <aside>
         <section><p className="eyebrow">Aus Überführung</p>{eligible.length === 0 ? <p className="contract-empty">Keine bestätigte Überführung ohne Vertrag.</p> : eligible.map((item) => <article className="eligible-contract" key={item.transition_sponsor_id}><div><strong>{item.sponsor_name}</strong><span>{item.package_name} · {formatChf(item.proposed_value_cents)}</span></div>{canWrite && <button disabled={busy === item.transition_sponsor_id} onClick={() => void createTransitionContract(item)}>Entwurf erstellen</button>}</article>)}</section>
-        <section><p className="eyebrow">Verträge</p>{contracts.length === 0 ? <p className="contract-empty">Noch keine Verträge.</p> : contracts.map((contract) => <button className={`contract-list-item ${detail?.contract.id === contract.id ? "active" : ""}`} key={contract.id} onClick={() => void selectContract(contract.id)}><span><strong>{contract.sponsor_name}</strong><small>{contract.contract_number} · {contract.package_name}</small></span><i className={`contract-status contract-status--${contract.status}`}>{statusLabels[contract.status]}</i></button>)}</section>
+        <section><p className="eyebrow">Verträge</p>{activeContracts.length === 0 ? <p className="contract-empty">Noch keine aktiven Verträge.</p> : activeContracts.map((contract) => <button className={`contract-list-item ${detail?.contract.id === contract.id ? "active" : ""}`} key={contract.id} onClick={() => void selectContract(contract.id)}><span><strong>{contract.sponsor_name}</strong><small>{contract.contract_number} · V{contract.version_number} · {contract.package_name}</small></span><i className={`contract-status contract-status--${contract.status}`}>{statusLabels[contract.status]}</i></button>)}{archivedContracts.length > 0 && <details className="contract-archive"><summary>Archivierte Verträge ({archivedContracts.length})</summary>{archivedContracts.map((contract) => <button className={`contract-list-item ${detail?.contract.id === contract.id ? "active" : ""}`} key={contract.id} onClick={() => void selectContract(contract.id)}><span><strong>{contract.sponsor_name}</strong><small>{contract.contract_number} · V{contract.version_number} · {contract.package_name}</small></span><i className="contract-status contract-status--void">Aufgehoben</i></button>)}</details>}</section>
       </aside>
       <main>{detail ? <>
-        <header className="contract-detail-header"><div><span className={`contract-status contract-status--${detail.contract.status}`}>{statusLabels[detail.contract.status]}</span><h2>{detail.contract.contract_number}</h2><p>{detail.contract.sponsor_name} · {detail.contract.package_name} · {formatChf(detail.contract.package_snapshot.priceCents)}/Jahr</p></div><a className="access-secondary" href={`/api/contracts/${tenantId}/${detail.contract.id}/pdf`} target="_blank" rel="noreferrer">PDF öffnen</a></header>
+        <header className="contract-detail-header"><div><span className={`contract-status contract-status--${detail.contract.status}`}>{statusLabels[detail.contract.status]}</span><h2>{detail.contract.contract_number} <small>V{detail.contract.version_number}</small></h2><p>{detail.contract.sponsor_name} · {detail.contract.package_name} · {formatChf(detail.contract.package_snapshot.priceCents)}/Jahr</p>{detail.contract.parent_contract_id && <small className="contract-detail-header__revision">Korrekturversion eines früheren Vertragsstands</small>}</div><a className="access-secondary" href={`/api/contracts/${tenantId}/${detail.contract.id}/pdf`} target="_blank" rel="noreferrer">PDF öffnen</a></header>
         {detail.contract.status === "draft" ? <form className="contract-editor" onSubmit={saveDraft}>
+          <div className="contract-editor__selection">
+            <label><span>Sponsor</span><select required value={draftSponsorId} onChange={(event) => setDraftSponsorId(event.target.value)}><option value="">Sponsor wählen</option>{!sponsors.some((sponsor) => sponsor.id === draftSponsorId) && <option value={draftSponsorId}>{detail.contract.sponsor_name}</option>}{sponsors.map((sponsor) => <option key={sponsor.id} value={sponsor.id}>{sponsor.legal_name}</option>)}</select></label>
+            <label><span>Sponsoringpaket</span><select required value={draftPackageVersionId} onChange={(event) => selectDraftPackage(event.target.value)}><option value="">Paket wählen</option>{!catalog.some((option) => option.id === draftPackageVersionId) && <option value={draftPackageVersionId}>{detail.contract.package_name} · bisheriger Stand</option>}{catalog.map((option) => <option key={option.id} value={option.id}>{option.name} · {formatChf(option.price_cents)} · {option.duration_months} Monate</option>)}</select></label>
+            <label><span>Jahreswert in CHF</span><input required min="0" step="0.01" inputMode="decimal" value={draftAnnualValue} onChange={(event) => setDraftAnnualValue(event.target.value)}/></label>
+          </div>
           <label><span>Dokumenttitel</span><input required value={title} onChange={(event) => setTitle(event.target.value)}/></label>
           <label><span>Besondere Vereinbarungen</span><textarea required maxLength={5000} value={specialAgreements} onChange={(event) => setSpecialAgreements(event.target.value)}/><small>Produktionskosten, Eigentum, spezielle Platzierungen oder individuelle Abweichungen hier ausdrücklich aufführen.</small></label>
           <div className="contract-signing-method"><strong>Bestätigungsweg</strong><p>Nach der Freigabe prüft mittragen.ch die E-Mail-Adresse: Bestehende Konten bestätigen nach der Anmeldung, alle anderen Personen erhalten einen persönlichen Einmallink.</p></div>
@@ -362,7 +445,7 @@ export function ContractManagement({ tenantId, canWrite, canManage, onOpenOrgani
           <label className="contract-release-check"><input type="checkbox" checked={legalReview} onChange={(event) => setLegalReview(event.target.checked)}/><span>Ich bestätige, dass Vertragsinhalt, Absender, Paket, Beitrag, Laufzeit, Verlängerung und besondere Vereinbarungen fachlich sowie rechtlich geprüft wurden.</span></label>
           <button className="access-primary" type="button" disabled={!legalReview || busy === "release" || !canWrite} onClick={() => void releaseContract()}>{busy === "release" ? "Wird freigegeben …" : "Unveränderlich freigeben"}</button>
         </form> : <>
-          <section className="contract-proof"><h3>{detail.contract.status === "confirmed" ? detail.contract.confirmation_mode === "admin_legacy" ? "Altbestand übernommen" : "Elektronisch bestätigt" : detail.signingRequest ? "Zur Bestätigung versendet" : "Bereit zum Versand"}</h3>{detail.contract.confirmed_at && <p>{detail.contract.confirmed_name} · {detail.contract.confirmed_role}<br/>{detail.contract.confirmation_mode === "admin_legacy" ? "Ursprünglicher Abschluss: " : "Bestätigt: "}{new Intl.DateTimeFormat("de-CH", detail.contract.confirmation_mode === "admin_legacy" ? { dateStyle: "long" } : { dateStyle: "long", timeStyle: "short" }).format(new Date(detail.contract.confirmed_at))}{detail.contract.confirmation_mode === "admin_legacy" && detail.contract.confirmation_recorded_at && <><br/>Administrativ erfasst: {new Intl.DateTimeFormat("de-CH", { dateStyle: "long", timeStyle: "short" }).format(new Date(detail.contract.confirmation_recorded_at))} · {detail.contract.confirmed_email}</>}</p>}{detail.contract.confirmation_mode === "admin_legacy" && detail.contract.confirmation_note && <p className="contract-proof__note"><strong>Nachweis:</strong> {detail.contract.confirmation_note}</p>}<code>{detail.contract.snapshot_hash}</code></section>
+          <section className="contract-proof"><h3>{detail.contract.status === "void" ? "Vertrag aufgehoben" : detail.contract.status === "confirmed" ? detail.contract.confirmation_mode === "admin_legacy" ? "Altbestand übernommen" : "Elektronisch bestätigt" : detail.signingRequest ? "Zur Bestätigung versendet" : "Bereit zum Versand"}</h3>{detail.contract.confirmed_at && <p>{detail.contract.confirmed_name} · {detail.contract.confirmed_role}<br/>{detail.contract.confirmation_mode === "admin_legacy" ? "Ursprünglicher Abschluss: " : "Bestätigt: "}{new Intl.DateTimeFormat("de-CH", detail.contract.confirmation_mode === "admin_legacy" ? { dateStyle: "long" } : { dateStyle: "long", timeStyle: "short" }).format(new Date(detail.contract.confirmed_at))}{detail.contract.confirmation_mode === "admin_legacy" && detail.contract.confirmation_recorded_at && <><br/>Administrativ erfasst: {new Intl.DateTimeFormat("de-CH", { dateStyle: "long", timeStyle: "short" }).format(new Date(detail.contract.confirmation_recorded_at))} · {detail.contract.confirmed_email}</>}</p>}{detail.contract.confirmation_mode === "admin_legacy" && detail.contract.confirmation_note && <p className="contract-proof__note"><strong>Nachweis:</strong> {detail.contract.confirmation_note}</p>}{detail.contract.status === "void" && detail.contract.voided_at && <p className="contract-proof__note"><strong>Aufgehoben:</strong> {new Intl.DateTimeFormat("de-CH", { dateStyle: "long", timeStyle: "short" }).format(new Date(detail.contract.voided_at))}<br/><strong>Grund:</strong> {detail.contract.void_reason}</p>}<code>{detail.contract.snapshot_hash}</code></section>
           {detail.contract.status === "released" && <form className="contract-dispatch" onSubmit={sendForConfirmation}>
             <div><p className="eyebrow">Unterzeichnende Person</p><h3>Vertrag zur Bestätigung senden</h3><p>mittragen.ch erkennt automatisch, ob diese E-Mail-Adresse bereits ein Konto hat.</p></div>
             <label><span>E-Mail-Adresse</span><input type="email" required value={signerEmail} onChange={(event) => setSignerEmail(event.target.value)} autoComplete="email"/></label>
@@ -389,6 +472,16 @@ export function ContractManagement({ tenantId, canWrite, canManage, onOpenOrgani
             {detail.signingRequest.access_invited_at && <small>Zugangsstatus: {detail.signingRequest.access_status === "accepted" ? "angenommen" : detail.signingRequest.access_status === "existing_user" ? "bestehendes Konto verbunden" : detail.signingRequest.access_status === "sent" ? "Einladung versendet" : detail.signingRequest.access_status === "failed" ? "Versand fehlgeschlagen" : "wird vorbereitet"}</small>}
           </section>}
         </>}
+        {canWrite && (detail.contract.status === "released" || detail.contract.status === "confirmed") && <section className="contract-admin-actions">
+          <div><p className="eyebrow">Korrektur</p><h3>Neue Vertragsversion erstellen</h3><p>Der aktuelle Vertragsstand bleibt unverändert. Der neue Entwurf übernimmt alle Angaben und kann anschliessend vollständig bearbeitet werden. Mit seiner Freigabe wird dieser Stand automatisch aufgehoben.</p></div>
+          <label><span>Grund der Korrektur</span><textarea required maxLength={600} value={correctionReason} onChange={(event) => setCorrectionReason(event.target.value)} placeholder="z. B. Sponsoringpaket und Jahreswert per Saisonwechsel angepasst"/></label>
+          <button type="button" className="access-secondary" disabled={busy !== "" || !correctionReason.trim()} onClick={() => void createCorrection()}>{busy === "revision" ? "Wird erstellt …" : "Korrekturentwurf erstellen"}</button>
+        </section>}
+        {canWrite && detail.contract.status !== "void" && <section className="contract-admin-actions contract-admin-actions--danger">
+          <div><p className="eyebrow">Entfernen</p><h3>{detail.contract.status === "draft" ? "Entwurf löschen" : "Vertrag aufheben"}</h3><p>{detail.contract.status === "draft" ? "Der Entwurf und sein Entwurfsprotokoll werden endgültig entfernt." : "Der Vertrag wird nicht aus dem Nachweis gelöscht, sondern mit Grund und Zeitpunkt ins Archiv verschoben."}</p></div>
+          <label><span>Begründung</span><textarea required maxLength={600} value={removalReason} onChange={(event) => setRemovalReason(event.target.value)} placeholder={detail.contract.status === "draft" ? "z. B. irrtümlich doppelt erfasst" : "z. B. im gegenseitigen Einvernehmen aufgehoben"}/></label>
+          <button type="button" className="contract-danger-button" disabled={busy !== "" || !removalReason.trim()} onClick={() => void removeContract()}>{busy === "remove" ? "Wird verarbeitet …" : detail.contract.status === "draft" ? "Entwurf endgültig löschen" : "Vertrag nachvollziehbar aufheben"}</button>
+        </section>}
         <section className="contract-events"><p className="eyebrow">Nachweis</p><h3>Ereignisprotokoll</h3>{detail.events.map((event) => <div key={event.id}><span></span><p><strong>{eventLabels[event.event_type] ?? event.event_type}</strong><small>{new Intl.DateTimeFormat("de-CH", { dateStyle: "medium", timeStyle: "short" }).format(new Date(event.created_at))}{event.actor_email ? ` · ${event.actor_email}` : ""}</small></p></div>)}</section>
       </> : <div className="contract-empty-state"><h2>Vertrag auswählen</h2><p>Erstellen Sie oben einen Entwurf aus Sponsor und Paket oder öffnen Sie einen bestehenden Vertrag.</p></div>}</main>
     </div>}
