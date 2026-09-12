@@ -33,6 +33,8 @@ Der erste interaktive Produkt-Slice setzt die ausgewählte visuelle Richtung «K
 - gebrandete, durchsuchbare Vertrags-PDFs aus einem unveränderlichen Paket- und Stammdatensnapshot
 - protokollierte Klickbestätigung im Sponsorbereich mit Identität, E-Mail, Funktion, Zeitpunkt und Dokument-Fingerabdruck
 - unveränderliches Ereignisprotokoll sowie Row-Level Security für Verträge und Nachweise
+- mandantenfähiges Event-/Matchball-Sponsoring mit Spielplan, direkter öffentlicher Anmeldung ohne Konto und Doppelbelegungsschutz
+- gebrandete A4-Matchblätter je Spiel aus dem zentralen Organisationslogo und der hinterlegten Farbpalette
 
 Die SMTP- und Template-Konfiguration für Identity ist in [`docs/email-delivery.md`](docs/email-delivery.md) dokumentiert. Secrets werden ausschliesslich in den geschützten Netlify-/Resend-Einstellungen gespeichert.
 - serverseitige Rollenvergabe, automatische Einladungsübernahme und Schutz der letzten Owner-Rolle
@@ -71,6 +73,7 @@ npm run build
 - `/ueberfuehren` – geführter Überführungsprozess
 - `/login` – produktive Anmeldung und Registrierung
 - `/workspace` – geschützter, mandantengetrennter Workspace
+- `/matchball/:publicKey` – öffentliches Matchball-Formular einer Organisation ohne Login
 
 ## Netlify
 
