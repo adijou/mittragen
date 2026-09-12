@@ -107,10 +107,9 @@ export function parseContractDispatch(body: unknown): Result<{ signerEmail: stri
   const record = body as Record<string, unknown>;
   const signerEmail = optionalText(record.signerEmail, 320)?.toLowerCase();
   const signerName = optionalText(record.signerName, 160);
-  const signerRole = optionalText(record.signerRole, 120);
+  const signerRole = optionalText(record.signerRole, 120) ?? "Vertretungsberechtigte Person";
   if (!signerEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(signerEmail)) return { ok: false, error: "invalid_signer_email" };
   if (!signerName) return { ok: false, error: "signer_name_required" };
-  if (!signerRole) return { ok: false, error: "signer_role_required" };
   return { ok: true, value: { signerEmail, signerName, signerRole } };
 }
 

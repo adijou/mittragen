@@ -660,7 +660,13 @@ export default async (request: Request, context: Context) => {
       if (authorized.state === "not_released") return json({ error: "contract_not_released" }, 409);
       if (authorized.state === "signer_locked") return json({ error: "contract_signer_locked" }, 409);
 
-      const identityUser = await findIdentityUserByEmail(parsed.value.signerEmail);
+      let identityUser;
+      try {
+        identityUser = await findIdentityUserByEmail(parsed.value.signerEmail);
+      } catch (error) {
+        console.error("contract_identity_lookup_failed", { requestId: context.requestId, tenantId, contractId, error });
+        return json({ error: "contract_identity_lookup_failed", requestId: context.requestId }, 503);
+      }
       const mode = identityUser ? "account" as const : "one_time" as const;
       const rawToken = identityUser ? null : randomBytes(32).toString("base64url");
       const tokenHash = rawToken ? createHash("sha256").update(rawToken).digest("hex") : null;
