@@ -224,7 +224,7 @@ async function api<T>(path: string, options?: RequestInit): Promise<T> {
   return body;
 }
 
-function WorkspacePage({ user, setUser, onHome, onLogin, onPrototype }: { user: User | null; setUser: (user: User | null) => void; onHome: () => void; onLogin: () => void; onPrototype: () => void }) {
+function WorkspacePage({ user, setUser, onHome, onLogin, onPrototype: _onPrototype }: { user: User | null; setUser: (user: User | null) => void; onHome: () => void; onLogin: () => void; onPrototype: () => void }) {
   const [tenants, setTenants] = useState<Tenant[]>([]);
   const [selectedTenantId, setSelectedTenantId] = useState("");
   const [workspace, setWorkspace] = useState<WorkspaceData | null>(null);
@@ -347,7 +347,6 @@ function WorkspacePage({ user, setUser, onHome, onLogin, onPrototype }: { user: 
         {workspace?.membership.permissions.includes("sponsors:write") && <button className={workspaceSection === "imports" ? "active" : ""} onClick={() => setWorkspaceSection("imports")}>Datenübernahme</button>}
         {workspace?.membership.permissions.includes("members:manage") && <button className={workspaceSection === "team" ? "active" : ""} onClick={() => setWorkspaceSection("team")}>Team</button>}
         <button className={workspaceSection === "settings" ? "active" : ""} onClick={() => setWorkspaceSection("settings")}>Organisation</button>
-        <button onClick={onPrototype}>Überführungs-Prototyp</button>
       </nav>
       <button className="workspace-logout" onClick={signOut}>Abmelden</button>
     </aside>
