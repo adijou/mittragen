@@ -43,7 +43,7 @@ const errorLabels: Record<string, string> = {
   contract_source_unavailable: "Sponsor oder Paket ist für die Freigabe nicht mehr verfügbar.",
   invalid_signer_email: "Bitte eine gültige E-Mail-Adresse der unterzeichnenden Person eintragen.",
   signer_name_required: "Bitte den Namen der unterzeichnenden Person eintragen.",
-  signer_role_required: "Bitte die Funktion der unterzeichnenden Person eintragen.",
+  contract_identity_lookup_failed: "Die Kontoprüfung von Netlify Identity ist derzeit nicht verfügbar. Es wurde keine E-Mail ausgelöst.",
   contract_signing_delivery_failed: "Die Einladung konnte nicht per E-Mail versendet werden. Bitte prüfen Sie die Versandkonfiguration und versuchen Sie es erneut.",
   contract_access_invitation_failed: "Der Sponsorzugang konnte nicht eingerichtet oder versendet werden.",
   contract_copy_delivery_failed: "Die PDF-Kopie konnte nicht per E-Mail versendet werden.",
@@ -257,7 +257,7 @@ export function ContractManagement({ tenantId, canWrite, canManage, onOpenOrgani
             <div><p className="eyebrow">Unterzeichnende Person</p><h3>Vertrag zur Bestätigung senden</h3><p>Mittragen erkennt automatisch, ob diese E-Mail-Adresse bereits ein Konto hat.</p></div>
             <label><span>E-Mail-Adresse</span><input type="email" required value={signerEmail} onChange={(event) => setSignerEmail(event.target.value)} autoComplete="email"/></label>
             <label><span>Name</span><input required value={signerName} onChange={(event) => setSignerName(event.target.value)} autoComplete="name"/></label>
-            <label><span>Funktion beim Sponsor</span><input required value={signerRole} onChange={(event) => setSignerRole(event.target.value)} placeholder="z. B. Geschäftsführung"/></label>
+            <label><span>Funktion beim Sponsor (optional)</span><input value={signerRole} onChange={(event) => setSignerRole(event.target.value)} placeholder="Standard: vertretungsberechtigte Person"/></label>
             {detail.signingRequest && <div className={`contract-delivery-status contract-delivery-status--${detail.signingRequest.status}`}><strong>{detail.signingRequest.delivery_mode === "account" ? "Mittragen-Konto erkannt" : "Persönlicher Einmallink"}</strong><span>{detail.signingRequest.status === "failed" ? "Versand fehlgeschlagen" : detail.signingRequest.opened_at ? "Vertrag geöffnet" : "E-Mail versendet"} · gültig bis {new Intl.DateTimeFormat("de-CH", { dateStyle: "medium", timeStyle: "short" }).format(new Date(detail.signingRequest.expires_at))}</span></div>}
             <button className="access-primary" disabled={busy !== "" || !canWrite}>{busy === "send" ? "Wird versendet …" : detail.signingRequest ? "Erneut zur Bestätigung senden" : "Zur Bestätigung senden"}</button>
           </form>}
