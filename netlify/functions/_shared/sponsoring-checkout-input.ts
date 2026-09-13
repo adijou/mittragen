@@ -56,8 +56,9 @@ export function parseSponsoringCheckout(input: unknown, now = Date.now()) {
   const contactEmail = email(record.contactEmail);
   const contactPhone = optionalText(record.contactPhone, 80);
   const sponsorWebsite = website(record.website);
-  const signerName = requiredText(record.signerName, 160);
-  const signerEmail = email(record.signerEmail);
+  const signerIsContact = record.signerIsContact === true;
+  const signerName = signerIsContact ? contactName : requiredText(record.signerName, 160);
+  const signerEmail = signerIsContact ? contactEmail : email(record.signerEmail);
   const signerRole = optionalText(record.signerRole, 120) ?? "Vertretungsberechtigte Person";
 
   if (!legalName) return { ok: false as const, error: "invalid_checkout_legal_name" };
@@ -86,6 +87,7 @@ export function parseSponsoringCheckout(input: unknown, now = Date.now()) {
       signerName,
       signerEmail,
       signerRole,
+      signerIsContact,
     },
   };
 }

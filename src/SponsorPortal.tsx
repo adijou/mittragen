@@ -22,7 +22,10 @@ type SponsorContract = {
 };
 type Space = {
   tenantId: string;
-  sponsor: { id: string; legal_name: string; contact_email: string | null; tenant_name: string };
+  sponsor: {
+    id: string; legal_name: string; contact_email: string | null; tenant_name: string;
+    logoAvailable: boolean; logoUpdatedAt: string | null;
+  };
   proposal: Proposal | null;
   catalog: PackageVersion[];
   contracts: SponsorContract[];
@@ -51,6 +54,8 @@ export function SponsorPortal({ onHome, onLogin }: { onHome: () => void; onLogin
   const [signingAuthorityName, setSigningAuthorityName] = useState("");
   const [signingAuthorityRole, setSigningAuthorityRole] = useState("");
   const [contractAcknowledged, setContractAcknowledged] = useState(false);
+  const [logoFile, setLogoFile] = useState<File | null>(null);
+  const [logoInputKey, setLogoInputKey] = useState(0);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
@@ -98,6 +103,8 @@ export function SponsorPortal({ onHome, onLogin }: { onHome: () => void; onLogin
     setSigningAuthorityName("");
     setSigningAuthorityRole("");
     setContractAcknowledged(false);
+    setLogoFile(null);
+    setLogoInputKey((current) => current + 1);
   }, [selectedSpaceKey, space?.proposal?.id]);
 
   const goToLogin = () => { sessionStorage.setItem("mittragen-login-target", "sponsor"); onLogin(); };
@@ -149,6 +156,56 @@ export function SponsorPortal({ onHome, onLogin }: { onHome: () => void; onLogin
     finally { setBusy(""); }
   };
 
+  const updateLogoState = (available: boolean, updatedAt: string | null) => {
+    if (!space) return;
+    setSpaces((current) => current.map((item) => item.tenantId === space.tenantId && item.sponsor.id === space.sponsor.id
+      ? { ...item, sponsor: { ...item.sponsor, logoAvailable: available, logoUpdatedAt: updatedAt } }
+      : item));
+  };
+
+  const uploadLogo = async () => {
+    if (!space || !logoFile) return;
+    setError(""); setMessage("");
+    if (!["image/png", "image/jpeg"].includes(logoFile.type) || logoFile.size === 0 || logoFile.size > 2 * 1024 * 1024) {
+      setError("Bitte wählen Sie ein PNG- oder JPEG-Logo mit maximal 2 MB.");
+      return;
+    }
+    setBusy("logo-upload");
+    try {
+      const form = new FormData();
+      form.set("logo", logoFile);
+      const response = await fetch(`/api/sponsor-portal/${space.tenantId}/${space.sponsor.id}/logo`, { method: "POST", body: form });
+      const body = await response.json().catch(() => ({})) as { error?: string; logo?: { available: boolean; updatedAt: string | null } };
+      if (!response.ok || !body.logo) throw new Error(body.error ?? "sponsor_logo_save_failed");
+      updateLogoState(body.logo.available, body.logo.updatedAt);
+      setLogoFile(null); setLogoInputKey((current) => current + 1);
+      setMessage("Ihr Logo wurde sicher gespeichert.");
+    } catch (reason) {
+      const code = reason instanceof Error ? reason.message : "sponsor_logo_save_failed";
+      setError(code === "invalid_logo_size" ? "Das Logo darf maximal 2 MB gross sein."
+        : code === "invalid_logo_type" || code === "invalid_logo_file" || code === "invalid_logo_dimensions"
+          ? "Die Datei ist kein gültiges PNG- oder JPEG-Logo."
+          : code === "sponsor_access_denied" ? "Für diesen Sponsorbereich besteht kein Logo-Zugriff."
+            : "Das Logo konnte nicht gespeichert werden.");
+    } finally { setBusy(""); }
+  };
+
+  const deleteLogo = async () => {
+    if (!space) return;
+    setBusy("logo-delete"); setError(""); setMessage("");
+    try {
+      const result = await api<{ logo: { available: boolean; updatedAt: string | null } }>(
+        `/api/sponsor-portal/${space.tenantId}/${space.sponsor.id}/logo`, { method: "DELETE", body: "{}" },
+      );
+      updateLogoState(result.logo.available, result.logo.updatedAt);
+      setLogoFile(null); setLogoInputKey((current) => current + 1);
+      setMessage("Ihr Logo wurde entfernt.");
+    } catch (reason) {
+      const code = reason instanceof Error ? reason.message : "sponsor_logo_delete_failed";
+      setError(code === "sponsor_access_denied" ? "Für diesen Sponsorbereich besteht kein Logo-Zugriff." : "Das Logo konnte nicht entfernt werden.");
+    } finally { setBusy(""); }
+  };
+
   if (loading) return <div className="sponsor-portal"><main className="sponsor-portal__state">Sponsorbereich wird geladen …</main></div>;
   if (!user) return <div className="sponsor-portal"><header><button onClick={onHome} className="access-brand-button"><Brand/></button><button className="access-link" onClick={onHome}>Zur Website</button></header><main className="sponsor-portal__welcome"><p className="eyebrow">Persönlicher Sponsorbereich</p><h1>Ihr Vorschlag ist geschützt.</h1><p>Melden Sie sich mit der E-Mail-Adresse an, an die Ihre Einladung versandt wurde. Falls Sie noch kein Konto haben, können Sie es im nächsten Schritt erstellen.</p><button className="access-primary" onClick={goToLogin}>Anmelden oder Konto erstellen</button></main></div>;
 
@@ -158,6 +215,21 @@ export function SponsorPortal({ onHome, onLogin }: { onHome: () => void; onLogin
       {error && <p className="form-error" role="alert">{error}</p>}{message && <p className="form-success" role="status">{message}</p>}
       {!space ? <section className="sponsor-portal__welcome"><p className="eyebrow">Noch kein Zugang</p><h1>Keine offene Einladung gefunden.</h1><p>Prüfen Sie, ob Sie mit derselben E-Mail-Adresse angemeldet sind, an die die Einladung gesendet wurde. Abgelaufene Zugänge kann Ihre Organisation neu versenden.</p></section> : <>
         <section className="sponsor-portal__hero"><div><p className="eyebrow">{space.sponsor.tenant_name}</p><h1>Guten Tag {space.sponsor.legal_name}</h1><p>{space.proposal ? `${space.proposal.campaign_name} · ${space.proposal.target_period}` : "Ihr persönlicher Sponsorbereich"}</p></div>{spaces.length > 1 && <select value={selectedSpaceKey} onChange={(event) => setSelectedSpaceKey(event.target.value)}>{spaces.map((item) => <option value={`${item.tenantId}:${item.sponsor.id}`} key={`${item.tenantId}:${item.sponsor.id}`}>{item.sponsor.tenant_name}</option>)}</select>}</section>
+        <section className="sponsor-logo-management">
+          <div className="sponsor-logo-management__identity">
+            <div className="sponsor-logo-management__preview">{space.sponsor.logoAvailable
+              ? <img src={`/api/sponsor-portal/${space.tenantId}/${space.sponsor.id}/logo?v=${encodeURIComponent(space.sponsor.logoUpdatedAt ?? "current")}`} alt={`Logo ${space.sponsor.legal_name}`}/>
+              : <span>{space.sponsor.legal_name.slice(0, 2).toUpperCase()}</span>}</div>
+            <div><p className="eyebrow">Ihr Auftritt</p><h2>Sponsorlogo verwalten</h2><p>Hinterlegen Sie Ihr aktuelles Logo zentral für Sponsorendarstellungen dieser Organisation.</p></div>
+          </div>
+          <div className="sponsor-logo-management__actions">
+            <label className="access-secondary sponsor-logo-management__picker"><input key={logoInputKey} type="file" accept="image/png,image/jpeg" onChange={(event) => setLogoFile(event.target.files?.[0] ?? null)}/><span>{logoFile ? "Anderes Logo wählen" : space.sponsor.logoAvailable ? "Logo ersetzen" : "Logo auswählen"}</span></label>
+            {logoFile && <span className="sponsor-logo-management__filename">{logoFile.name}</span>}
+            {logoFile && <button className="access-primary" type="button" disabled={busy !== ""} onClick={() => void uploadLogo()}>{busy === "logo-upload" ? "Wird gespeichert …" : "Logo speichern"}</button>}
+            {space.sponsor.logoAvailable && <button className="access-text sponsor-logo-management__delete" type="button" disabled={busy !== ""} onClick={() => window.confirm("Möchten Sie Ihr hinterlegtes Logo wirklich entfernen?") && void deleteLogo()}>{busy === "logo-delete" ? "Wird entfernt …" : "Logo entfernen"}</button>}
+          </div>
+          <small>PNG oder JPEG, maximal 2 MB. Das Logo kann jederzeit ersetzt oder entfernt werden.</small>
+        </section>
         <ProposalSection space={space} proposedPackage={proposedPackage} selectedPackage={selectedPackage} selectedPackageId={selectedPackageId} setSelectedPackageId={setSelectedPackageId} acknowledged={acknowledged} setAcknowledged={setAcknowledged} busy={busy} respond={respond}/>
         {space.contracts.length > 0 && <section className="sponsor-contracts">
           <header><div><p className="eyebrow">Dokumente</p><h2>Ihre Sponsoringverträge</h2></div><p>Der freigegebene Inhalt ist mit einer Prüfsumme gesichert und bleibt unverändert nachvollziehbar.</p></header>

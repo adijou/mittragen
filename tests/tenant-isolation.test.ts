@@ -19,6 +19,7 @@ const eventAllocationMigrationPath = new URL("../netlify/database/migrations/202
 const contractCorrectionMigrationPath = new URL("../netlify/database/migrations/20260913053000_contract_corrections_and_removal/migration.sql", import.meta.url);
 const matchballClassificationMigrationPath = new URL("../netlify/database/migrations/20260913070000_matchball_entitlement_classification/migration.sql", import.meta.url);
 const publicCheckoutMigrationPath = new URL("../netlify/database/migrations/20260913100000_public_sponsoring_checkout/migration.sql", import.meta.url);
+const sponsorLogoMigrationPath = new URL("../netlify/database/migrations/20260913213000_sponsor_logo_brand_assets/migration.sql", import.meta.url);
 
 test("all tenant-owned tables enforce row-level security", async () => {
   const sql = await readFile(migrationPath, "utf8");
@@ -225,4 +226,12 @@ test("public sponsoring checkout is tenant-isolated, explicitly approved and tra
   assert.match(sql, /confirmed_at TIMESTAMPTZ/i);
   assert.match(sql, /sponsorship_contracts\.source = 'public_checkout'/i);
   assert.match(sql, /sponsorship_contracts\.created_by = app_current_user_id\(\)/i);
+});
+
+test("sponsor logo metadata remains on the tenant-owned sponsor record", async () => {
+  const sql = await readFile(sponsorLogoMigrationPath, "utf8");
+  assert.match(sql, /ALTER TABLE sponsors/i);
+  assert.match(sql, /logo_blob_key TEXT/i);
+  assert.match(sql, /logo_content_type IN \('image\/png', 'image\/jpeg'\)/i);
+  assert.match(sql, /logo_updated_at TIMESTAMPTZ/i);
 });

@@ -417,9 +417,9 @@ export default async (request: Request, context: Context) => {
         (tenant_id, contract_id, event_type, actor_user_id, actor_email, evidence)
         VALUES
           ($1,$2,'created',$3,$4,jsonb_build_object('source','public_checkout','reference',$5::text,'annual_value_cents',$6::integer)),
-          ($1,$2,'released',$3,$4,jsonb_build_object('snapshot_hash',$7::text,'online_direct_package_approved_by',$8::text,'online_direct_package_approved_at',$9::text,'contract_terms_accepted',true,'authority_confirmed',true,'user_agent',$10::text))`,
+          ($1,$2,'released',$3,$4,jsonb_build_object('snapshot_hash',$7::text,'online_direct_package_approved_by',$8::text,'online_direct_package_approved_at',$9::text,'contract_terms_accepted',true,'authority_confirmed',true,'user_agent',$10::text,'signer_is_contact',$11::boolean))`,
       [settings.tenant_id, contractId, actorId, parsed.value.signerEmail, reference, selected.price_cents,
-        hash, selected.approved_by, selected.approved_at, (request.headers.get("user-agent") ?? "unknown").slice(0, 500)]);
+        hash, selected.approved_by, selected.approved_at, (request.headers.get("user-agent") ?? "unknown").slice(0, 500), parsed.value.signerIsContact]);
       await client.query(`INSERT INTO audit_events
         (tenant_id, actor_user_id, action, object_type, object_id, metadata)
         VALUES ($1,$2,'contract.public_checkout_created','sponsorship_contract',$3,

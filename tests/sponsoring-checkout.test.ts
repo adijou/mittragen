@@ -40,6 +40,31 @@ test("public checkout normalizes identity data and requires both acknowledgement
   assert.deepEqual(parseSponsoringCheckout({ ...valid, authorityConfirmed: false }, 2_000), { ok: false, error: "checkout_authority_confirmation_required" });
 });
 
+test("public checkout uses the contact as signer unless another signer is selected", () => {
+  const samePerson = parseSponsoringCheckout({
+    ...valid,
+    signerIsContact: true,
+    signerName: "",
+    signerEmail: "",
+    signerRole: "",
+  }, 2_000);
+  assert.equal(samePerson.ok, true);
+  if (samePerson.ok) {
+    assert.equal(samePerson.value.signerName, "Maria Muster");
+    assert.equal(samePerson.value.signerEmail, "kontakt@muster.example");
+    assert.equal(samePerson.value.signerRole, "Vertretungsberechtigte Person");
+    assert.equal(samePerson.value.signerIsContact, true);
+  }
+
+  const anotherPerson = parseSponsoringCheckout({ ...valid, signerIsContact: false }, 2_000);
+  assert.equal(anotherPerson.ok, true);
+  if (anotherPerson.ok) {
+    assert.equal(anotherPerson.value.signerName, "Max Muster");
+    assert.equal(anotherPerson.value.signerEmail, "signatur@muster.example");
+    assert.equal(anotherPerson.value.signerIsContact, false);
+  }
+});
+
 test("public checkout rejects bots, instant submissions and manipulated package identifiers", () => {
   assert.deepEqual(parseSponsoringCheckout({ ...valid, websiteTrap: "spam" }, 2_000), { ok: false, error: "sponsoring_checkout_rejected" });
   assert.deepEqual(parseSponsoringCheckout({ ...valid, startedAt: 1_500 }, 2_000), { ok: false, error: "sponsoring_checkout_rejected" });
@@ -67,9 +92,14 @@ test("admin and public UI expose approval, public link and online contract prove
   const dossier = await readFile(new URL("../src/SponsoringDossier.tsx", import.meta.url), "utf8");
   const contracts = await readFile(new URL("../src/ContractManagement.tsx", import.meta.url), "utf8");
   const app = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
+  const checkout = await readFile(new URL("../src/SponsoringCheckoutPublic.tsx", import.meta.url), "utf8");
   assert.match(packages, /Online-Direktabschluss/);
   assert.match(packages, /Preis, Laufzeit und sämtliche Leistungen geprüft/);
   assert.match(dossier, /\/sponsoring\/\$\{data\.checkout\.publicKey\}/);
   assert.match(contracts, /Online-Direktabschluss/);
   assert.match(app, /\^\\\/sponsoring\\\//);
+  assert.match(checkout, /Eine andere Person unterzeichnet den Vertrag/);
+  assert.match(checkout, /Standardmässig erhält diese Kontaktperson den Vertrag/);
+  assert.match(checkout, /signerIsContact: !differentSigner/);
+  assert.doesNotMatch(checkout, /type="file"/);
 });
