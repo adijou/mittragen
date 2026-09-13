@@ -7,6 +7,7 @@ const internalSource = new URL("../netlify/functions/event-sponsoring.mts", impo
 const publicUiSource = new URL("../src/EventSponsoringPublic.tsx", import.meta.url);
 const flyerPdfSource = new URL("../netlify/functions/_shared/event-flyer-pdf.ts", import.meta.url);
 const migrationSource = new URL("../netlify/database/migrations/20260912223000_multiple_event_sponsors_and_package_allocations/migration.sql", import.meta.url);
+const classificationMigrationSource = new URL("../netlify/database/migrations/20260913070000_matchball_entitlement_classification/migration.sql", import.meta.url);
 
 test("multiple event sponsors replace the former single-booking constraint", async () => {
   const migration = await readFile(migrationSource, "utf8");
@@ -29,6 +30,18 @@ test("seasonal package allocations are quota-protected, tenant-isolated and audi
   assert.match(migration, /FORCE ROW LEVEL SECURITY/);
   assert.match(internalApi, /event_sponsoring\.package_allocation_created/);
   assert.match(internalApi, /fulfillment:write/);
+});
+
+test("only explicit matchball rights appear as event entitlements", async () => {
+  const migration = await readFile(classificationMigrationSource, "utf8");
+  const internalApi = await readFile(internalSource, "utf8");
+  const explicitMatchball = /lower\(concat_ws\(' ', right_item\.name, right_item\.description\)\) ~ 'match\[ -\]\?ball'/;
+
+  assert.match(internalApi, explicitMatchball);
+  assert.match(migration, explicitMatchball);
+  assert.match(internalApi, /'\(\[0-9\]\+\)\[\^0-9\]\{0,30\}\(matchball\|matchspiel\|heimspiel\)'/);
+  assert.doesNotMatch(internalApi, /WHERE lower\(concat_ws\(' ', right_item\.name, right_item\.description, right_item\.schedule_text, right_item\.channel\)\)/);
+  assert.match(migration, /matchball_entitlement_not_found/);
 });
 
 test("the public page explains multiple sponsorships and the PDF is match information", async () => {

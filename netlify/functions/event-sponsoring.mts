@@ -96,7 +96,7 @@ async function listEntitlements(client: DatabaseClient, tenantId: string, curren
     JOIN sponsorship_rights right_item ON right_item.package_version_id = source.package_version_id AND right_item.tenant_id = $1
     LEFT JOIN event_package_allocations allocation ON allocation.tenant_id = $1 AND allocation.sponsor_id = source.sponsor_id
       AND allocation.sponsorship_right_id = right_item.id AND allocation.season_key = $2 AND allocation.status = 'allocated'
-    WHERE lower(concat_ws(' ', right_item.name, right_item.description, right_item.schedule_text, right_item.channel)) ~ '(matchball|match[ -]?spiel|heimspiel)'
+    WHERE lower(concat_ws(' ', right_item.name, right_item.description)) ~ 'match[ -]?ball'
     GROUP BY source.sponsor_id, source.sponsor_name, source.package_version_id, version.name, right_item.id, right_item.name, right_item.quantity, right_item.description, right_item.schedule_text, right_item.channel
     ORDER BY lower(source.sponsor_name), lower(version.name), lower(right_item.name)`, [tenantId, currentSeason]);
   return result.rows.map((row) => ({ sponsorId: row.sponsor_id, sponsorName: row.sponsor_name, packageVersionId: row.package_version_id, packageName: row.package_name, rightId: row.right_id, rightName: row.right_name, allowance: row.allowance, usedCount: Number(row.used_count), remainingCount: Math.max(0, row.allowance - Number(row.used_count)) }));
