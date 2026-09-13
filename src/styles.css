@@ -1492,6 +1492,13 @@ td small { margin-top: 3px; color: var(--ink-3); }
 .contract-signing-top > span { color: var(--ink-3); font-size: 13px; font-weight: 700; }
 .contract-signing-page > main { width: min(860px, calc(100% - 32px)); display: grid; gap: 18px; margin: 42px auto; }
 .contract-signing-card { padding: clamp(23px, 4vw, 36px); border: 1px solid var(--line); border-radius: 18px; background: white; box-shadow: 0 16px 50px rgba(11,33,68,.08); }
+.contract-signing-intro { border-top: 5px solid var(--club-accent, var(--blue)); }
+.contract-signing-club { display: flex; align-items: center; gap: 14px; margin-bottom: 27px; padding-bottom: 23px; border-bottom: 1px solid var(--line); }
+.contract-signing-club img, .contract-signing-club > span { width: 76px; height: 58px; flex: 0 0 auto; object-fit: contain; }
+.contract-signing-club > span { display: grid; place-items: center; border-radius: 12px; background: var(--club-primary, var(--navy)); color: white; font-size: 18px; font-weight: 850; }
+.contract-signing-club > div { display: grid; gap: 4px; min-width: 0; }
+.contract-signing-club small { color: var(--ink-3); font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.contract-signing-club strong { overflow-wrap: anywhere; font-size: 17px; }
 .contract-signing-intro h1 { margin: 8px 0; font-size: clamp(30px, 5vw, 45px); letter-spacing: -.04em; }
 .contract-signing-intro > p:not(.eyebrow) { color: var(--ink-3); }
 .contract-signing-intro dl { display: grid; grid-template-columns: 1fr 1fr; margin: 26px 0; border-top: 1px solid var(--line); }
@@ -1659,7 +1666,7 @@ td small { margin-top: 3px; color: var(--ink-3); }
 .checkout-public--state { display: grid; place-content: center; padding: 32px; text-align: center; }
 .checkout-public--state h1 { margin-bottom: 5px; }
 .checkout-public__header { min-height: 88px; display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 14px max(24px, calc((100vw - 1180px) / 2)); border-bottom: 1px solid rgba(11,33,66,.1); background: white; }
-.checkout-public__platform { color: #1f6bff; font-size: 18px; font-weight: 850; letter-spacing: -.035em; text-decoration: none; }
+.checkout-public__platform { display: inline-flex; color: #1f6bff; text-decoration: none; }
 .checkout-public__club { display: flex; align-items: center; gap: 12px; }
 .checkout-public__club img, .checkout-public__club > span { width: 58px; height: 48px; object-fit: contain; }
 .checkout-public__club > span { display: grid; place-items: center; border-radius: 9px; background: var(--club-primary); color: white; font-weight: 850; }

@@ -11,6 +11,7 @@ type SigningData = {
   };
   signer: { name: string; role: string; email: string };
   invitation: { status: string; expiresAt: string };
+  branding: { primaryColor: string; accentColor: string; logoAvailable: boolean };
 };
 
 const errorLabels: Record<string, string> = {
@@ -95,14 +96,25 @@ export function ContractSigning({ onHome }: { onHome: () => void }) {
     } finally { setBusy(""); }
   };
 
-  return <div className="contract-signing-page">
+  const style = data ? {
+    "--club-primary": data.branding.primaryColor,
+    "--club-accent": data.branding.accentColor,
+  } as React.CSSProperties : undefined;
+
+  return <div className="contract-signing-page" style={style}>
     <header className="contract-signing-top"><button className="brand-button" onClick={onHome}><Brand compact/></button><span>Sichere Vertragsbestätigung</span></header>
     <main>
       {busy === "load" && <section className="contract-signing-card"><p>Vertrag wird sicher geladen …</p></section>}
       {error && !data && <section className="contract-signing-card contract-signing-error"><p className="eyebrow">Link nicht verfügbar</p><h1>Der Vertrag kann nicht geöffnet werden.</h1><p>{error}</p></section>}
       {data && <>
         <section className="contract-signing-card contract-signing-intro">
-          <p className="eyebrow">{data.contract.organization.legalName}</p>
+          <div className="contract-signing-club">
+            {data.branding.logoAvailable
+              ? <img src={`/api/contract-signing/${token}/logo`} alt={`Logo ${data.contract.organization.legalName}`} referrerPolicy="no-referrer"/>
+              : <span aria-hidden="true">{data.contract.organization.legalName.slice(0, 2).toUpperCase()}</span>}
+            <div><small>Vertrag von</small><strong>{data.contract.organization.legalName}</strong></div>
+          </div>
+          <p className="eyebrow">Sponsoringvertrag</p>
           <h1>{data.contract.title}</h1>
           <p>{data.contract.contractNumber} · unveränderlich freigegeben am {formatDateTime(data.contract.releasedAt)}</p>
           <dl><div><dt>Sponsor</dt><dd>{data.contract.sponsor.legalName}</dd></div><div><dt>Paket</dt><dd>{data.contract.package.name}</dd></div><div><dt>Jahreswert</dt><dd>{formatChf(data.contract.package.priceCents)}</dd></div><div><dt>Laufzeit</dt><dd>{data.contract.package.durationMonths} Monate</dd></div></dl>

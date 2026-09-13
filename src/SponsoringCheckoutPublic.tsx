@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { Brand } from "./ProductBrand";
 
 type CheckoutPackage = {
   id: string;
@@ -122,7 +123,7 @@ export function SponsoringCheckoutPublic() {
 
   const style = { "--club-primary": data.organization.brandPrimaryColor, "--club-accent": data.organization.brandAccentColor } as React.CSSProperties;
   return <main className="checkout-public" style={style}>
-    <header className="checkout-public__header"><a href="/" className="checkout-public__platform">mittragen.ch</a><div className="checkout-public__club">{data.organization.logoAvailable ? <img src={`/api/sponsoring-checkout/${publicKey}/logo`} alt={`Logo ${data.organization.name}`}/> : <span>{data.organization.name.slice(0, 2).toUpperCase()}</span>}<strong>{data.organization.name}</strong></div></header>
+    <header className="checkout-public__header"><a href="/" className="checkout-public__platform" aria-label="Zur mittragen.ch Startseite"><Brand compact/></a><div className="checkout-public__club">{data.organization.logoAvailable ? <img src={`/api/sponsoring-checkout/${publicKey}/logo`} alt={`Logo ${data.organization.name}`}/> : <span>{data.organization.name.slice(0, 2).toUpperCase()}</span>}<strong>{data.organization.name}</strong></div></header>
 
     <section className="checkout-public__hero"><div><p className="eyebrow">Sponsoringpartnerschaft</p><h1>{data.profile.headline}</h1><p>{data.profile.introduction}</p>{data.profile.seasonLabel && <span>{data.profile.seasonLabel}</span>}</div></section>
 

@@ -1,4 +1,5 @@
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from "pdf-lib";
+import { drawPlatformCredit } from "./pdf-platform-brand.ts";
 
 type DossierRight = {
   name: string;
@@ -200,7 +201,7 @@ export async function createDossierPdf(data: DossierPdfData): Promise<Uint8Array
     coverY -= 18;
   }
   if (data.profile.seasonLabel) cover.drawText(fitLine(data.profile.seasonLabel, bold, 10, 300), { x: MARGIN, y: 82, size: 10, font: bold, color: GOLD });
-  cover.drawText("erstellt mit mittragen.ch", { x: MARGIN, y: 56, size: 8, font: regular, color: LIGHT_BLUE });
+  drawPlatformCredit(cover, { x: MARGIN, y: 56, regular, bold, color: rgb(202 / 255, 208 / 255, 217 / 255) });
 
   let page: PDFPage = cover;
   let y = 0;
@@ -292,7 +293,7 @@ export async function createDossierPdf(data: DossierPdfData): Promise<Uint8Array
   pages.forEach((target, index) => {
     if (index === 0) return;
     target.drawLine({ start: { x: MARGIN, y: 40 }, end: { x: A4.width - MARGIN, y: 40 }, thickness: 0.6, color: LINE });
-    target.drawText("erstellt mit mittragen.ch", { x: MARGIN, y: 24, size: 7, font: regular, color: MUTED });
+    drawPlatformCredit(target, { x: MARGIN, y: 24, regular, bold, color: MUTED });
     const pageNumber = `Seite ${index + 1} von ${pages.length}`;
     target.drawText(pageNumber, { x: A4.width - MARGIN - regular.widthOfTextAtSize(pageNumber, 7), y: 24, size: 7, font: regular, color: MUTED });
   });

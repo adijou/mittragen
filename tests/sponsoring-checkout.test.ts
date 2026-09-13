@@ -84,6 +84,8 @@ test("direct checkout uses approved catalog values and the existing signing mech
   assert.match(source, /randomBytes\(32\)\.toString\("base64url"\)/);
   assert.match(source, /createHash\("sha256"\)\.update\(rawToken\)/);
   assert.match(source, /sendContractSigningEmail/);
+  assert.match(source, /organizationLogoUrl/);
+  assert.match(source, /\/api\/sponsoring-checkout\/\$\{publicKey\}\/logo/);
   assert.match(source, /checkout_rate_limited/);
 });
 
@@ -101,5 +103,6 @@ test("admin and public UI expose approval, public link and online contract prove
   assert.match(checkout, /Eine andere Person unterzeichnet den Vertrag/);
   assert.match(checkout, /Standardmässig erhält diese Kontaktperson den Vertrag/);
   assert.match(checkout, /signerIsContact: !differentSigner/);
+  assert.match(checkout, /<Brand compact\/>/);
   assert.doesNotMatch(checkout, /type="file"/);
 });

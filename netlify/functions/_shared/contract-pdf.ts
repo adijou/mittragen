@@ -1,5 +1,6 @@
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFImage, type PDFPage } from "pdf-lib";
 import type { OrganizationPdfBrand } from "./organization-pdf-brand.ts";
+import { drawPlatformCredit } from "./pdf-platform-brand.ts";
 
 type ContractRight = {
   name: string;
@@ -235,8 +236,7 @@ export async function createContractPdf(data: ContractPdfData): Promise<Uint8Arr
     target.drawText(fitLine(data.organization.legalName, bold, 11, Math.max(120, nameWidth)), {
       x: nameX, y: A4.height - 45, size: 11, font: bold, color: INK,
     });
-    const platform = "erstellt mit mittragen.ch";
-    target.drawText(platform, { x: A4.width - MARGIN - regular.widthOfTextAtSize(platform, 7.5), y: A4.height - 44, size: 7.5, font: regular, color: MUTED });
+    drawPlatformCredit(target, { right: A4.width - MARGIN, y: A4.height - 44, regular, bold, color: MUTED });
     target.drawLine({ start: { x: MARGIN, y: A4.height - 67 }, end: { x: A4.width - MARGIN, y: A4.height - 67 }, thickness: 0.7, color: ACCENT });
   };
 

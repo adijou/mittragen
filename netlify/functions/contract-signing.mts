@@ -7,7 +7,7 @@ import { parseContractAcknowledgement } from "./_shared/contract-input.ts";
 import { createContractPdf, type ContractPdfData } from "./_shared/contract-pdf.ts";
 import { loadOrganizationPdfBrand, type OrganizationPdfBrand } from "./_shared/organization-pdf-brand.ts";
 
-const route = /^\/api\/contract-signing\/([A-Za-z0-9_-]{43})(?:\/(pdf|confirm))?$/;
+const route = /^\/api\/contract-signing\/([A-Za-z0-9_-]{43})(?:\/(pdf|confirm|logo))?$/;
 
 type SigningRow = {
   id: string;
@@ -46,6 +46,12 @@ type PublicContract = {
   confirmation_mode: "authenticated_account" | "one_time_link" | "legacy_portal" | "admin_legacy" | null;
   confirmation_recorded_at: string | null;
   confirmation_note: string | null;
+};
+
+type PublicBranding = {
+  primaryColor: string;
+  accentColor: string;
+  logoAvailable: boolean;
 };
 
 function verifyMutation(request: Request): Response | null {
@@ -124,7 +130,7 @@ export default async (request: Request, context: Context) => {
   const rawToken = match[1];
   const action = match[2] ?? "detail";
   const tokenHash = createHash("sha256").update(rawToken).digest("hex");
-  if ((action === "detail" || action === "pdf") && request.method !== "GET") return json({ error: "method_not_allowed" }, 405);
+  if ((action === "detail" || action === "pdf" || action === "logo") && request.method !== "GET") return json({ error: "method_not_allowed" }, 405);
   if (action === "confirm" && request.method !== "POST") return json({ error: "method_not_allowed" }, 405);
 
   if (action === "confirm") {
@@ -143,6 +149,13 @@ export default async (request: Request, context: Context) => {
       const contract = await loadContract(client, signing);
       if (!contract) return { state: "not_found" as const };
 
+      if (action === "logo") {
+        const brand = await loadOrganizationPdfBrand(client, signing.tenant_id, context.requestId);
+        return brand.logo
+          ? { state: "logo" as const, logo: brand.logo }
+          : { state: "logo_not_found" as const };
+      }
+
       if (action === "detail") {
         if (signing.status === "sent") {
           await client.query(`UPDATE contract_signing_requests SET status = 'opened', opened_at = now(), updated_at = now()
@@ -154,7 +167,20 @@ export default async (request: Request, context: Context) => {
           signing.status = "opened";
           signing.opened_at = new Date().toISOString();
         }
-        return { state: "ready" as const, signing, contract };
+        const brandingResult = await client.query<{
+          brand_primary_color: string;
+          brand_accent_color: string;
+          logo_available: boolean;
+        }>(`SELECT brand_primary_color, brand_accent_color,
+                   (logo_blob_key IS NOT NULL AND logo_content_type IS NOT NULL) AS logo_available
+            FROM tenant_contract_settings WHERE tenant_id = $1 LIMIT 1`, [signing.tenant_id]);
+        const brandingRow = brandingResult.rows[0];
+        const branding: PublicBranding = {
+          primaryColor: brandingRow?.brand_primary_color ?? "#0B2142",
+          accentColor: brandingRow?.brand_accent_color ?? "#1F6BFF",
+          logoAvailable: brandingRow?.logo_available ?? false,
+        };
+        return { state: "ready" as const, signing, contract, branding };
       }
 
       if (action === "pdf") {
@@ -192,6 +218,7 @@ export default async (request: Request, context: Context) => {
     });
 
     if (result.state === "not_found" || result.state === "invalid") return json({ error: "contract_signing_link_invalid" }, 404);
+    if (result.state === "logo_not_found") return json({ error: "logo_not_found" }, 404);
     if (result.state === "expired") return json({ error: "contract_signing_link_expired" }, 410);
     if (result.state === "already_confirmed") return json({ error: "contract_already_confirmed" }, 409);
     if (result.state === "not_released") return json({ error: "contract_not_released" }, 409);
@@ -200,6 +227,14 @@ export default async (request: Request, context: Context) => {
       headers: {
         "Content-Type": "application/pdf",
         "Content-Disposition": `attachment; filename="Sponsoringvertrag_${result.number}.pdf"`,
+        "Cache-Control": "private, no-store",
+        "X-Content-Type-Options": "nosniff",
+        "Referrer-Policy": "no-referrer",
+      },
+    });
+    if (result.state === "logo") return new Response(Uint8Array.from(result.logo.bytes).buffer, {
+      headers: {
+        "Content-Type": result.logo.contentType,
         "Cache-Control": "private, no-store",
         "X-Content-Type-Options": "nosniff",
         "Referrer-Policy": "no-referrer",
@@ -220,6 +255,7 @@ export default async (request: Request, context: Context) => {
       },
       signer: { name: result.signing.signer_name, role: result.signing.signer_role, email: result.signing.signer_email },
       invitation: { status: result.signing.status, expiresAt: result.signing.expires_at },
+      branding: result.branding,
     }, { headers: { "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer" } });
   } catch (error) {
     console.error("contract_signing_request_failed", { requestId: context.requestId, action, error });
@@ -232,5 +268,6 @@ export const config: Config = {
     "/api/contract-signing/:token",
     "/api/contract-signing/:token/pdf",
     "/api/contract-signing/:token/confirm",
+    "/api/contract-signing/:token/logo",
   ],
 };

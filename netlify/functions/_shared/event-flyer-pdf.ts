@@ -1,5 +1,6 @@
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFImage, type PDFPage } from "pdf-lib";
 import type { OrganizationPdfBrand } from "./organization-pdf-brand.ts";
+import { drawPlatformCredit } from "./pdf-platform-brand.ts";
 
 export type EventFlyerPdfData = {
   generatedAt: string;
@@ -228,8 +229,9 @@ export async function createEventFlyerPdf(data: EventFlyerPdfData): Promise<Uint
 
   page.drawRectangle({ x: 0, y: 0, width: A4.width, height: 52, color: PRIMARY });
   page.drawText("Wir wünschen ein faires und spannendes Spiel.", { x: MARGIN, y: 29, font: bold, size: 9, color: WHITE });
-  const footer = limitedLines(`${safe(data.organization.contactName || data.organization.name)} · mittragen.ch`, regular, 7, 245, 1)[0] ?? "mittragen.ch";
-  page.drawText(footer, { x: A4.width - MARGIN - regular.widthOfTextAtSize(footer, 7), y: 29, font: regular, size: 7, color: ACCENT_ON_DARK });
+  const footer = limitedLines(safe(data.organization.contactName || data.organization.name), regular, 7, 205, 1)[0] ?? safe(data.organization.name);
+  page.drawText(footer, { x: A4.width - MARGIN - 205, y: 29, font: regular, size: 7, color: ACCENT_ON_DARK });
+  drawPlatformCredit(page, { right: A4.width - MARGIN, y: 16, regular, bold, color: rgb(190 / 255, 198 / 255, 209 / 255) });
 
   return pdf.save();
 }

@@ -50,6 +50,18 @@ test("contract confirmation automatically separates identified accounts from one
   assert.match(publicSigning, /confirmation_mode','one_time_link'/);
 });
 
+test("one-time signing displays tenant branding through the validated contract token", async () => {
+  const publicSigning = await readFile(new URL("../netlify/functions/contract-signing.mts", import.meta.url), "utf8");
+  const signingUi = await readFile(new URL("../src/ContractSigning.tsx", import.meta.url), "utf8");
+  assert.match(publicSigning, /pdf\|confirm\|logo/);
+  assert.match(publicSigning, /action === "logo"/);
+  assert.match(publicSigning, /loadOrganizationPdfBrand/);
+  assert.match(publicSigning, /"Cache-Control": "private, no-store"/);
+  assert.match(publicSigning, /logoAvailable/);
+  assert.match(signingUi, /\/api\/contract-signing\/\$\{token\}\/logo/);
+  assert.match(signingUi, /Vertrag von/);
+});
+
 test("access creation and PDF delivery remain explicit admin follow-up actions", async () => {
   const contracts = await readFile(new URL("../netlify/functions/contracts.mts", import.meta.url), "utf8");
   assert.match(contracts, /\/access\$/);

@@ -20,6 +20,7 @@ export type ContractSigningEmail = {
   confirmationUrl: string;
   deliveryMode: "account" | "one_time";
   expiresAt: string;
+  organizationLogoUrl?: string;
 };
 
 export type ContractCopyEmail = Omit<ContractSigningEmail, "confirmationUrl" | "deliveryMode" | "expiresAt"> & {
@@ -47,6 +48,24 @@ function formatChf(cents: number) {
   return new Intl.NumberFormat("de-CH", { style: "currency", currency: "CHF", maximumFractionDigits: 0 }).format(cents / 100);
 }
 
+function safeRemoteImageUrl(value: string | undefined) {
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
+function organizationTrustBlock(input: ContractSigningEmail) {
+  const logoUrl = safeRemoteImageUrl(input.organizationLogoUrl);
+  const logo = logoUrl
+    ? `<td width="116" style="padding-right:18px;vertical-align:middle"><img src="${escapeHtml(logoUrl)}" width="98" alt="Logo ${escapeHtml(input.organizationName)}" style="display:block;max-width:98px;max-height:62px;width:auto;height:auto;border:0;object-fit:contain"></td>`
+    : "";
+  return `<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin:0 0 25px;border:1px solid #dfe6ef;border-left:4px solid #1f6bff;border-radius:12px;background:#f8fafc"><tr><td style="padding:17px 18px"><table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr>${logo}<td style="vertical-align:middle"><div style="font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#53657a">Vertrag von</div><div style="margin-top:5px;font-size:17px;font-weight:800;color:#0b2142">${escapeHtml(input.organizationName)}</div></td></tr></table></td></tr></table>`;
+}
+
 function emailShell(title: string, body: string) {
   return `<!doctype html><html lang="de"><body style="margin:0;background:#f4f7fb;color:#0b2142;font-family:Inter,Arial,Helvetica,sans-serif"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="padding:32px 16px"><tr><td align="center"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:620px;background:#fff;border:1px solid #dfe6ef;border-radius:18px;overflow:hidden"><tr><td style="padding:26px 32px;background:#0b2142;color:#fff"><div style="font-size:20px;font-weight:800;letter-spacing:-.04em">mittragen<span style="color:#7fadff">.ch</span><span style="color:#f2b632"> ·</span></div><div style="margin-top:10px;font-size:24px;font-weight:700">${escapeHtml(title)}</div></td></tr><tr><td style="padding:32px">${body}</td></tr></table></td></tr></table></body></html>`;
 }
@@ -59,7 +78,7 @@ export function buildContractSigningEmail(input: ContractSigningEmail) {
   const button = input.deliveryMode === "account" ? "Anmelden und bestätigen" : "Vertrag ansehen und bestätigen";
   const subject = `Sponsoringvertrag ${input.contractNumber} bestätigen`;
   const facts = `${escapeHtml(input.sponsorName)} · ${escapeHtml(input.packageName)} · ${escapeHtml(formatChf(input.annualValueCents))} pro Jahr`;
-  const html = emailShell("Vertrag zur Bestätigung", `<h1 style="margin:0 0 18px;font-size:25px">Guten Tag ${escapeHtml(input.signerName)}</h1><p style="font-size:16px;line-height:1.65">${escapeHtml(input.organizationName)} hat den Sponsoringvertrag <strong>${escapeHtml(input.contractNumber)}</strong> zur Bestätigung freigegeben.</p><p style="padding:18px;background:#f4f7fb;border-radius:12px;font-size:15px">${facts}</p><p style="font-size:16px;line-height:1.65">${modeText}</p><table role="presentation" cellspacing="0" cellpadding="0"><tr><td style="border-radius:10px;background:#1f6bff"><a href="${escapeHtml(input.confirmationUrl)}" style="display:inline-block;padding:14px 22px;color:#fff;text-decoration:none;font-weight:700">${button}</a></td></tr></table><p style="margin:24px 0 0;font-size:13px;color:#53657a">Öffnen Sie zuerst das PDF und bestätigen Sie danach ausdrücklich den unveränderten Vertragsstand.</p>`);
+  const html = emailShell("Vertrag zur Bestätigung", `${organizationTrustBlock(input)}<h1 style="margin:0 0 18px;font-size:25px">Guten Tag ${escapeHtml(input.signerName)}</h1><p style="font-size:16px;line-height:1.65">${escapeHtml(input.organizationName)} hat den Sponsoringvertrag <strong>${escapeHtml(input.contractNumber)}</strong> zur Bestätigung freigegeben.</p><p style="padding:18px;background:#f4f7fb;border-radius:12px;font-size:15px">${facts}</p><p style="font-size:16px;line-height:1.65">${modeText}</p><table role="presentation" cellspacing="0" cellpadding="0"><tr><td style="border-radius:10px;background:#1f6bff"><a href="${escapeHtml(input.confirmationUrl)}" style="display:inline-block;padding:14px 22px;color:#fff;text-decoration:none;font-weight:700">${button}</a></td></tr></table><p style="margin:24px 0 0;font-size:13px;color:#53657a">Öffnen Sie zuerst das PDF und bestätigen Sie danach ausdrücklich den unveränderten Vertragsstand.</p>`);
   const text = `${subject}\n\nGuten Tag ${input.signerName}\n\n${input.organizationName} hat den Sponsoringvertrag ${input.contractNumber} zur Bestätigung freigegeben.\n${input.sponsorName} · ${input.packageName} · ${formatChf(input.annualValueCents)} pro Jahr\n\n${input.deliveryMode === "account" ? "Melden Sie sich mit Ihrem bestehenden mittragen.ch-Konto an. Ihre Identität wird über dieses Konto nachgewiesen." : `Ihr persönlicher Einmallink ist bis ${expiry} gültig.`}\n\n${input.confirmationUrl}`;
   return { subject, html, text };
 }

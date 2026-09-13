@@ -13,6 +13,7 @@ const input = {
   confirmationUrl: "https://example.invalid/confirm",
   deliveryMode: "one_time" as const,
   expiresAt: "2026-09-19T12:00:00.000Z",
+  organizationLogoUrl: "https://example.invalid/api/sponsoring/logo",
 };
 
 test("one-time contract email explains expiry and escapes recipient content", () => {
@@ -21,6 +22,15 @@ test("one-time contract email explains expiry and escapes recipient content", ()
   assert.match(email.text, /Einmallink/i);
   assert.match(email.html, /Test &lt;Person&gt;/);
   assert.doesNotMatch(email.html, /Test <Person>/);
+  assert.match(email.html, /<img[^>]+src="https:\/\/example\.invalid\/api\/sponsoring\/logo"/);
+  assert.match(email.html, /Logo Testorganisation/);
+  assert.match(email.html, /Vertrag von/);
+});
+
+test("contract email ignores unsafe organization logo protocols", () => {
+  const email = buildContractSigningEmail({ ...input, organizationLogoUrl: "data:image/svg+xml,unsafe" });
+  assert.doesNotMatch(email.html, /data:image/);
+  assert.match(email.html, /Testorganisation/);
 });
 
 test("account contract email asks the identified user to sign in", () => {

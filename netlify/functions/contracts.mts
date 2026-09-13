@@ -904,8 +904,24 @@ export default async (request: Request, context: Context) => {
         if (detail.signingRequest?.delivery_mode === "account"
           && ["sent", "opened"].includes(detail.signingRequest.status)
           && detail.signingRequest.signer_email !== parsed.value.signerEmail) return { state: "signer_locked" as const };
-        const tenant = await client.query<{ name: string }>("SELECT name FROM tenants WHERE id = $1 LIMIT 1", [tenantId]);
-        return { state: "ready" as const, contract: detail.contract, tenantName: tenant.rows[0]?.name ?? detail.contract.organization_snapshot.legalName };
+        const tenant = await client.query<{
+          name: string;
+          logo_available: boolean;
+          checkout_public_key: string | null;
+        }>(`SELECT tenant.name,
+                   (settings.logo_blob_key IS NOT NULL AND settings.logo_content_type IS NOT NULL) AS logo_available,
+                   checkout.public_key::text AS checkout_public_key
+            FROM tenants tenant
+            LEFT JOIN tenant_contract_settings settings ON settings.tenant_id = tenant.id
+            LEFT JOIN tenant_sponsoring_checkout_settings checkout ON checkout.tenant_id = tenant.id
+            WHERE tenant.id = $1 LIMIT 1`, [tenantId]);
+        return {
+          state: "ready" as const,
+          contract: detail.contract,
+          tenantName: tenant.rows[0]?.name ?? detail.contract.organization_snapshot.legalName,
+          organizationLogoAvailable: tenant.rows[0]?.logo_available ?? false,
+          checkoutPublicKey: tenant.rows[0]?.checkout_public_key ?? null,
+        };
       }, user.email ?? undefined);
       if (authorized.state === "denied") return json({ error: "permission_denied" }, 403);
       if (authorized.state === "not_found") return json({ error: "contract_not_found" }, 404);
@@ -963,6 +979,9 @@ export default async (request: Request, context: Context) => {
           confirmationUrl,
           deliveryMode: mode,
           expiresAt: prepared.expires_at,
+          organizationLogoUrl: authorized.organizationLogoAvailable && authorized.checkoutPublicKey
+            ? absoluteSiteUrl(request, `/api/sponsoring-checkout/${authorized.checkoutPublicKey}/logo`)
+            : undefined,
         }, contractEmailConfig());
       } catch (error) {
         await withSession(user.id, tenantId, async (client) => {

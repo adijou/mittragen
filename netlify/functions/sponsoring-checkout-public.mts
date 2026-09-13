@@ -437,6 +437,7 @@ export default async (request: Request, context: Context) => {
         annualValueCents: selected.price_cents,
         reference,
         expiresAt: signing.rows[0].expires_at,
+        organizationLogoAvailable: Boolean(organization.logo_blob_key && organization.logo_content_type),
       };
     });
 
@@ -475,6 +476,9 @@ export default async (request: Request, context: Context) => {
         confirmationUrl,
         deliveryMode,
         expiresAt: result.expiresAt,
+        organizationLogoUrl: result.organizationLogoAvailable
+          ? absoluteSiteUrl(request, `/api/sponsoring-checkout/${publicKey}/logo`)
+          : undefined,
       }, contractEmailConfig());
     } catch (error) {
       await withSession(actorId, result.tenantId, async (client) => {
