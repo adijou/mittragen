@@ -1032,6 +1032,12 @@ td small { margin-top: 3px; color: var(--ink-3); }
 .package-right-form textarea { min-height: 85px; padding: 11px; resize: vertical; }
 .package-right-form label small { color: var(--ink-3); font-size: 8px; }
 .package-dialog footer { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
+.package-dialog-spacer { flex: 1; }
+.package-delete-confirm { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 12px; align-items: center; margin-top: 18px; padding: 14px; border: 1px solid #edb8bb; border-radius: 9px; background: var(--red-soft); }
+.package-delete-confirm strong, .package-delete-confirm span { display: block; }
+.package-delete-confirm strong { color: #8a252b; font-size: 10px; }
+.package-delete-confirm span { margin-top: 3px; color: var(--ink-2); font-size: 8px; line-height: 1.45; }
+.package-delete-confirm .access-text { white-space: nowrap; }
 
 @media (max-width: 1360px) {
   .hero { grid-template-columns: 1fr; padding-top: 65px; }
@@ -1274,6 +1280,9 @@ td small { margin-top: 3px; color: var(--ink-3); }
   .package-right-form label.wide { grid-column: auto; }
   .package-dialog { padding: 22px 18px; }
   .package-dialog footer { align-items: stretch; flex-direction: column-reverse; }
+  .package-dialog-spacer { display: none; }
+  .package-delete-confirm { grid-template-columns: 1fr 1fr; }
+  .package-delete-confirm > div { grid-column: 1 / -1; }
 }
 
 @media (max-width: 620px) {

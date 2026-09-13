@@ -246,7 +246,7 @@ export default async (request: Request, context: Context) => {
     }
   }
 
-  if (!["POST", "PATCH"].includes(request.method)) return json({ error: "method_not_allowed" }, 405);
+  if (!["POST", "PATCH", "DELETE"].includes(request.method)) return json({ error: "method_not_allowed" }, 405);
   const invalidOrigin = verifyMutation(request);
   if (invalidOrigin) return invalidOrigin;
   const body = await request.json().catch(() => null);
@@ -507,6 +507,48 @@ export default async (request: Request, context: Context) => {
     } catch (error) {
       console.error("package_right_write_failed", { requestId: context.requestId, tenantId, packageId, versionId, rightId, error });
       return json({ error: "package_right_write_failed", requestId: context.requestId }, 500);
+    }
+  }
+
+  if (matches.right && request.method === "DELETE" && packageId && versionId && rightId) {
+    try {
+      const result = await withSession(user.id, tenantId, async (client) => {
+        const role = await membershipRole(client, tenantId, user.id);
+        if (!role || !hasPermission(role, "packages:write")) return { state: "denied" as const };
+        const candidate = await client.query<{ id: string; name: string; status: VersionStatus }>(`
+          SELECT right_item.id, right_item.name, version.status
+          FROM sponsorship_rights right_item
+          JOIN sponsorship_package_versions version
+            ON version.tenant_id = right_item.tenant_id AND version.id = right_item.package_version_id
+          WHERE right_item.tenant_id = $1 AND right_item.package_version_id = $2 AND right_item.id = $3
+            AND version.package_id = $4
+          FOR UPDATE OF right_item, version
+        `, [tenantId, versionId, rightId, packageId]);
+        const right = candidate.rows[0];
+        if (!right) return { state: "not_found" as const };
+        if (right.status !== "draft") return { state: "locked" as const };
+        const removed = await client.query<{ id: string }>(`
+          DELETE FROM sponsorship_rights
+          WHERE tenant_id = $1 AND package_version_id = $2 AND id = $3
+          RETURNING id
+        `, [tenantId, versionId, rightId]);
+        if (!removed.rows[0]) return { state: "not_found" as const };
+        await client.query("UPDATE sponsorship_package_versions SET updated_at = now() WHERE tenant_id = $1 AND id = $2", [tenantId, versionId]);
+        await client.query("UPDATE sponsorship_packages SET updated_at = now() WHERE tenant_id = $1 AND id = $2", [tenantId, packageId]);
+        await client.query(`
+          INSERT INTO audit_events (tenant_id, actor_user_id, action, object_type, object_id, metadata)
+          VALUES ($1, $2, 'package.right_deleted', 'sponsorship_right', $3::text,
+                  jsonb_build_object('name', $4::text, 'package_version_id', $5::text))
+        `, [tenantId, user.id, rightId, right.name, versionId]);
+        return { state: "deleted" as const, detail: await packageDetail(client, tenantId, packageId) };
+      });
+      if (result.state === "denied") return json({ error: "permission_denied" }, 403);
+      if (result.state === "not_found") return json({ error: "package_right_not_found" }, 404);
+      if (result.state === "locked") return json({ error: "package_version_locked" }, 409);
+      return json({ detail: result.detail });
+    } catch (error) {
+      console.error("package_right_delete_failed", { requestId: context.requestId, tenantId, packageId, versionId, rightId, error });
+      return json({ error: "package_right_delete_failed", requestId: context.requestId }, 500);
     }
   }
 

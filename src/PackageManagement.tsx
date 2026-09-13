@@ -138,6 +138,7 @@ export function PackageManagement({ tenantId, canWrite }: { tenantId: string; ca
   const [showCreate, setShowCreate] = useState(false);
   const [rightEditor, setRightEditor] = useState<PackageRight | "new" | null>(null);
   const [rightDraft, setRightDraft] = useState<RightForm>(emptyRight);
+  const [rightDeleteArmed, setRightDeleteArmed] = useState(false);
   const [onlineAcknowledged, setOnlineAcknowledged] = useState(false);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState("");
@@ -299,6 +300,7 @@ export function PackageManagement({ tenantId, canWrite }: { tenantId: string; ca
   const openRight = (right: PackageRight | "new") => {
     setRightEditor(right);
     setRightDraft(right === "new" ? emptyRight : rightForm(right));
+    setRightDeleteArmed(false);
     setError(""); setMessage("");
   };
 
@@ -326,6 +328,28 @@ export function PackageManagement({ tenantId, canWrite }: { tenantId: string; ca
     } catch (reason) {
       const code = reason instanceof Error ? reason.message : "package_right_write_failed";
       setError(code === "exclusivity_key_required" ? "Für Exklusivität ist ein eindeutiger Schlüssel erforderlich." : code === "package_version_locked" ? "Leistungen veröffentlichter Versionen können nicht verändert werden." : "Die Leistung konnte nicht gespeichert werden.");
+    } finally { setBusy(""); }
+  };
+
+  const deleteRight = async () => {
+    if (!detail || !selectedVersion || !rightEditor || rightEditor === "new") return;
+    setBusy("right-delete"); setError(""); setMessage("");
+    try {
+      const result = await request<{ detail: PackageDetail }>(
+        `/api/packages/${tenantId}/${detail.package.id}/versions/${selectedVersion.id}/rights/${rightEditor.id}`,
+        { method: "DELETE" },
+      );
+      applyDetail(result.detail, selectedVersion.id);
+      setRightEditor(null);
+      setRightDeleteArmed(false);
+      setMessage(`Leistung «${rightEditor.name}» wurde aus dem Entwurf entfernt.`);
+    } catch (reason) {
+      const code = reason instanceof Error ? reason.message : "package_right_delete_failed";
+      setError(code === "package_version_locked"
+        ? "Leistungen veröffentlichter Versionen können nicht entfernt werden. Erstellen Sie dafür eine neue Paketversion."
+        : code === "package_right_not_found"
+          ? "Die Leistung ist nicht mehr vorhanden. Bitte laden Sie das Paket neu."
+          : "Die Leistung konnte nicht entfernt werden.");
     } finally { setBusy(""); }
   };
 
@@ -359,7 +383,7 @@ export function PackageManagement({ tenantId, canWrite }: { tenantId: string; ca
       </main>}
     </div>}
 
-    {rightEditor && <div className="package-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) setRightEditor(null); }}><section className="package-dialog" role="dialog" aria-modal="true" aria-labelledby="package-right-title"><header><div><p className="eyebrow">Strukturierte Leistung</p><h2 id="package-right-title">{rightEditor === "new" ? "Leistung hinzufügen" : rightEditor.name}</h2></div><button type="button" aria-label="Schliessen" onClick={() => setRightEditor(null)}>×</button></header><form onSubmit={saveRight}><div className="package-right-form"><label className="wide"><span>Name</span><input required maxLength={160} value={rightDraft.name} onChange={(event) => setRightDraft((current) => ({ ...current, name: event.target.value }))}/></label><label className="wide"><span>Beschreibung</span><textarea maxLength={2000} value={rightDraft.description} onChange={(event) => setRightDraft((current) => ({ ...current, description: event.target.value }))}/></label><label><span>Menge</span><input required min="1" type="number" value={rightDraft.quantity} onChange={(event) => setRightDraft((current) => ({ ...current, quantity: event.target.value }))}/></label><label><span>Termin / Rhythmus</span><input maxLength={300} value={rightDraft.scheduleText} onChange={(event) => setRightDraft((current) => ({ ...current, scheduleText: event.target.value }))}/></label><label><span>Kanal</span><input maxLength={120} placeholder="z. B. Stadion, Website" value={rightDraft.channel} onChange={(event) => setRightDraft((current) => ({ ...current, channel: event.target.value }))}/></label><label><span>Standort</span><input maxLength={160} placeholder="z. B. Hauptplatz Nord" value={rightDraft.location} onChange={(event) => setRightDraft((current) => ({ ...current, location: event.target.value }))}/></label><label><span>Verantwortlichkeit</span><input maxLength={120} value={rightDraft.responsibleRole} onChange={(event) => setRightDraft((current) => ({ ...current, responsibleRole: event.target.value }))}/></label><label><span>Exklusivität</span><select value={rightDraft.exclusivityScope} onChange={(event) => setRightDraft((current) => ({ ...current, exclusivityScope: event.target.value as ExclusivityScope, exclusivityKey: event.target.value === "none" ? "" : current.exclusivityKey }))}>{Object.entries(exclusivityLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>{rightDraft.exclusivityScope !== "none" && <label className="wide"><span>Exklusivitäts-Schlüssel</span><input required maxLength={160} placeholder="z. B. Versicherungen oder hauptplatz-nord" value={rightDraft.exclusivityKey} onChange={(event) => setRightDraft((current) => ({ ...current, exclusivityKey: event.target.value }))}/><small>Gleicher Bereich und Schlüssel dürfen nicht doppelt reserviert werden.</small></label>}</div>{error && <p className="form-error" role="alert">{error}</p>}<footer><button className="access-secondary" type="button" onClick={() => setRightEditor(null)}>Abbrechen</button><button className="access-primary" disabled={busy === "right"}>{busy === "right" ? "Speichert …" : "Leistung speichern"}</button></footer></form></section></div>}
+    {rightEditor && <div className="package-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) { setRightEditor(null); setRightDeleteArmed(false); } }}><section className="package-dialog" role="dialog" aria-modal="true" aria-labelledby="package-right-title"><header><div><p className="eyebrow">Strukturierte Leistung</p><h2 id="package-right-title">{rightEditor === "new" ? "Leistung hinzufügen" : rightEditor.name}</h2></div><button type="button" aria-label="Schliessen" disabled={busy !== ""} onClick={() => { setRightEditor(null); setRightDeleteArmed(false); }}>×</button></header><form onSubmit={saveRight}><div className="package-right-form"><label className="wide"><span>Name</span><input required maxLength={160} value={rightDraft.name} onChange={(event) => setRightDraft((current) => ({ ...current, name: event.target.value }))}/></label><label className="wide"><span>Beschreibung</span><textarea maxLength={2000} value={rightDraft.description} onChange={(event) => setRightDraft((current) => ({ ...current, description: event.target.value }))}/></label><label><span>Menge</span><input required min="1" type="number" value={rightDraft.quantity} onChange={(event) => setRightDraft((current) => ({ ...current, quantity: event.target.value }))}/></label><label><span>Termin / Rhythmus</span><input maxLength={300} value={rightDraft.scheduleText} onChange={(event) => setRightDraft((current) => ({ ...current, scheduleText: event.target.value }))}/></label><label><span>Kanal</span><input maxLength={120} placeholder="z. B. Stadion, Website" value={rightDraft.channel} onChange={(event) => setRightDraft((current) => ({ ...current, channel: event.target.value }))}/></label><label><span>Standort</span><input maxLength={160} placeholder="z. B. Hauptplatz Nord" value={rightDraft.location} onChange={(event) => setRightDraft((current) => ({ ...current, location: event.target.value }))}/></label><label><span>Verantwortlichkeit</span><input maxLength={120} value={rightDraft.responsibleRole} onChange={(event) => setRightDraft((current) => ({ ...current, responsibleRole: event.target.value }))}/></label><label><span>Exklusivität</span><select value={rightDraft.exclusivityScope} onChange={(event) => setRightDraft((current) => ({ ...current, exclusivityScope: event.target.value as ExclusivityScope, exclusivityKey: event.target.value === "none" ? "" : current.exclusivityKey }))}>{Object.entries(exclusivityLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>{rightDraft.exclusivityScope !== "none" && <label className="wide"><span>Exklusivitäts-Schlüssel</span><input required maxLength={160} placeholder="z. B. Versicherungen oder hauptplatz-nord" value={rightDraft.exclusivityKey} onChange={(event) => setRightDraft((current) => ({ ...current, exclusivityKey: event.target.value }))}/><small>Gleicher Bereich und Schlüssel dürfen nicht doppelt reserviert werden.</small></label>}</div>{error && <p className="form-error" role="alert">{error}</p>}{rightDeleteArmed && rightEditor !== "new" && <div className="package-delete-confirm" role="alert"><div><strong>Leistung wirklich entfernen?</strong><span>Sie wird nur aus diesem Paketentwurf gelöscht. Veröffentlichte Paketversionen und bestehende Verträge bleiben unverändert.</span></div><button className="access-text" type="button" disabled={busy !== ""} onClick={() => setRightDeleteArmed(false)}>Doch nicht</button><button className="danger-button access-primary" type="button" disabled={busy !== ""} onClick={() => void deleteRight()}>{busy === "right-delete" ? "Wird entfernt …" : "Endgültig entfernen"}</button></div>}<footer>{rightEditor !== "new" && !rightDeleteArmed && <button className="danger-button access-secondary package-delete-button" type="button" disabled={busy !== ""} onClick={() => setRightDeleteArmed(true)}>Leistung entfernen</button>}<span className="package-dialog-spacer"/><button className="access-secondary" type="button" disabled={busy !== ""} onClick={() => { setRightEditor(null); setRightDeleteArmed(false); }}>Abbrechen</button><button className="access-primary" disabled={busy !== ""}>{busy === "right" ? "Speichert …" : "Leistung speichern"}</button></footer></form></section></div>}
   </section>;
 }
 
