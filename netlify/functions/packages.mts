@@ -401,6 +401,70 @@ export default async (request: Request, context: Context) => {
     }
   }
 
+  if (matches.version && request.method === "DELETE" && packageId && versionId) {
+    try {
+      const result = await withSession(user.id, tenantId, async (client) => {
+        const role = await membershipRole(client, tenantId, user.id);
+        if (!role || !hasPermission(role, "packages:write")) return { state: "denied" as const };
+        const candidate = await client.query<{ id: string; name: string; version_number: number; status: VersionStatus }>(`
+          SELECT version.id, version.name, version.version_number, version.status
+          FROM sponsorship_package_versions version
+          JOIN sponsorship_packages package
+            ON package.tenant_id = version.tenant_id AND package.id = version.package_id
+          WHERE version.tenant_id = $1 AND version.package_id = $2 AND version.id = $3
+          FOR UPDATE OF version, package
+        `, [tenantId, packageId, versionId]);
+        const version = candidate.rows[0];
+        if (!version) return { state: "not_found" as const };
+        if (version.status !== "draft") return { state: "locked" as const };
+        const references = await client.query<{ in_use: boolean; has_other_versions: boolean }>(`
+          SELECT (
+            EXISTS (SELECT 1 FROM sponsors WHERE tenant_id = $1 AND assigned_package_version_id = $2)
+            OR EXISTS (SELECT 1 FROM sponsorship_contracts WHERE tenant_id = $1 AND package_version_id = $2)
+            OR EXISTS (SELECT 1 FROM sponsorship_package_reservations WHERE tenant_id = $1 AND package_version_id = $2)
+            OR EXISTS (SELECT 1 FROM transition_mappings WHERE tenant_id = $1 AND target_package_version_id = $2)
+            OR EXISTS (SELECT 1 FROM transition_sponsors WHERE tenant_id = $1 AND proposed_package_version_id = $2)
+            OR EXISTS (SELECT 1 FROM event_package_allocations WHERE tenant_id = $1 AND package_version_id = $2)
+            OR EXISTS (SELECT 1 FROM sponsorship_checkout_submissions WHERE tenant_id = $1 AND package_version_id = $2)
+          ) AS in_use,
+          EXISTS (
+            SELECT 1 FROM sponsorship_package_versions
+            WHERE tenant_id = $1 AND package_id = $3 AND id <> $2
+          ) AS has_other_versions
+        `, [tenantId, versionId, packageId]);
+        if (references.rows[0]?.in_use) return { state: "in_use" as const };
+        const packageDeleted = !references.rows[0]?.has_other_versions;
+        await client.query(`
+          INSERT INTO audit_events (tenant_id, actor_user_id, action, object_type, object_id, metadata)
+          VALUES ($1, $2, 'package.version_deleted', 'sponsorship_package_version', $3::text,
+                  jsonb_build_object('name', $4::text, 'version', $5::integer, 'package_id', $6::text, 'package_deleted', $7::boolean))
+        `, [tenantId, user.id, versionId, version.name, version.version_number, packageId, packageDeleted]);
+        await client.query(`
+          DELETE FROM sponsorship_package_versions
+          WHERE tenant_id = $1 AND package_id = $2 AND id = $3 AND status = 'draft'
+        `, [tenantId, packageId, versionId]);
+        if (packageDeleted) {
+          await client.query("DELETE FROM sponsorship_packages WHERE tenant_id = $1 AND id = $2", [tenantId, packageId]);
+        } else {
+          await client.query("UPDATE sponsorship_packages SET updated_at = now() WHERE tenant_id = $1 AND id = $2", [tenantId, packageId]);
+        }
+        return {
+          state: "deleted" as const,
+          packageDeleted,
+          detail: packageDeleted ? null : await packageDetail(client, tenantId, packageId),
+        };
+      });
+      if (result.state === "denied") return json({ error: "permission_denied" }, 403);
+      if (result.state === "not_found") return json({ error: "package_version_not_found" }, 404);
+      if (result.state === "locked") return json({ error: "package_version_locked" }, 409);
+      if (result.state === "in_use") return json({ error: "package_version_in_use" }, 409);
+      return json({ detail: result.detail, packageDeleted: result.packageDeleted });
+    } catch (error) {
+      console.error("package_version_delete_failed", { requestId: context.requestId, tenantId, packageId, versionId, error });
+      return json({ error: "package_version_delete_failed", requestId: context.requestId }, 500);
+    }
+  }
+
   if (matches.version && request.method === "PATCH" && packageId && versionId) {
     const parsed = parsePackageVersionInput(body);
     if (!parsed.ok) return json({ error: parsed.error }, 422);

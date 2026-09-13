@@ -139,6 +139,7 @@ export function PackageManagement({ tenantId, canWrite }: { tenantId: string; ca
   const [rightEditor, setRightEditor] = useState<PackageRight | "new" | null>(null);
   const [rightDraft, setRightDraft] = useState<RightForm>(emptyRight);
   const [rightDeleteArmed, setRightDeleteArmed] = useState(false);
+  const [draftDiscardArmed, setDraftDiscardArmed] = useState(false);
   const [onlineAcknowledged, setOnlineAcknowledged] = useState(false);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState("");
@@ -157,12 +158,18 @@ export function PackageManagement({ tenantId, canWrite }: { tenantId: string; ca
     setSelectedVersionId(nextVersion?.id ?? "");
     setForm(nextVersion ? versionForm(nextVersion) : emptyVersion);
     setOnlineAcknowledged(false);
+    setDraftDiscardArmed(false);
   };
 
   const loadPackages = async (preferredPackageId?: string, preferredVersionId?: string) => {
     const listed = await request<{ packages: PackageListItem[] }>(`/api/packages/${tenantId}`);
     setPackages(listed.packages);
-    const nextPackageId = preferredPackageId || selectedPackageId || listed.packages[0]?.id || "";
+    const packageIds = new Set(listed.packages.map((item) => item.id));
+    const nextPackageId = preferredPackageId && packageIds.has(preferredPackageId)
+      ? preferredPackageId
+      : selectedPackageId && packageIds.has(selectedPackageId)
+        ? selectedPackageId
+        : listed.packages[0]?.id || "";
     if (!nextPackageId) {
       setDetail(null);
       setShowCreate(true);
@@ -198,6 +205,7 @@ export function PackageManagement({ tenantId, canWrite }: { tenantId: string; ca
     const version = detail?.versions.find((item) => item.id === versionId);
     if (version) setForm(versionForm(version));
     setOnlineAcknowledged(false);
+    setDraftDiscardArmed(false);
     setError("");
     setMessage("");
   };
@@ -274,6 +282,39 @@ export function PackageManagement({ tenantId, canWrite }: { tenantId: string; ca
       await loadPackages(result.detail.package.id, duplicateVersion?.id);
     } catch {
       setError("Das Paket konnte nicht dupliziert werden.");
+    } finally { setBusy(""); }
+  };
+
+  const discardDraft = async () => {
+    if (!detail || !selectedVersion || selectedVersion.status !== "draft") return;
+    const discardedName = selectedVersion.name;
+    const discardedVersion = selectedVersion.version_number;
+    setBusy("discard"); setError(""); setMessage("");
+    try {
+      const result = await request<{ detail: PackageDetail | null; packageDeleted: boolean }>(
+        `/api/packages/${tenantId}/${detail.package.id}/versions/${selectedVersion.id}`,
+        { method: "DELETE" },
+      );
+      setDraftDiscardArmed(false);
+      if (result.detail) {
+        applyDetail(result.detail);
+      } else {
+        setDetail(null);
+        setSelectedPackageId("");
+        setSelectedVersionId("");
+        setForm(emptyVersion);
+      }
+      await loadPackages(result.detail?.package.id);
+      setMessage(result.packageDeleted
+        ? `Paket «${discardedName}» wurde zusammen mit seinem einzigen Entwurf entfernt.`
+        : `Entwurf «${discardedName}» Version ${discardedVersion} wurde verworfen.`);
+    } catch (reason) {
+      const code = reason instanceof Error ? reason.message : "package_version_delete_failed";
+      setError(code === "package_version_in_use"
+        ? "Der Entwurf wird bereits verwendet und kann deshalb nicht verworfen werden."
+        : code === "package_version_locked"
+          ? "Nur Paketentwürfe können verworfen werden."
+          : "Der Versionsentwurf konnte nicht verworfen werden.");
     } finally { setBusy(""); }
   };
 
@@ -386,8 +427,9 @@ export function PackageManagement({ tenantId, canWrite }: { tenantId: string; ca
       {detail && selectedVersion && <main className="package-detail"><header><div><span className={`package-version-status package-version-status--${selectedVersion.status}`}>{versionStatusLabels[selectedVersion.status]}</span><h2>{selectedVersion.name}</h2><p>Version {selectedVersion.version_number} · {visibilityLabels[selectedVersion.visibility]}</p></div><label><span>Paketausgabe</span><select value={selectedVersion.id} onChange={(event) => selectVersion(event.target.value)}>{detail.versions.map((version) => <option value={version.id} key={version.id}>Version {version.version_number} · {versionStatusLabels[version.status]}</option>)}</select></label></header>
         <section className="package-metrics"><article><span>Preis</span><strong>{formatChf(selectedVersion.price_cents)}</strong><small>{paymentPlanLabels[selectedVersion.payment_plan]}</small></article><article><span>Laufzeit</span><strong>{selectedVersion.duration_months}</strong><small>Monate</small></article><article><span>Leistungen</span><strong>{selectedVersion.right_count}</strong><small>strukturierte Rechte</small></article><article><span>Verfügbar</span><strong>{available === null ? "∞" : available}</strong><small>{selectedVersion.capacity === null ? "unbegrenzt" : `${selectedVersion.reserved_quantity} von ${selectedVersion.capacity} reserviert`}</small></article></section>
 
-        <section className="package-version-card"><div className="package-section-heading"><div><p className="eyebrow">Kommerzielle Angaben</p><h3>Paketversion</h3></div><div>{canWrite && <button className="access-secondary" disabled={busy !== ""} title="Erstellt ein neues unabhängiges Paket mit diesen Angaben und Leistungen" onClick={() => void duplicatePackage()}>{busy === "duplicate" ? "Wird dupliziert …" : "Paket duplizieren"}</button>}{canWrite && selectedVersion.status !== "draft" && <button className="access-secondary" disabled={busy !== ""} title="Erstellt eine bearbeitbare Folgeversion dieses Pakets" onClick={() => void createNewVersion()}>{busy === "copy" ? "Wird erstellt …" : "Neue Version erstellen"}</button>}{canWrite && selectedVersion.status === "draft" && <button className="access-primary" disabled={busy !== ""} onClick={() => void publishVersion()}>{busy === "publish" ? "Veröffentlicht …" : "Version veröffentlichen"}</button>}</div></div>
-          <form onSubmit={saveVersion}><VersionFields form={form} setForm={setForm} disabled={!canWrite || selectedVersion.status !== "draft"}/>{selectedVersion.status === "draft" && canWrite && <footer><button className="access-primary" disabled={busy === "version"}>{busy === "version" ? "Speichert …" : "Version speichern"}</button></footer>}</form>
+        <section className="package-version-card"><div className="package-section-heading"><div><p className="eyebrow">Kommerzielle Angaben</p><h3>Paketversion</h3></div><div>{canWrite && <button className="access-secondary" disabled={busy !== ""} title="Erstellt ein neues unabhängiges Paket mit diesen Angaben und Leistungen" onClick={() => void duplicatePackage()}>{busy === "duplicate" ? "Wird dupliziert …" : "Paket duplizieren"}</button>}{canWrite && selectedVersion.status !== "draft" && <button className="access-secondary" disabled={busy !== ""} title="Erstellt eine bearbeitbare Folgeversion dieses Pakets" onClick={() => void createNewVersion()}>{busy === "copy" ? "Wird erstellt …" : "Neue Version erstellen"}</button>}{canWrite && selectedVersion.status === "draft" && <button className="danger-button access-secondary" disabled={busy !== ""} onClick={() => setDraftDiscardArmed(true)}>Entwurf verwerfen</button>}{canWrite && selectedVersion.status === "draft" && <button className="access-primary" disabled={busy !== ""} onClick={() => void publishVersion()}>{busy === "publish" ? "Veröffentlicht …" : "Version veröffentlichen"}</button>}</div></div>
+          {draftDiscardArmed && <div className="package-delete-confirm package-version-discard-confirm" role="alert"><div><strong>Versionsentwurf wirklich verwerfen?</strong><span>{detail.versions.length === 1 ? "Dies ist die einzige Version. Das noch unveröffentlichte Paket wird vollständig entfernt." : "Die frühere veröffentlichte Paketausgabe und bestehende Verträge bleiben unverändert."}</span></div><button className="access-text" type="button" disabled={busy !== ""} onClick={() => setDraftDiscardArmed(false)}>Doch nicht</button><button className="danger-button access-primary" type="button" disabled={busy !== ""} onClick={() => void discardDraft()}>{busy === "discard" ? "Wird verworfen …" : "Endgültig verwerfen"}</button></div>}
+          <form onSubmit={saveVersion}><VersionFields form={form} setForm={setForm} disabled={!canWrite || selectedVersion.status !== "draft"}/>{selectedVersion.status === "draft" && canWrite && <footer><button className="access-primary" disabled={busy !== ""}>{busy === "version" ? "Speichert …" : "Version speichern"}</button></footer>}</form>
           {selectedVersion.status !== "draft" && <p className="package-lock-note"><strong>Unveränderliche Ausgabe:</strong> Bestehende Verträge und spätere Bestätigungen können dauerhaft auf diese Version verweisen.</p>}
         </section>
 
