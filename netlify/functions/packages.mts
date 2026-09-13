@@ -71,6 +71,7 @@ type RightRow = {
 const routes = {
   collection: /^\/api\/packages\/([0-9a-f-]+)$/i,
   package: /^\/api\/packages\/([0-9a-f-]+)\/([0-9a-f-]+)$/i,
+  duplicate: /^\/api\/packages\/([0-9a-f-]+)\/([0-9a-f-]+)\/duplicate$/i,
   versions: /^\/api\/packages\/([0-9a-f-]+)\/([0-9a-f-]+)\/versions$/i,
   version: /^\/api\/packages\/([0-9a-f-]+)\/([0-9a-f-]+)\/versions\/([0-9a-f-]+)$/i,
   publish: /^\/api\/packages\/([0-9a-f-]+)\/([0-9a-f-]+)\/versions\/([0-9a-f-]+)\/publish$/i,
@@ -214,10 +215,10 @@ export default async (request: Request, context: Context) => {
   const pathname = new URL(request.url).pathname;
   const matches = {
     collection: pathname.match(routes.collection), package: pathname.match(routes.package),
-    versions: pathname.match(routes.versions), version: pathname.match(routes.version),
+    duplicate: pathname.match(routes.duplicate), versions: pathname.match(routes.versions), version: pathname.match(routes.version),
     publish: pathname.match(routes.publish), online: pathname.match(routes.online), rights: pathname.match(routes.rights), right: pathname.match(routes.right),
   };
-  const matched = matches.collection ?? matches.package ?? matches.versions ?? matches.version ?? matches.publish ?? matches.online ?? matches.rights ?? matches.right;
+  const matched = matches.collection ?? matches.package ?? matches.duplicate ?? matches.versions ?? matches.version ?? matches.publish ?? matches.online ?? matches.rights ?? matches.right;
   const tenantId = matched?.[1];
   const packageId = matched?.[2];
   const versionId = matches.version?.[3] ?? matches.publish?.[3] ?? matches.online?.[3] ?? matches.rights?.[3] ?? matches.right?.[3];
@@ -282,6 +283,66 @@ export default async (request: Request, context: Context) => {
     } catch (error) {
       console.error("package_create_failed", { requestId: context.requestId, tenantId, error });
       return json({ error: "package_create_failed", requestId: context.requestId }, 500);
+    }
+  }
+
+  if (matches.duplicate && request.method === "POST" && packageId) {
+    const parsed = parseVersionCopyInput(body);
+    if (!parsed.ok) return json({ error: parsed.error }, 422);
+    try {
+      const result = await withSession(user.id, tenantId, async (client) => {
+        const role = await membershipRole(client, tenantId, user.id);
+        if (!role || !hasPermission(role, "packages:write")) return { state: "denied" as const };
+        const source = await client.query<{ id: string }>(`
+          SELECT id FROM sponsorship_package_versions
+          WHERE tenant_id = $1 AND package_id = $2 AND id = $3
+          FOR SHARE
+        `, [tenantId, packageId, parsed.value.sourceVersionId]);
+        if (!source.rows[0]) return { state: "source_not_found" as const };
+        const createdPackage = await client.query<{ id: string }>(`
+          INSERT INTO sponsorship_packages (tenant_id, created_by)
+          VALUES ($1, $2)
+          RETURNING id
+        `, [tenantId, user.id]);
+        const newPackageId = createdPackage.rows[0].id;
+        const createdVersion = await client.query<{ id: string; name: string }>(`
+          INSERT INTO sponsorship_package_versions (
+            tenant_id, package_id, version_number, name, description, price_cents, duration_months,
+            payment_plan, payment_terms, valid_from, valid_until, visibility, capacity,
+            deviation_approval_required, created_by
+          )
+          SELECT $1, $4, 1, left(source.name, 152) || ' – Kopie', source.description,
+                 source.price_cents, source.duration_months, source.payment_plan, source.payment_terms,
+                 source.valid_from, source.valid_until, 'private', source.capacity,
+                 source.deviation_approval_required, $5
+          FROM sponsorship_package_versions source
+          WHERE source.tenant_id = $1 AND source.package_id = $2 AND source.id = $3
+          RETURNING id, name
+        `, [tenantId, packageId, parsed.value.sourceVersionId, newPackageId, user.id]);
+        const newVersion = createdVersion.rows[0];
+        if (!newVersion) return { state: "source_not_found" as const };
+        await client.query(`
+          INSERT INTO sponsorship_rights (
+            tenant_id, package_version_id, name, description, quantity, schedule_text, channel,
+            location, responsible_role, exclusivity_scope, exclusivity_key
+          )
+          SELECT tenant_id, $3, name, description, quantity, schedule_text, channel,
+                 location, responsible_role, exclusivity_scope, exclusivity_key
+          FROM sponsorship_rights WHERE tenant_id = $1 AND package_version_id = $2
+        `, [tenantId, parsed.value.sourceVersionId, newVersion.id]);
+        await client.query(`
+          INSERT INTO audit_events (tenant_id, actor_user_id, action, object_type, object_id, metadata)
+          VALUES ($1, $2, 'package.duplicated', 'sponsorship_package', $3::text,
+                  jsonb_build_object('name', $4::text, 'source_package_id', $5::text, 'source_version_id', $6::text))
+        `, [tenantId, user.id, newPackageId, newVersion.name, packageId, parsed.value.sourceVersionId]);
+        return { state: "created" as const, detail: await packageDetail(client, tenantId, newPackageId) };
+      });
+      if (result.state === "denied") return json({ error: "permission_denied" }, 403);
+      if (result.state === "source_not_found") return json({ error: "package_source_version_not_found" }, 404);
+      return json({ detail: result.detail }, 201);
+    } catch (error) {
+      console.error("package_duplicate_failed", { requestId: context.requestId, tenantId, packageId, error });
+      return json({ error: "package_duplicate_failed", requestId: context.requestId }, 500);
     }
   }
 
@@ -559,6 +620,7 @@ export const config: Config = {
   path: [
     "/api/packages/:tenantId",
     "/api/packages/:tenantId/:packageId",
+    "/api/packages/:tenantId/:packageId/duplicate",
     "/api/packages/:tenantId/:packageId/versions",
     "/api/packages/:tenantId/:packageId/versions/:versionId",
     "/api/packages/:tenantId/:packageId/versions/:versionId/publish",

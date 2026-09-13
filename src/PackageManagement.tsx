@@ -246,7 +246,7 @@ export function PackageManagement({ tenantId, canWrite }: { tenantId: string; ca
     } finally { setBusy(""); }
   };
 
-  const copyVersion = async () => {
+  const createNewVersion = async () => {
     if (!detail || !selectedVersion) return;
     setBusy("copy"); setError(""); setMessage("");
     try {
@@ -257,6 +257,23 @@ export function PackageManagement({ tenantId, canWrite }: { tenantId: string; ca
       await loadPackages(detail.package.id, draft?.id);
     } catch (reason) {
       setError(reason instanceof Error && reason.message === "package_draft_exists" ? "Für dieses Paket besteht bereits ein Entwurf." : "Die neue Version konnte nicht erstellt werden.");
+    } finally { setBusy(""); }
+  };
+
+  const duplicatePackage = async () => {
+    if (!detail || !selectedVersion) return;
+    setBusy("duplicate"); setError(""); setMessage("");
+    try {
+      const result = await request<{ detail: PackageDetail }>(`/api/packages/${tenantId}/${detail.package.id}/duplicate`, {
+        method: "POST",
+        body: JSON.stringify({ sourceVersionId: selectedVersion.id }),
+      });
+      const duplicateVersion = result.detail.versions[0];
+      applyDetail(result.detail, duplicateVersion?.id);
+      setMessage(`Paket «${duplicateVersion?.name ?? "Kopie"}» wurde als unabhängiger Entwurf angelegt.`);
+      await loadPackages(result.detail.package.id, duplicateVersion?.id);
+    } catch {
+      setError("Das Paket konnte nicht dupliziert werden.");
     } finally { setBusy(""); }
   };
 
@@ -356,7 +373,7 @@ export function PackageManagement({ tenantId, canWrite }: { tenantId: string; ca
   const available = selectedVersion?.capacity === null || !selectedVersion ? null : Math.max(0, selectedVersion.capacity - Number(selectedVersion.reserved_quantity));
 
   return <section className="package-management">
-    <header><div><p className="eyebrow">Angebot und Inventar</p><h1>Sponsoringpakete</h1><p>Veröffentlichte Versionen bleiben stabil; neue Saisons entstehen als bearbeitbare Kopie.</p></div>{canWrite && <button className="access-primary" onClick={() => { setShowCreate((current) => !current); setForm(emptyVersion); }}>{showCreate ? "Formular schliessen" : "Neues Paket"}</button>}</header>
+    <header><div><p className="eyebrow">Angebot und Inventar</p><h1>Sponsoringpakete</h1><p>Pakete lassen sich als neue Angebote duplizieren; veröffentlichte Ausgaben werden über neue Versionen weiterentwickelt.</p></div>{canWrite && <button className="access-primary" onClick={() => { setShowCreate((current) => !current); setForm(emptyVersion); }}>{showCreate ? "Formular schliessen" : "Neues Paket"}</button>}</header>
 
     {showCreate && canWrite && <section className="package-create"><div><p className="eyebrow">Version 1</p><h2>Neues Paket anlegen</h2><p>Der erste Entwurf kann vor der Veröffentlichung beliebig ergänzt werden.</p></div><form onSubmit={createPackage}><VersionFields form={form} setForm={setForm}/><footer><button className="access-primary" disabled={busy === "create"}>{busy === "create" ? "Wird erstellt …" : "Paket erstellen"}</button></footer></form></section>}
 
@@ -369,7 +386,7 @@ export function PackageManagement({ tenantId, canWrite }: { tenantId: string; ca
       {detail && selectedVersion && <main className="package-detail"><header><div><span className={`package-version-status package-version-status--${selectedVersion.status}`}>{versionStatusLabels[selectedVersion.status]}</span><h2>{selectedVersion.name}</h2><p>Version {selectedVersion.version_number} · {visibilityLabels[selectedVersion.visibility]}</p></div><label><span>Paketausgabe</span><select value={selectedVersion.id} onChange={(event) => selectVersion(event.target.value)}>{detail.versions.map((version) => <option value={version.id} key={version.id}>Version {version.version_number} · {versionStatusLabels[version.status]}</option>)}</select></label></header>
         <section className="package-metrics"><article><span>Preis</span><strong>{formatChf(selectedVersion.price_cents)}</strong><small>{paymentPlanLabels[selectedVersion.payment_plan]}</small></article><article><span>Laufzeit</span><strong>{selectedVersion.duration_months}</strong><small>Monate</small></article><article><span>Leistungen</span><strong>{selectedVersion.right_count}</strong><small>strukturierte Rechte</small></article><article><span>Verfügbar</span><strong>{available === null ? "∞" : available}</strong><small>{selectedVersion.capacity === null ? "unbegrenzt" : `${selectedVersion.reserved_quantity} von ${selectedVersion.capacity} reserviert`}</small></article></section>
 
-        <section className="package-version-card"><div className="package-section-heading"><div><p className="eyebrow">Kommerzielle Angaben</p><h3>Paketversion</h3></div><div>{canWrite && selectedVersion.status !== "draft" && <button className="access-secondary" disabled={busy === "copy"} onClick={() => void copyVersion()}>{busy === "copy" ? "Kopiert …" : "Als neue Version kopieren"}</button>}{canWrite && selectedVersion.status === "draft" && <button className="access-primary" disabled={busy === "publish"} onClick={() => void publishVersion()}>{busy === "publish" ? "Veröffentlicht …" : "Version veröffentlichen"}</button>}</div></div>
+        <section className="package-version-card"><div className="package-section-heading"><div><p className="eyebrow">Kommerzielle Angaben</p><h3>Paketversion</h3></div><div>{canWrite && <button className="access-secondary" disabled={busy !== ""} title="Erstellt ein neues unabhängiges Paket mit diesen Angaben und Leistungen" onClick={() => void duplicatePackage()}>{busy === "duplicate" ? "Wird dupliziert …" : "Paket duplizieren"}</button>}{canWrite && selectedVersion.status !== "draft" && <button className="access-secondary" disabled={busy !== ""} title="Erstellt eine bearbeitbare Folgeversion dieses Pakets" onClick={() => void createNewVersion()}>{busy === "copy" ? "Wird erstellt …" : "Neue Version erstellen"}</button>}{canWrite && selectedVersion.status === "draft" && <button className="access-primary" disabled={busy !== ""} onClick={() => void publishVersion()}>{busy === "publish" ? "Veröffentlicht …" : "Version veröffentlichen"}</button>}</div></div>
           <form onSubmit={saveVersion}><VersionFields form={form} setForm={setForm} disabled={!canWrite || selectedVersion.status !== "draft"}/>{selectedVersion.status === "draft" && canWrite && <footer><button className="access-primary" disabled={busy === "version"}>{busy === "version" ? "Speichert …" : "Version speichern"}</button></footer>}</form>
           {selectedVersion.status !== "draft" && <p className="package-lock-note"><strong>Unveränderliche Ausgabe:</strong> Bestehende Verträge und spätere Bestätigungen können dauerhaft auf diese Version verweisen.</p>}
         </section>
