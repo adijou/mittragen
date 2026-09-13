@@ -18,6 +18,7 @@ const adminLegacyContractMigrationPath = new URL("../netlify/database/migrations
 const eventAllocationMigrationPath = new URL("../netlify/database/migrations/20260912223000_multiple_event_sponsors_and_package_allocations/migration.sql", import.meta.url);
 const contractCorrectionMigrationPath = new URL("../netlify/database/migrations/20260913053000_contract_corrections_and_removal/migration.sql", import.meta.url);
 const matchballClassificationMigrationPath = new URL("../netlify/database/migrations/20260913070000_matchball_entitlement_classification/migration.sql", import.meta.url);
+const publicCheckoutMigrationPath = new URL("../netlify/database/migrations/20260913100000_public_sponsoring_checkout/migration.sql", import.meta.url);
 
 test("all tenant-owned tables enforce row-level security", async () => {
   const sql = await readFile(migrationPath, "utf8");
@@ -208,4 +209,20 @@ test("administrative legacy contract completion keeps a distinct audited evidenc
   assert.match(sql, /confirmation_recorded_at TIMESTAMPTZ/i);
   assert.match(sql, /confirmation_note TEXT/i);
   assert.match(sql, /'admin_confirmed'/i);
+});
+
+test("public sponsoring checkout is tenant-isolated, explicitly approved and traceable", async () => {
+  const sql = await readFile(publicCheckoutMigrationPath, "utf8");
+  for (const table of ["tenant_sponsoring_checkout_settings", "sponsorship_package_online_settings", "sponsorship_checkout_submissions"]) {
+    assert.match(sql, new RegExp(`ALTER TABLE ${table} ENABLE ROW LEVEL SECURITY`, "i"));
+    assert.match(sql, new RegExp(`ALTER TABLE ${table} FORCE ROW LEVEL SECURITY`, "i"));
+  }
+  assert.match(sql, /app\.sponsoring_checkout_public_key/i);
+  assert.match(sql, /is_enabled AND approved_by IS NOT NULL AND approved_at IS NOT NULL/i);
+  assert.match(sql, /source IN \('workspace', 'public_checkout'\)/i);
+  assert.match(sql, /NEW\.source IS DISTINCT FROM OLD\.source/i);
+  assert.match(sql, /UNIQUE \(tenant_id, idempotency_key\)/i);
+  assert.match(sql, /confirmed_at TIMESTAMPTZ/i);
+  assert.match(sql, /sponsorship_contracts\.source = 'public_checkout'/i);
+  assert.match(sql, /sponsorship_contracts\.created_by = app_current_user_id\(\)/i);
 });

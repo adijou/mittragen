@@ -177,6 +177,9 @@ export default async (request: Request, context: Context) => {
       if (!updated.rows[0]) return { state: "already_confirmed" as const };
       await client.query(`UPDATE contract_signing_requests SET status = 'confirmed', confirmed_at = now(),
         opened_at = COALESCE(opened_at, now()), updated_at = now() WHERE id = $1`, [signing.id]);
+      await client.query(`UPDATE sponsorship_checkout_submissions
+        SET status = 'confirmed', confirmed_at = now(), updated_at = now()
+        WHERE tenant_id = $1 AND contract_id = $2`, [signing.tenant_id, signing.contract_id]);
       await client.query(`INSERT INTO sponsorship_contract_events
         (tenant_id, contract_id, event_type, actor_user_id, actor_email, evidence)
         VALUES ($1,$2,'confirmed',$3,$4,jsonb_build_object(

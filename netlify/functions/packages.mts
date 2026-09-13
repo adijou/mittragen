@@ -2,7 +2,9 @@ import type { Config, Context } from "@netlify/functions";
 import { AuthError, verifyRequestOrigin } from "@netlify/identity";
 import { hasPermission, isResponse, json, requireUser, type MembershipRole } from "./_shared/auth.ts";
 import { isUuid, withSession, type DatabaseClient } from "./_shared/database.ts";
+import { getOrganizationProfile, mapOrganizationProfile } from "./_shared/organization-profile.ts";
 import { parsePackageRightInput, parsePackageVersionInput, parseVersionCopyInput, type PackageRightInput, type PackageVersionInput } from "./_shared/package-input.ts";
+import { parseOnlinePackageSetting } from "./_shared/sponsoring-checkout-input.ts";
 
 type PackageStatus = "active" | "archived";
 type VersionStatus = "draft" | "published" | "retired";
@@ -44,6 +46,8 @@ type VersionRow = {
   deviation_approval_required: boolean;
   right_count: string;
   reserved_quantity: string;
+  online_direct_enabled: boolean;
+  online_direct_approved_at: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -70,6 +74,7 @@ const routes = {
   versions: /^\/api\/packages\/([0-9a-f-]+)\/([0-9a-f-]+)\/versions$/i,
   version: /^\/api\/packages\/([0-9a-f-]+)\/([0-9a-f-]+)\/versions\/([0-9a-f-]+)$/i,
   publish: /^\/api\/packages\/([0-9a-f-]+)\/([0-9a-f-]+)\/versions\/([0-9a-f-]+)\/publish$/i,
+  online: /^\/api\/packages\/([0-9a-f-]+)\/([0-9a-f-]+)\/versions\/([0-9a-f-]+)\/online$/i,
   rights: /^\/api\/packages\/([0-9a-f-]+)\/([0-9a-f-]+)\/versions\/([0-9a-f-]+)\/rights$/i,
   right: /^\/api\/packages\/([0-9a-f-]+)\/([0-9a-f-]+)\/versions\/([0-9a-f-]+)\/rights\/([0-9a-f-]+)$/i,
 };
@@ -103,6 +108,10 @@ const versionColumns = `
    WHERE reservation.tenant_id = version.tenant_id AND reservation.package_version_id = version.id
      AND reservation.status IN ('held', 'confirmed')
      AND (reservation.status = 'confirmed' OR reservation.expires_at IS NULL OR reservation.expires_at > now())) AS reserved_quantity,
+  COALESCE((SELECT online.is_enabled FROM sponsorship_package_online_settings online
+    WHERE online.tenant_id = version.tenant_id AND online.package_version_id = version.id), false) AS online_direct_enabled,
+  (SELECT online.approved_at::text FROM sponsorship_package_online_settings online
+    WHERE online.tenant_id = version.tenant_id AND online.package_version_id = version.id) AS online_direct_approved_at,
   version.created_at::text, version.updated_at::text
 `;
 
@@ -206,12 +215,12 @@ export default async (request: Request, context: Context) => {
   const matches = {
     collection: pathname.match(routes.collection), package: pathname.match(routes.package),
     versions: pathname.match(routes.versions), version: pathname.match(routes.version),
-    publish: pathname.match(routes.publish), rights: pathname.match(routes.rights), right: pathname.match(routes.right),
+    publish: pathname.match(routes.publish), online: pathname.match(routes.online), rights: pathname.match(routes.rights), right: pathname.match(routes.right),
   };
-  const matched = matches.collection ?? matches.package ?? matches.versions ?? matches.version ?? matches.publish ?? matches.rights ?? matches.right;
+  const matched = matches.collection ?? matches.package ?? matches.versions ?? matches.version ?? matches.publish ?? matches.online ?? matches.rights ?? matches.right;
   const tenantId = matched?.[1];
   const packageId = matched?.[2];
-  const versionId = matches.version?.[3] ?? matches.publish?.[3] ?? matches.rights?.[3] ?? matches.right?.[3];
+  const versionId = matches.version?.[3] ?? matches.publish?.[3] ?? matches.online?.[3] ?? matches.rights?.[3] ?? matches.right?.[3];
   const rightId = matches.right?.[4];
   if (!tenantId || !isUuid(tenantId)) return json({ error: "invalid_tenant" }, 422);
   if (packageId && !isUuid(packageId)) return json({ error: "invalid_package" }, 422);
@@ -399,6 +408,53 @@ export default async (request: Request, context: Context) => {
     }
   }
 
+  if (matches.online && request.method === "PATCH" && packageId && versionId) {
+    const parsed = parseOnlinePackageSetting(body);
+    if (!parsed.ok) return json({ error: parsed.error }, 422);
+    try {
+      const result = await withSession(user.id, tenantId, async (client) => {
+        const role = await membershipRole(client, tenantId, user.id);
+        if (!role || !hasPermission(role, "packages:write")) return { state: "denied" as const };
+        const version = await client.query<{ name: string; status: VersionStatus; visibility: "private" | "public"; package_status: PackageStatus }>(`
+          SELECT version.name, version.status, version.visibility, package.status AS package_status
+          FROM sponsorship_package_versions version
+          JOIN sponsorship_packages package ON package.tenant_id = version.tenant_id AND package.id = version.package_id
+          WHERE version.tenant_id = $1 AND version.package_id = $2 AND version.id = $3 LIMIT 1
+        `, [tenantId, packageId, versionId]);
+        if (!version.rows[0]) return { state: "not_found" as const };
+        if (parsed.value.enabled) {
+          if (version.rows[0].status !== "published" || version.rows[0].visibility !== "public" || version.rows[0].package_status !== "active") {
+            return { state: "not_public" as const };
+          }
+          const organization = mapOrganizationProfile(await getOrganizationProfile(client, tenantId));
+          if (!organization?.contractComplete) return { state: "settings_incomplete" as const };
+        }
+        await client.query(`INSERT INTO sponsorship_package_online_settings
+          (tenant_id, package_version_id, is_enabled, approved_by, approved_at, updated_by)
+          VALUES ($1,$2,$3,CASE WHEN $3 THEN $4 ELSE NULL END,CASE WHEN $3 THEN now() ELSE NULL END,$4)
+          ON CONFLICT (tenant_id, package_version_id) DO UPDATE SET
+            is_enabled = EXCLUDED.is_enabled, approved_by = EXCLUDED.approved_by,
+            approved_at = EXCLUDED.approved_at, updated_by = EXCLUDED.updated_by, updated_at = now()`,
+        [tenantId, versionId, parsed.value.enabled, user.id]);
+        await client.query(`INSERT INTO audit_events
+          (tenant_id, actor_user_id, action, object_type, object_id, metadata)
+          VALUES ($1,$2,$3,'sponsorship_package_version',$4,
+            jsonb_build_object('name',$5::text,'acknowledged',$6::boolean))`,
+        [tenantId, user.id, parsed.value.enabled ? "package.online_checkout_enabled" : "package.online_checkout_disabled",
+          versionId, version.rows[0].name, parsed.value.acknowledged]);
+        return { state: "saved" as const, detail: await packageDetail(client, tenantId, packageId) };
+      }, user.email ?? undefined);
+      if (result.state === "denied") return json({ error: "permission_denied" }, 403);
+      if (result.state === "not_found") return json({ error: "package_version_not_found" }, 404);
+      if (result.state === "not_public") return json({ error: "online_checkout_public_package_required" }, 409);
+      if (result.state === "settings_incomplete") return json({ error: "contract_settings_incomplete" }, 409);
+      return json({ detail: result.detail });
+    } catch (error) {
+      console.error("package_online_checkout_update_failed", { requestId: context.requestId, tenantId, packageId, versionId, error });
+      return json({ error: "package_online_checkout_update_failed", requestId: context.requestId }, 500);
+    }
+  }
+
   if ((matches.rights && request.method === "POST" || matches.right && request.method === "PATCH") && packageId && versionId) {
     const parsed = parsePackageRightInput(body);
     if (!parsed.ok) return json({ error: parsed.error }, 422);
@@ -464,6 +520,7 @@ export const config: Config = {
     "/api/packages/:tenantId/:packageId/versions",
     "/api/packages/:tenantId/:packageId/versions/:versionId",
     "/api/packages/:tenantId/:packageId/versions/:versionId/publish",
+    "/api/packages/:tenantId/:packageId/versions/:versionId/online",
     "/api/packages/:tenantId/:packageId/versions/:versionId/rights",
     "/api/packages/:tenantId/:packageId/versions/:versionId/rights/:rightId",
   ],

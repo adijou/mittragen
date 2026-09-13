@@ -9,6 +9,9 @@ import { findIdentityUserByEmail } from "./_shared/identity-user-lookup.ts";
 import { sendIdentityInvitation } from "./_shared/identity-invitations.ts";
 import { loadOrganizationPdfBrand, type OrganizationPdfBrand } from "./_shared/organization-pdf-brand.ts";
 import { sendContractAccessEmail, sendContractCopyEmail, sendContractSigningEmail } from "./_shared/resend-contract-email.ts";
+import { absoluteSiteUrl, contractEmailConfig } from "./_shared/contract-delivery.ts";
+import { contractSnapshotHash } from "./_shared/contract-hash.ts";
+import { ensureDirectReservation, nextContractNumber } from "./_shared/contract-reservations.ts";
 
 type ContractStatus = "draft" | "released" | "confirmed" | "void";
 type ContractRow = {
@@ -27,6 +30,7 @@ type ContractRow = {
   terms_snapshot: ContractPdfData["terms"];
   status: ContractStatus;
   signing_method: "click" | "advanced" | "qualified";
+  source: "workspace" | "public_checkout";
   snapshot_hash: string | null;
   released_at: string | null;
   confirmed_at: string | null;
@@ -68,7 +72,7 @@ const contractColumns = `
   contract.id, contract.contract_number, contract.version_number, contract.parent_contract_id, contract.sponsor_id,
   contract.transition_sponsor_id, contract.package_version_id, contract.title, contract.special_agreements,
   contract.organization_snapshot, contract.sponsor_snapshot, contract.package_snapshot, contract.terms_snapshot,
-  contract.status, contract.signing_method, contract.snapshot_hash, contract.released_at::text,
+  contract.status, contract.signing_method, contract.source, contract.snapshot_hash, contract.released_at::text,
   contract.confirmed_at::text, contract.confirmed_email, contract.confirmed_name, contract.confirmed_role,
   contract.confirmation_mode, contract.confirmation_recorded_at::text, contract.confirmation_note,
   contract.voided_at::text, contract.voided_by, contract.void_reason,
@@ -90,20 +94,6 @@ const routes = {
   confirm: /^\/api\/contracts\/([0-9a-f-]+)\/([0-9a-f-]+)\/confirm$/i,
   pdf: /^\/api\/contracts\/([0-9a-f-]+)\/([0-9a-f-]+)\/pdf$/i,
 };
-
-function emailConfig() {
-  const apiKey = Netlify.env.get("RESEND_API_KEY")?.trim();
-  if (!apiKey) throw new Error("resend_not_configured");
-  return {
-    apiKey,
-    from: Netlify.env.get("MAIL_FROM")?.trim() || "mittragen.ch <noreply@news.mittragen.ch>",
-    replyTo: Netlify.env.get("MAIL_REPLY_TO")?.trim() || undefined,
-  };
-}
-
-function siteUrl(request: Request, path: string) {
-  return new URL(path, Netlify.env.get("URL")?.trim() || new URL(request.url).origin).toString();
-}
 
 function verifyMutation(request: Request): Response | null {
   try {
@@ -127,19 +117,6 @@ async function hasSponsorAccess(client: DatabaseClient, tenantId: string, sponso
     WHERE tenant_id = $1 AND sponsor_id = $2 AND identity_user_id = $3 LIMIT 1
   `, [tenantId, sponsorId, userId]);
   return Boolean(result.rows[0]);
-}
-
-function canonical(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
-  if (value && typeof value === "object") {
-    const record = value as Record<string, unknown>;
-    return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${canonical(record[key])}`).join(",")}}`;
-  }
-  return JSON.stringify(value);
-}
-
-function snapshotHash(value: unknown) {
-  return createHash("sha256").update(canonical(value)).digest("hex");
 }
 
 async function getSettings(client: DatabaseClient, tenantId: string) {
@@ -336,38 +313,6 @@ async function listContracts(client: DatabaseClient, tenantId: string) {
   return { contracts: contracts.rows, eligible: eligible.rows, sponsors: sponsors.rows, catalog: catalog.rows };
 }
 
-async function ensureDirectReservation(client: DatabaseClient, tenantId: string, sponsorId: string, packageVersionId: string, userId: string) {
-  const existing = await client.query<{ id: string; status: "held" | "confirmed"; expired: boolean }>(`
-    SELECT id, status, (expires_at IS NOT NULL AND expires_at <= now()) AS expired
-    FROM sponsorship_package_reservations
-    WHERE tenant_id = $1 AND sponsor_id = $2 AND package_version_id = $3
-      AND status IN ('held', 'confirmed')
-    LIMIT 1
-  `, [tenantId, sponsorId, packageVersionId]);
-  if (existing.rows[0]?.status === "confirmed") return true;
-  if (existing.rows[0]?.status === "held" && !existing.rows[0].expired) return false;
-  if (existing.rows[0]?.status === "held") {
-    await client.query(`UPDATE sponsorship_package_reservations
-      SET status = 'released', updated_at = now()
-      WHERE tenant_id = $1 AND id = $2`, [tenantId, existing.rows[0].id]);
-  }
-  await client.query(`INSERT INTO sponsorship_package_reservations
-    (tenant_id, package_version_id, sponsor_id, status, created_by)
-    VALUES ($1, $2, $3, 'confirmed', $4)`,
-    [tenantId, packageVersionId, sponsorId, userId]);
-  return true;
-}
-
-async function nextContractNumber(client: DatabaseClient, tenantId: string) {
-  const year = new Date().getUTCFullYear();
-  const counter = await client.query<{ last_value: number }>(`
-    INSERT INTO contract_number_counters (tenant_id, contract_year, last_value) VALUES ($1,$2,1)
-    ON CONFLICT (tenant_id, contract_year) DO UPDATE SET last_value = contract_number_counters.last_value + 1
-    RETURNING last_value
-  `, [tenantId, year]);
-  return `MT-${year}-${String(counter.rows[0].last_value).padStart(4, "0")}`;
-}
-
 async function releaseReservationIfUnused(client: DatabaseClient, tenantId: string, sponsorId: string, packageVersionId: string) {
   await client.query(`UPDATE sponsorship_package_reservations reservation
     SET status = 'released', updated_at = now()
@@ -504,7 +449,7 @@ export default async (request: Request, context: Context) => {
         const contractNumber = `MT-${year}-${String(counter.rows[0].last_value).padStart(4, "0")}`;
         const title = "Sponsoringvertrag";
         const specialAgreements = "Keine besonderen Vereinbarungen.";
-        const hash = snapshotHash({
+        const hash = contractSnapshotHash({
           contractNumber, versionNumber: 1, title, specialAgreements,
           organization: snapshots.organization, sponsor: snapshots.sponsor, package: snapshots.package,
           terms: snapshots.terms, signingMethod: "click",
@@ -882,7 +827,7 @@ export default async (request: Request, context: Context) => {
         if (source.mode === "direct" && !await ensureDirectReservation(client, tenantId, snapshots.sponsorId, snapshots.packageVersionId, user.id)) {
           return { state: "reservation_held" as const };
         }
-        const hash = snapshotHash({
+        const hash = contractSnapshotHash({
           contractNumber: existing.contract.contract_number, versionNumber: existing.contract.version_number,
           title: existing.contract.title, specialAgreements: existing.contract.special_agreements,
           organization: snapshots.organization, sponsor: snapshots.sponsor, package: snapshots.package,
@@ -1003,8 +948,8 @@ export default async (request: Request, context: Context) => {
       if (!prepared) return json({ error: "contract_not_released" }, 409);
 
       const confirmationUrl = mode === "account"
-        ? siteUrl(request, "/sponsor")
-        : siteUrl(request, `/unterzeichnen?token=${encodeURIComponent(rawToken!)}`);
+        ? absoluteSiteUrl(request, "/sponsor")
+        : absoluteSiteUrl(request, `/unterzeichnen?token=${encodeURIComponent(rawToken!)}`);
       let resendEmailId: string;
       try {
         resendEmailId = await sendContractSigningEmail({
@@ -1018,7 +963,7 @@ export default async (request: Request, context: Context) => {
           confirmationUrl,
           deliveryMode: mode,
           expiresAt: prepared.expires_at,
-        }, emailConfig());
+        }, contractEmailConfig());
       } catch (error) {
         await withSession(user.id, tenantId, async (client) => {
           await client.query(`UPDATE contract_signing_requests SET status = 'failed', delivery_error = $3, updated_at = now()
@@ -1162,8 +1107,8 @@ export default async (request: Request, context: Context) => {
           signerName: signing.signer_name,
           organizationName: authorized.tenantName,
           sponsorName: authorized.detail.contract.sponsor_snapshot.legalName,
-          portalUrl: siteUrl(request, "/sponsor"),
-        }, emailConfig());
+          portalUrl: absoluteSiteUrl(request, "/sponsor"),
+        }, contractEmailConfig());
         delivery = "existing_user";
       }
       const detail = await withSession(user.id, tenantId, async (client) => {
@@ -1215,7 +1160,7 @@ export default async (request: Request, context: Context) => {
         packageName: contract.package_snapshot.name,
         annualValueCents: Number(contract.package_snapshot.priceCents),
         pdfBase64: Buffer.from(bytes).toString("base64"),
-      }, emailConfig());
+      }, contractEmailConfig());
       const detail = await withSession(user.id, tenantId, async (client) => {
         await client.query(`INSERT INTO sponsorship_contract_events
           (tenant_id, contract_id, event_type, actor_user_id, actor_email, evidence)
@@ -1267,6 +1212,9 @@ export default async (request: Request, context: Context) => {
           await client.query(`UPDATE contract_signing_requests SET status = 'confirmed', confirmed_at = now(), updated_at = now()
             WHERE tenant_id = $1 AND contract_id = $2`, [tenantId, contractId]);
         }
+        await client.query(`UPDATE sponsorship_checkout_submissions
+          SET status = 'confirmed', confirmed_at = now(), updated_at = now()
+          WHERE tenant_id = $1 AND contract_id = $2`, [tenantId, contractId]);
         await client.query(`INSERT INTO sponsorship_contract_events
           (tenant_id, contract_id, event_type, actor_user_id, actor_email, evidence)
           VALUES ($1,$2,'confirmed',$3,$4,jsonb_build_object(

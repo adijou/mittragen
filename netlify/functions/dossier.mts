@@ -24,6 +24,7 @@ type PackageRow = {
   price_cents: number;
   duration_months: number;
   payment_plan: string;
+  online_direct_enabled: boolean;
 };
 
 type RightRow = {
@@ -74,9 +75,15 @@ async function dossierData(client: DatabaseClient, tenantId: string) {
   const organizationRow = await getOrganizationProfile(client, tenantId);
   const organization = mapOrganizationProfile(organizationRow);
   if (!organizationRow || !organization) return null;
+  const checkoutSettings = await client.query<{ public_key: string }>(`
+    SELECT public_key FROM tenant_sponsoring_checkout_settings WHERE tenant_id = $1 LIMIT 1
+  `, [tenantId]);
   const packages = await client.query<PackageRow>(`
     SELECT version.id, version.name, version.description, version.price_cents,
-           version.duration_months, version.payment_plan
+           version.duration_months, version.payment_plan,
+           EXISTS (SELECT 1 FROM sponsorship_package_online_settings online
+             WHERE online.tenant_id = version.tenant_id AND online.package_version_id = version.id
+               AND online.is_enabled) AS online_direct_enabled
     FROM sponsorship_package_versions version
     JOIN sponsorship_packages package ON package.id = version.package_id AND package.tenant_id = version.tenant_id
     WHERE version.tenant_id = $1 AND version.status = 'published' AND version.visibility = 'public'
@@ -96,6 +103,7 @@ async function dossierData(client: DatabaseClient, tenantId: string) {
     tenant: tenant.rows[0],
     profile,
     organization,
+    checkout: { publicKey: checkoutSettings.rows[0]?.public_key ?? null },
     brandAsset: { key: organizationRow.logo_blob_key, contentType: organizationRow.logo_content_type },
     missingFields: dossierMissingFields(profile, organization),
     packages: packages.rows.map((item) => ({
@@ -105,6 +113,7 @@ async function dossierData(client: DatabaseClient, tenantId: string) {
       priceCents: item.price_cents,
       durationMonths: item.duration_months,
       paymentPlan: item.payment_plan,
+      onlineDirectEnabled: item.online_direct_enabled,
       rights: rights.rows.filter((right) => right.package_version_id === item.id).map((right) => ({
         name: right.name,
         description: right.description,
@@ -140,6 +149,7 @@ export default async (request: Request, context: Context) => {
           tenant: result.data.tenant,
           profile: result.data.profile,
           organization: result.data.organization,
+          checkout: result.data.checkout,
           missingFields: result.data.missingFields,
           packages: result.data.packages,
         };

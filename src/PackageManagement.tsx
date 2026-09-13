@@ -36,6 +36,8 @@ type PackageVersion = {
   deviation_approval_required: boolean;
   right_count: string;
   reserved_quantity: string;
+  online_direct_enabled: boolean;
+  online_direct_approved_at: string | null;
 };
 
 type PackageRight = {
@@ -136,6 +138,7 @@ export function PackageManagement({ tenantId, canWrite }: { tenantId: string; ca
   const [showCreate, setShowCreate] = useState(false);
   const [rightEditor, setRightEditor] = useState<PackageRight | "new" | null>(null);
   const [rightDraft, setRightDraft] = useState<RightForm>(emptyRight);
+  const [onlineAcknowledged, setOnlineAcknowledged] = useState(false);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
@@ -152,6 +155,7 @@ export function PackageManagement({ tenantId, canWrite }: { tenantId: string; ca
       ?? next.versions[0];
     setSelectedVersionId(nextVersion?.id ?? "");
     setForm(nextVersion ? versionForm(nextVersion) : emptyVersion);
+    setOnlineAcknowledged(false);
   };
 
   const loadPackages = async (preferredPackageId?: string, preferredVersionId?: string) => {
@@ -192,6 +196,7 @@ export function PackageManagement({ tenantId, canWrite }: { tenantId: string; ca
     setSelectedVersionId(versionId);
     const version = detail?.versions.find((item) => item.id === versionId);
     if (version) setForm(versionForm(version));
+    setOnlineAcknowledged(false);
     setError("");
     setMessage("");
   };
@@ -267,6 +272,30 @@ export function PackageManagement({ tenantId, canWrite }: { tenantId: string; ca
     } finally { setBusy(""); }
   };
 
+  const updateOnlineCheckout = async (enabled: boolean) => {
+    if (!detail || !selectedVersion) return;
+    setBusy("online"); setError(""); setMessage("");
+    try {
+      const result = await request<{ detail: PackageDetail }>(`/api/packages/${tenantId}/${detail.package.id}/versions/${selectedVersion.id}/online`, {
+        method: "PATCH",
+        body: JSON.stringify({ enabled, acknowledged: enabled ? onlineAcknowledged : false }),
+      });
+      applyDetail(result.detail, selectedVersion.id);
+      setMessage(enabled
+        ? `«${selectedVersion.name}» kann jetzt über den öffentlichen Vereinslink direkt abgeschlossen werden.`
+        : `Der Online-Direktabschluss für «${selectedVersion.name}» wurde beendet.`);
+    } catch (reason) {
+      const code = reason instanceof Error ? reason.message : "package_online_checkout_update_failed";
+      setError(code === "online_package_acknowledgement_required"
+        ? "Bitte bestätigen Sie zuerst Preis, Laufzeit und Leistungen."
+        : code === "contract_settings_incomplete"
+          ? "Bitte vervollständigen Sie zuerst die Vertragsorganisation."
+          : code === "online_checkout_public_package_required"
+            ? "Nur eine veröffentlichte, öffentlich sichtbare Paketversion kann online angeboten werden."
+            : "Der Online-Direktabschluss konnte nicht geändert werden.");
+    } finally { setBusy(""); }
+  };
+
   const openRight = (right: PackageRight | "new") => {
     setRightEditor(right);
     setRightDraft(right === "new" ? emptyRight : rightForm(right));
@@ -319,6 +348,11 @@ export function PackageManagement({ tenantId, canWrite }: { tenantId: string; ca
         <section className="package-version-card"><div className="package-section-heading"><div><p className="eyebrow">Kommerzielle Angaben</p><h3>Paketversion</h3></div><div>{canWrite && selectedVersion.status !== "draft" && <button className="access-secondary" disabled={busy === "copy"} onClick={() => void copyVersion()}>{busy === "copy" ? "Kopiert …" : "Als neue Version kopieren"}</button>}{canWrite && selectedVersion.status === "draft" && <button className="access-primary" disabled={busy === "publish"} onClick={() => void publishVersion()}>{busy === "publish" ? "Veröffentlicht …" : "Version veröffentlichen"}</button>}</div></div>
           <form onSubmit={saveVersion}><VersionFields form={form} setForm={setForm} disabled={!canWrite || selectedVersion.status !== "draft"}/>{selectedVersion.status === "draft" && canWrite && <footer><button className="access-primary" disabled={busy === "version"}>{busy === "version" ? "Speichert …" : "Version speichern"}</button></footer>}</form>
           {selectedVersion.status !== "draft" && <p className="package-lock-note"><strong>Unveränderliche Ausgabe:</strong> Bestehende Verträge und spätere Bestätigungen können dauerhaft auf diese Version verweisen.</p>}
+        </section>
+
+        <section className="package-online-card"><div className="package-section-heading"><div><p className="eyebrow">Öffentlicher Vereinslink</p><h3>Online-Direktabschluss</h3></div><span className={selectedVersion.online_direct_enabled ? "online-status online-status--active" : "online-status"}>{selectedVersion.online_direct_enabled ? "Freigegeben" : "Nicht freigegeben"}</span></div>
+          <p>Sponsoren können dieses Paket zum publizierten Preis wählen. Mit dem Absenden entsteht ein unveränderlich freigegebener Vertrag; Sonderkonditionen bleiben im Vertragscenter.</p>
+          {selectedVersion.online_direct_enabled ? <><p className="package-lock-note">Freigegeben {selectedVersion.online_direct_approved_at ? `am ${new Date(selectedVersion.online_direct_approved_at).toLocaleString("de-CH")}` : "mit protokollierter Bestätigung"}.</p>{canWrite && <button type="button" className="access-secondary" disabled={busy !== ""} onClick={() => void updateOnlineCheckout(false)}>{busy === "online" ? "Wird geändert …" : "Online-Abschluss deaktivieren"}</button>}</> : selectedVersion.status === "published" && selectedVersion.visibility === "public" ? <>{canWrite && <label className="package-online-approval"><input type="checkbox" checked={onlineAcknowledged} onChange={(event) => setOnlineAcknowledged(event.target.checked)}/><span>Ich habe Preis, Laufzeit und sämtliche Leistungen geprüft und gebe diese Paketversion für verbindliche Online-Direktabschlüsse frei.</span></label>}{canWrite && <button type="button" className="access-primary" disabled={busy !== "" || !onlineAcknowledged} onClick={() => void updateOnlineCheckout(true)}>{busy === "online" ? "Wird freigegeben …" : "Für Online-Abschluss freigeben"}</button>}</> : <p className="package-lock-note">Dafür muss diese Ausgabe veröffentlicht und «Für Sponsoren sichtbar» sein. Änderungen erfolgen über eine neue Paketversion.</p>}
         </section>
 
         <section className="package-rights"><div className="package-section-heading"><div><p className="eyebrow">Leistungsumfang</p><h3>Rechte und Leistungen</h3></div>{canWrite && selectedVersion.status === "draft" && <button className="access-secondary" onClick={() => openRight("new")}>Leistung hinzufügen</button>}</div>{selectedRights.length === 0 ? <p className="package-rights-empty">Noch keine Leistungen erfasst.</p> : <div className="package-right-list">{selectedRights.map((right) => <article key={right.id}><div><strong>{right.name}</strong><small>{right.description || "Keine Beschreibung"}</small></div><dl><div><dt>Menge</dt><dd>{right.quantity}</dd></div><div><dt>Termin</dt><dd>{right.schedule_text || "–"}</dd></div><div><dt>Kanal / Ort</dt><dd>{[right.channel, right.location].filter(Boolean).join(" · ") || "–"}</dd></div><div><dt>Verantwortlich</dt><dd>{right.responsible_role || "–"}</dd></div></dl><span className={right.exclusivity_scope === "none" ? "right-exclusive" : "right-exclusive right-exclusive--active"}>{right.exclusivity_scope === "none" ? "Nicht exklusiv" : `${exclusivityLabels[right.exclusivity_scope]} · ${right.exclusivity_key}`}</span>{canWrite && selectedVersion.status === "draft" && <button onClick={() => openRight(right)}>Bearbeiten</button>}</article>)}</div>}</section>

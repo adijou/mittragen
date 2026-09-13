@@ -18,6 +18,7 @@ type DossierPackage = {
   priceCents: number;
   durationMonths: number;
   paymentPlan: string;
+  onlineDirectEnabled: boolean;
   rights: Array<{ name: string; description: string | null }>;
 };
 
@@ -25,6 +26,7 @@ type DossierData = {
   tenant: { name: string; slug: string };
   profile: DossierProfile;
   organization: OrganizationProfile;
+  checkout: { publicKey: string | null };
   missingFields: string[];
   packages: DossierPackage[];
 };
@@ -147,6 +149,8 @@ export function SponsoringDossier({ tenantId, canManage, onOpenOrganization }: {
   if (!data) return <section className="dossier-management"><div className="workspace-error"><strong>Das Sponsoringdossier ist nicht verfügbar.</strong><p>{error}</p></div></section>;
 
   const ready = data.missingFields.length === 0 && data.packages.length > 0;
+  const checkoutUrl = data.checkout.publicKey ? `${window.location.origin}/sponsoring/${data.checkout.publicKey}` : null;
+  const onlinePackageCount = data.packages.filter((item) => item.onlineDirectEnabled).length;
   return <section className="dossier-management">
     <header><div><p className="eyebrow">Akquiseunterlage</p><h1>Sponsoringdossier</h1><p>Klubprofil und veröffentlichte Sponsoringpakete werden zu einem einheitlichen PDF zusammengestellt.</p></div><button className="access-primary" type="button" disabled={!ready || busy !== ""} onClick={() => void download()}>{busy === "pdf" ? "PDF wird erstellt …" : "Dossier als PDF erstellen"}</button></header>
 
@@ -169,6 +173,7 @@ export function SponsoringDossier({ tenantId, canManage, onOpenOrganization }: {
 
       <aside className="dossier-sidebar">
         <section className="dossier-organization"><div><p className="eyebrow">Aus Organisation</p><h2>Kontakt & Erscheinungsbild</h2></div><div className="dossier-brand-preview" style={{ background: data.organization.brandPrimaryColor }}>{data.organization.logoAvailable ? <img src={`/api/organization/${tenantId}/logo?v=${encodeURIComponent(data.organization.logoUpdatedAt ?? "current")}`} alt="Organisationslogo"/> : <span>Standardgestaltung</span>}</div><dl><div><dt>Kontakt</dt><dd>{data.organization.contactName || "Noch offen"}</dd></div><div><dt>E-Mail</dt><dd>{data.organization.contactEmail || "Noch offen"}</dd></div><div><dt>Farben</dt><dd><i style={{ background: data.organization.brandPrimaryColor }}></i><i style={{ background: data.organization.brandAccentColor }}></i></dd></div></dl>{canManage && <button type="button" className="access-secondary" onClick={onOpenOrganization}>In Organisation bearbeiten</button>}</section>
+        <section className="dossier-checkout"><div><p className="eyebrow">Öffentlicher Abschluss</p><h2>Vereinslink</h2><p>{onlinePackageCount ? `${onlinePackageCount} Paket${onlinePackageCount === 1 ? "" : "e"} kann über diesen Link direkt gewählt und vertraglich bestätigt werden.` : "Der Link ist bereit. Geben Sie zuerst mindestens eine veröffentlichte Paketversion für den Online-Abschluss frei."}</p></div>{checkoutUrl && <><a className="dossier-checkout__url" href={checkoutUrl} target="_blank" rel="noreferrer">{checkoutUrl}</a><div><button type="button" className="access-secondary" onClick={() => { void navigator.clipboard.writeText(checkoutUrl); setMessage("Vereinslink wurde kopiert."); }}>Link kopieren</button><a className="access-primary" href={checkoutUrl} target="_blank" rel="noreferrer">Öffnen</a></div></>}</section>
         <section className="dossier-packages"><div><p className="eyebrow">Automatisch aus Paketen</p><h2>{data.packages.length} Pakete im Dossier</h2><p>Berücksichtigt werden aktuell gültige, veröffentlichte und öffentlich sichtbare Paketversionen.</p></div>{data.packages.length === 0 ? <p className="import-empty">Noch keine geeigneten Pakete vorhanden.</p> : <div>{data.packages.map((item) => <article key={item.id}><span>{item.durationMonths} Monate · {paymentLabels[item.paymentPlan] ?? item.paymentPlan}</span><h3>{item.name}</h3><strong>{formatChf(item.priceCents)}</strong>{item.description && <p>{item.description}</p>}<small>{item.rights.length} Leistungen</small></article>)}</div>}</section>
       </aside>
     </div>
