@@ -30,7 +30,7 @@ type SponsorForm = {
   city: string;
   website: string;
   sourceOrganization: string;
-  status: string;
+  status: "active" | "inactive";
   proposalPackage: string;
   assignedPackageVersionId: string;
   annualValue: string;
@@ -47,7 +47,7 @@ const emptyForm = (): SponsorForm => ({
   city: "",
   website: "",
   sourceOrganization: "",
-  status: "draft",
+  status: "active",
   proposalPackage: "",
   assignedPackageVersionId: "",
   annualValue: "0",
@@ -64,6 +64,11 @@ const statusLabels: Record<string, string> = {
   active: "Aktiv",
   inactive: "Inaktiv",
 };
+
+const operationalStatusLabels = {
+  active: "Aktiv",
+  inactive: "Inaktiv",
+} as const;
 
 const errorLabels: Record<string, string> = {
   invalid_legal_name: "Bitte einen gültigen Firmennamen eintragen.",
@@ -95,7 +100,7 @@ const formFromSponsor = (sponsor: Sponsor): SponsorForm => ({
   city: sponsor.city ?? "",
   website: sponsor.website ?? "",
   sourceOrganization: sponsor.source_organization ?? "",
-  status: sponsor.status,
+  status: sponsor.status === "inactive" ? "inactive" : "active",
   proposalPackage: sponsor.proposal_package ?? "",
   assignedPackageVersionId: sponsor.assigned_package_version_id ?? "",
   annualValue: String(sponsor.annual_value_cents / 100),
@@ -115,6 +120,7 @@ export function SponsorDirectory({ tenantId, canWrite, onChanged }: {
   const [editing, setEditing] = useState<Sponsor | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [form, setForm] = useState<SponsorForm>(emptyForm);
+  const [statusChanged, setStatusChanged] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -146,6 +152,7 @@ export function SponsorDirectory({ tenantId, canWrite, onChanged }: {
   const openCreate = () => {
     setEditing(null);
     setForm(emptyForm());
+    setStatusChanged(false);
     setError("");
     setFormOpen(true);
   };
@@ -153,6 +160,7 @@ export function SponsorDirectory({ tenantId, canWrite, onChanged }: {
   const openEdit = (sponsor: Sponsor) => {
     setEditing(sponsor);
     setForm(formFromSponsor(sponsor));
+    setStatusChanged(false);
     setError("");
     setFormOpen(true);
   };
@@ -166,7 +174,7 @@ export function SponsorDirectory({ tenantId, canWrite, onChanged }: {
     try {
       const amount = Number(form.annualValue.replace("'", "").replace(",", "."));
       const website = form.website && !/^https?:\/\//i.test(form.website) ? `https://${form.website}` : form.website;
-      const payload = {
+      const payload: Record<string, unknown> = {
         legal_name: form.legalName,
         contact_name: form.contactName,
         contact_email: form.contactEmail,
@@ -176,12 +184,14 @@ export function SponsorDirectory({ tenantId, canWrite, onChanged }: {
         city: form.city,
         website,
         source_organization: form.sourceOrganization,
-        status: form.status,
         proposal_package: form.proposalPackage,
         assigned_package_version_id: form.assignedPackageVersionId || null,
         annual_value_cents: Number.isFinite(amount) ? Math.round(amount * 100) : -1,
         notes: form.notes,
       };
+      if (editing && (statusChanged || editing.status === "active" || editing.status === "inactive")) {
+        payload.status = form.status;
+      }
       const path = editing ? `/api/sponsors/${tenantId}/${editing.id}` : `/api/sponsors/${tenantId}`;
       await requestApi(path, { method: editing ? "PATCH" : "POST", body: JSON.stringify(payload) });
       setFormOpen(false);
@@ -206,6 +216,6 @@ export function SponsorDirectory({ tenantId, canWrite, onChanged }: {
     </div>
     {loading ? <div className="sponsor-directory__state">Sponsoren werden geladen …</div> : error && !formOpen ? <div className="workspace-error"><strong>Die Sponsoren konnten nicht geladen werden.</strong><p>{error}</p></div> : visibleSponsors.length === 0 ? <div className="sponsor-directory__state"><strong>Noch keine passenden Sponsoren.</strong><p>{canWrite ? "Erfassen Sie den ersten Sponsor für diese Organisation." : "Ändern Sie den Suchbegriff."}</p></div> : <div className="sponsor-table-wrap"><table className="sponsor-table"><thead><tr><th>Sponsor</th><th>Kontakt</th><th>Status</th><th></th></tr></thead><tbody>{visibleSponsors.map((sponsor) => <tr key={sponsor.id}><td><strong>{sponsor.legal_name}</strong><small>{[sponsor.postal_code, sponsor.city].filter(Boolean).join(" ") || sponsor.source_organization || "–"}</small></td><td><strong>{sponsor.contact_name || "–"}</strong><small>{sponsor.contact_email || sponsor.phone || "Kein Kontakt hinterlegt"}</small></td><td><span className={`sponsor-status sponsor-status--${sponsor.status}`}>{statusLabels[sponsor.status] ?? sponsor.status}</span></td><td>{canWrite && <button className="sponsor-edit" onClick={() => openEdit(sponsor)}>Bearbeiten</button>}</td></tr>)}</tbody></table></div>}
 
-    {formOpen && <div className="sponsor-form-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) setFormOpen(false); }}><section className="sponsor-form" role="dialog" aria-modal="true" aria-labelledby="sponsor-form-title"><header><div><p className="eyebrow">{editing ? "Stammdaten bearbeiten" : "Neuer Eintrag"}</p><h2 id="sponsor-form-title">{editing ? editing.legal_name : "Sponsor erfassen"}</h2></div><button type="button" aria-label="Schliessen" onClick={() => setFormOpen(false)} disabled={saving}>×</button></header><form onSubmit={submit}><div className="sponsor-form-grid"><label className="sponsor-form-wide"><span>Firmenname</span><input required value={form.legalName} onChange={(event) => update("legalName", event.target.value)}/></label><label><span>Kontaktperson</span><input value={form.contactName} onChange={(event) => update("contactName", event.target.value)}/></label><label><span>Kontakt-E-Mail</span><input type="email" value={form.contactEmail} onChange={(event) => update("contactEmail", event.target.value)}/></label><label><span>Telefon</span><input value={form.phone} onChange={(event) => update("phone", event.target.value)}/></label><label><span>Website</span><input value={form.website} onChange={(event) => update("website", event.target.value)} placeholder="beispiel.ch"/></label><label className="sponsor-form-wide"><span>Strasse</span><input value={form.street} onChange={(event) => update("street", event.target.value)}/></label><label><span>PLZ</span><input value={form.postalCode} onChange={(event) => update("postalCode", event.target.value)}/></label><label><span>Ort</span><input value={form.city} onChange={(event) => update("city", event.target.value)}/></label><label><span>Herkunft</span><input value={form.sourceOrganization} onChange={(event) => update("sourceOrganization", event.target.value)} placeholder="z. B. FC Bösingen"/></label><label><span>Status</span><select value={form.status} onChange={(event) => update("status", event.target.value)}>{Object.entries(statusLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label><label className="sponsor-form-wide"><span>Interne Notizen</span><textarea value={form.notes} onChange={(event) => update("notes", event.target.value)} maxLength={5000}/></label></div><p className="sponsor-form-note">Paket und Jahreswert werden im Vertragscenter ausgewählt.</p>{error && <p className="form-error" role="alert">{error}</p>}<footer><button className="access-secondary" type="button" disabled={saving} onClick={() => setFormOpen(false)}>Abbrechen</button><button className="access-primary" disabled={saving}>{saving ? "Wird gespeichert …" : editing ? "Änderungen speichern" : "Sponsor speichern"}</button></footer></form></section></div>}
+    {formOpen && <div className="sponsor-form-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) setFormOpen(false); }}><section className="sponsor-form" role="dialog" aria-modal="true" aria-labelledby="sponsor-form-title"><header><div><p className="eyebrow">{editing ? "Stammdaten bearbeiten" : "Neuer Eintrag"}</p><h2 id="sponsor-form-title">{editing ? editing.legal_name : "Sponsor erfassen"}</h2></div><button type="button" aria-label="Schliessen" onClick={() => setFormOpen(false)} disabled={saving}>×</button></header><form onSubmit={submit}><div className="sponsor-form-grid"><label className="sponsor-form-wide"><span>Firmenname</span><input required value={form.legalName} onChange={(event) => update("legalName", event.target.value)}/></label><label><span>Kontaktperson</span><input value={form.contactName} onChange={(event) => update("contactName", event.target.value)}/></label><label><span>Kontakt-E-Mail</span><input type="email" value={form.contactEmail} onChange={(event) => update("contactEmail", event.target.value)}/></label><label><span>Telefon</span><input value={form.phone} onChange={(event) => update("phone", event.target.value)}/></label><label><span>Website</span><input value={form.website} onChange={(event) => update("website", event.target.value)} placeholder="beispiel.ch"/></label><label className="sponsor-form-wide"><span>Strasse</span><input value={form.street} onChange={(event) => update("street", event.target.value)}/></label><label><span>PLZ</span><input value={form.postalCode} onChange={(event) => update("postalCode", event.target.value)}/></label><label><span>Ort</span><input value={form.city} onChange={(event) => update("city", event.target.value)}/></label><label><span>Herkunft</span><input value={form.sourceOrganization} onChange={(event) => update("sourceOrganization", event.target.value)} placeholder="z. B. FC Bösingen"/></label>{editing && <label><span>Status</span><select value={form.status} onChange={(event) => { update("status", event.target.value); setStatusChanged(true); }}>{Object.entries(operationalStatusLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>}<label className="sponsor-form-wide"><span>Interne Notizen</span><textarea value={form.notes} onChange={(event) => update("notes", event.target.value)} maxLength={5000}/></label></div><p className="sponsor-form-note">Paket und Jahreswert werden im Vertragscenter ausgewählt.</p>{error && <p className="form-error" role="alert">{error}</p>}<footer><button className="access-secondary" type="button" disabled={saving} onClick={() => setFormOpen(false)}>Abbrechen</button><button className="access-primary" disabled={saving}>{saving ? "Wird gespeichert …" : editing ? "Änderungen speichern" : "Sponsor speichern"}</button></footer></form></section></div>}
   </section>;
 }

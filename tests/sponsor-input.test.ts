@@ -13,7 +13,7 @@ test("normalizes a valid sponsor", () => {
   assert.equal(result.ok, true);
   if (!result.ok) return;
   assert.equal(result.value.legal_name, "Beispiel AG");
-  assert.equal(result.value.status, "draft");
+  assert.equal(result.value.status, "active");
   assert.equal(result.value.annual_value_cents, 250000);
 });
 
