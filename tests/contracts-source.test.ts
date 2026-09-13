@@ -25,6 +25,17 @@ test("sponsor editing no longer exposes package assignment fields", async () => 
   assert.match(source, /Paket und Jahreswert werden im Vertragscenter ausgewählt/);
 });
 
+test("new sponsors are activated without exposing workflow statuses", async () => {
+  const source = await readFile(new URL("../src/SponsorDirectory.tsx", import.meta.url), "utf8");
+  const input = await readFile(new URL("../netlify/functions/_shared/sponsor-input.ts", import.meta.url), "utf8");
+
+  assert.match(source, /status: "active"/);
+  assert.match(source, /\{editing && <label><span>Status<\/span>/);
+  assert.match(source, /Object\.entries\(operationalStatusLabels\)/);
+  assert.doesNotMatch(source, /Object\.entries\(statusLabels\).*<option/);
+  assert.match(input, /else if \(mode === "create"\) \{\s*value\.status = "active";/);
+});
+
 test("contract confirmation automatically separates identified accounts from one-time links", async () => {
   const contracts = await readFile(new URL("../netlify/functions/contracts.mts", import.meta.url), "utf8");
   const publicSigning = await readFile(new URL("../netlify/functions/contract-signing.mts", import.meta.url), "utf8");

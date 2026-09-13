@@ -79,7 +79,7 @@ export function parseSponsorInput(body: unknown, mode: "create" | "update"): Spo
     }
     value.status = record.status as SponsorStatus;
   } else if (mode === "create") {
-    value.status = "draft";
+    value.status = "active";
   }
 
   if ("assigned_package_version_id" in record) {
