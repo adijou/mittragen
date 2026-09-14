@@ -60,8 +60,9 @@ test("login errors expose the activation resend only for unconfirmed email addre
 test("the login page provides an explicit activation-link resend action", async () => {
   const source = await readFile(new URL("../src/ProductiveAccess.tsx", import.meta.url), "utf8");
   assert.match(source, />Aktivierungslink erneut senden<\/button>/);
-  assert.match(source, /signup\(email, password\)/);
-  assert.match(source, /15-minütigen Sperrfrist/);
+  assert.match(source, /await requestPasswordRecovery\(email\.trim\(\)\)/);
+  assert.doesNotMatch(source, /const resendConfirmation[\s\S]*?signup\(email, password\)/);
+  assert.match(source, /legen Sie dort Ihr Passwort fest/);
 });
 
 test("two initialization subscribers redeem a one-time confirmation token exactly once", async () => {
@@ -147,4 +148,15 @@ test("the German confirmation email uses Identity's canonical URL twice and an a
   assert.match(template, /src="https:\/\/mittragen\.ch\/brand\/mittragen-icon-email\.png"/);
   const logo = await readFile(new URL("../public/brand/mittragen-icon-email.png", import.meta.url));
   assert.deepEqual([...logo.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10]);
+});
+
+test("the German recovery email activates invited accounts through Identity's canonical URL", async () => {
+  const template = await readFile(new URL("../public/emails/recovery.html", import.meta.url), "utf8");
+  const target = "{{ .ConfirmationURL }}";
+  assert.equal(template.split(target).length - 1, 2);
+  assert.match(template, /Zugang einrichten/);
+  assert.match(template, /noch nicht bestätigtes Konto aktiviert/);
+  assert.match(template, /lang="de"/);
+  assert.doesNotMatch(template, /Reset Password|Click here|<script|data:image|<svg/i);
+  assert.match(template, /src="https:\/\/mittragen\.ch\/brand\/mittragen-icon-email\.png"/);
 });
