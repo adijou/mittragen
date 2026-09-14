@@ -623,6 +623,14 @@ td small { margin-top: 3px; color: var(--ink-3); }
 .auth-warning, .auth-state { padding: 18px; border-radius: 8px; background: var(--gold-soft); }
 .auth-warning p { margin: 7px 0 0; font-size: 12px; }
 .auth-state { display: flex; flex-direction: column; gap: 15px; background: var(--blue-soft); }
+.email-confirmation-layout { display: grid; place-items: center; padding: 60px 20px; }
+.email-confirmation-card { width: min(100%, 610px); text-align: center; }
+.email-confirmation-card h1 { margin: 10px 0 22px; font-size: clamp(26px, 5vw, 36px); line-height: 1.2; }
+.email-confirmation-card p:not(.eyebrow) { color: var(--ink-2); font-size: 15px; line-height: 1.65; overflow-wrap: anywhere; }
+.email-confirmation-card .access-primary { width: 100%; margin-top: 18px; }
+.email-confirmation-check { display: grid; place-items: center; width: 72px; height: 72px; margin: 0 auto 26px; border-radius: 50%; background: #e8f5ed; color: #247746; }
+.email-confirmation-check svg { width: 35px; height: 35px; }
+.email-confirmation-card .form-error { color: #a12626; }
 .access-empty { width: min(520px, calc(100% - 40px)); display: flex; flex-direction: column; align-items: flex-start; justify-content: center; min-height: calc(100vh - 82px); margin-inline: auto; }
 
 .workspace-page { min-height: 100vh; display: grid; grid-template-columns: 260px 1fr; background: #f4f7fb; }
@@ -701,6 +709,21 @@ td small { margin-top: 3px; color: var(--ink-3); }
 .sponsor-status--question { background: var(--gold-soft); color: #805800; }
 .sponsor-status--inactive { background: var(--surface-2); color: var(--ink-3); }
 .sponsor-edit { padding: 6px 0; border: 0; border-bottom: 1px solid currentColor; background: none; color: var(--blue); font-size: 10px; font-weight: 700; cursor: pointer; }
+.sponsor-row-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px 18px; }
+.sponsor-edit:disabled { opacity: .5; cursor: default; }
+.sponsor-access-panel { margin-top: 28px; padding-top: 24px; border-top: 1px solid var(--line); }
+.sponsor-access-panel h3 { margin: 6px 0 12px; font-size: 23px; }
+.sponsor-access-panel p { color: var(--ink-2); font-size: 13px; line-height: 1.6; }
+.sponsor-access-panel .sponsor-access-note { margin: 0; font-size: 12px; }
+.sponsor-access-panel .form-error { color: #a12626; }
+.sponsor-access-panel .form-success { color: #246139; }
+.sponsor-access-status-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-top: 26px; }
+.sponsor-access-status-heading h4 { margin: 0; font-size: 14px; }
+.sponsor-access-list { margin: 12px 0 0; padding: 0; list-style: none; }
+.sponsor-access-list li { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.sponsor-access-list li > div { display: grid; gap: 5px; min-width: 0; overflow-wrap: anywhere; }
+.sponsor-access-list strong { font-size: 13px; }
+.sponsor-access-list span, .sponsor-access-list small { color: var(--ink-2); font-size: 12px; }
 .sponsor-directory__state { padding: 45px 24px; border: 1px solid var(--line); border-radius: 0 0 9px 9px; background: white; text-align: center; }
 .sponsor-directory__state p { margin: 7px 0 0; }
 
@@ -1308,6 +1331,30 @@ td small { margin-top: 3px; color: var(--ink-3); }
 .sponsor-portal__hero h1 { margin: 8px 0; font-size: clamp(36px, 5vw, 58px); line-height: 1.04; }
 .sponsor-portal__hero p { margin: 0; color: var(--muted); }
 .sponsor-portal__hero select { min-width: 240px; }
+.sponsor-space-nav { display: flex; gap: 8px; margin: 0 0 24px; padding: 6px; border: 1px solid var(--line); border-radius: 14px; background: #fff; }
+.sponsor-space-nav button { flex: 1; min-width: 0; padding: 13px 18px; border: 0; border-radius: 9px; background: transparent; color: var(--ink-3); font: inherit; font-weight: 750; cursor: pointer; }
+.sponsor-space-nav button[aria-pressed="true"] { color: #fff; background: var(--blue); }
+.sponsor-space-nav button:focus-visible { outline: 3px solid var(--gold); outline-offset: 2px; }
+.sponsor-space-entry-actions, .contract-signing-space-actions { display: flex; flex-wrap: wrap; gap: 12px; margin: 22px 0; }
+.sponsor-space-entry-actions { justify-content: center; }
+.contract-signing-space-actions a { text-decoration: none; text-align: center; }
+.sponsor-address { padding: clamp(20px, 4vw, 32px); border: 1px solid var(--line); border-radius: 20px; background: white; }
+.sponsor-address h2 { margin: 6px 0 8px; font-size: 28px; }
+.sponsor-address header > p:last-child { margin: 0 0 28px; color: var(--muted); }
+.sponsor-address form { max-width: 700px; display: grid; grid-template-columns: minmax(100px, 1fr) minmax(160px, 2fr); gap: 20px; }
+.sponsor-address label { display: grid; gap: 8px; color: var(--ink-3); font-size: 14px; font-weight: 650; }
+.sponsor-address input { min-width: 0; width: 100%; border: 1px solid var(--line); border-radius: 10px; padding: 13px 14px; color: var(--ink); background: #fff; font: inherit; }
+.sponsor-address__street, .sponsor-address form > p, .sponsor-address form > button { grid-column: 1 / -1; }
+.sponsor-address__note { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.65; }
+.sponsor-address form > button { justify-self: start; }
+@media (max-width: 540px) {
+  .sponsor-space-nav button { padding: 12px 8px; font-size: 14px; }
+  .sponsor-address form { grid-template-columns: 1fr; }
+  .sponsor-address form > button, .contract-signing-space-actions a { width: 100%; }
+  .contract-signing-success { flex-wrap: wrap; }
+  .contract-signing-success > div { min-width: 0; }
+  .contract-signing-success strong { overflow-wrap: anywhere; }
+}
 .sponsor-logo-management { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 18px 28px; margin-bottom: 24px; padding: 22px 24px; border: 1px solid var(--line); border-radius: 16px; background: white; box-shadow: 0 10px 32px rgba(11,33,68,.06); }
 .sponsor-logo-management__identity { min-width: 0; display: flex; align-items: center; gap: 18px; }
 .sponsor-logo-management__preview { width: 92px; height: 72px; display: grid; flex: 0 0 auto; place-items: center; overflow: hidden; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-2); }

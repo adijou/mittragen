@@ -5,11 +5,14 @@ import { isResponse, json, requireUser } from "./_shared/auth.ts";
 import { isUuid, withSession, type DatabaseClient } from "./_shared/database.ts";
 import { validateLogoUpload } from "./_shared/logo-upload.ts";
 import { parseSponsorDecision } from "./_shared/sponsor-portal-input.ts";
+import { claimContractSpaces, parseSponsorAddress, updateSponsorAddress } from "./_shared/sponsor-self-service.ts";
+import { claimSponsorInvitations } from "./_shared/sponsor-access-invitations.ts";
 
 type AccessRow = { tenant_id: string; sponsor_id: string };
 
 const responseRoute = /^\/api\/sponsor-portal\/([0-9a-f-]+)\/([0-9a-f-]+)\/respond$/i;
 const logoRoute = /^\/api\/sponsor-portal\/([0-9a-f-]+)\/([0-9a-f-]+)\/logo$/i;
+const addressRoute = /^\/api\/sponsor-portal\/([0-9a-f-]+)\/([0-9a-f-]+)\/address$/i;
 const BRAND_ASSET_STORE = "tenant-brand-assets";
 
 function verifyMutation(request: Request): Response | null {
@@ -23,47 +26,16 @@ function verifyMutation(request: Request): Response | null {
 
 async function claimInvitations(user: User) {
   const email = user.email?.trim().toLowerCase();
-  if (!email) return { error: "verified_email_required" as const };
+  if (!email || !user.confirmedAt) return { error: "verified_email_required" as const };
   const claimed = await withSession(user.id, null, async (client) => {
-    const invitations = await client.query<{ id: string; tenant_id: string; sponsor_id: string }>(`
-      SELECT id, tenant_id, sponsor_id
-      FROM sponsor_portal_invitations
-      WHERE lower(email) = lower($1) AND expires_at > now()
-      ORDER BY created_at
-    `, [email]);
-    let count = 0;
-    for (const invitation of invitations.rows) {
-      await client.query("SELECT set_config('app.tenant_id', $1, true)", [invitation.tenant_id]);
-      await client.query(`
-        INSERT INTO sponsor_portal_access (tenant_id, sponsor_id, identity_user_id, email)
-        VALUES ($1, $2, $3, $4)
-        ON CONFLICT (tenant_id, sponsor_id, identity_user_id) DO UPDATE SET email = EXCLUDED.email
-      `, [invitation.tenant_id, invitation.sponsor_id, user.id, email]);
-      await client.query("UPDATE sponsor_portal_invitations SET accepted_at = COALESCE(accepted_at, now()), updated_at = now() WHERE tenant_id = $1 AND id = $2", [invitation.tenant_id, invitation.id]);
-      count += 1;
-    }
-    const contractInvitations = await client.query<{ id: string; tenant_id: string; sponsor_id: string }>(`
-      SELECT id, tenant_id, sponsor_id
-      FROM contract_signing_requests
-      WHERE lower(signer_email) = lower($1)
-        AND access_invited_at IS NOT NULL AND access_expires_at > now()
-        AND access_accepted_at IS NULL
-      ORDER BY created_at
-    `, [email]);
-    for (const invitation of contractInvitations.rows) {
-      await client.query("SELECT set_config('app.tenant_id', $1, true)", [invitation.tenant_id]);
-      await client.query(`INSERT INTO sponsor_portal_access (tenant_id, sponsor_id, identity_user_id, email)
-        VALUES ($1,$2,$3,$4)
-        ON CONFLICT (tenant_id, sponsor_id, identity_user_id) DO UPDATE SET email = EXCLUDED.email`,
-      [invitation.tenant_id, invitation.sponsor_id, user.id, email]);
-      await client.query(`UPDATE contract_signing_requests SET access_status = 'accepted',
-        access_accepted_at = COALESCE(access_accepted_at, now()), updated_at = now()
-        WHERE tenant_id = $1 AND id = $2`, [invitation.tenant_id, invitation.id]);
-      count += 1;
-    }
-    return count;
+    let count = await claimSponsorInvitations(client, user);
+    count += await claimContractSpaces(client, user);
+    const access = await client.query<{ present: boolean; workspace: boolean }>(`SELECT
+      EXISTS (SELECT 1 FROM sponsor_portal_access WHERE identity_user_id = $1) AS present,
+      EXISTS (SELECT 1 FROM tenant_memberships WHERE identity_user_id = $1) AS workspace`, [user.id]);
+    return { claimed: count, hasAccess: access.rows[0].present, hasWorkspace: access.rows[0].workspace };
   }, email);
-  return { claimed };
+  return claimed;
 }
 
 async function loadSpace(client: DatabaseClient, tenantId: string, sponsorId: string, userId: string) {
@@ -76,8 +48,10 @@ async function loadSpace(client: DatabaseClient, tenantId: string, sponsorId: st
   const sponsor = await client.query<{
     id: string; legal_name: string; contact_email: string | null; tenant_name: string;
     logo_available: boolean; logo_updated_at: string | null;
+    street: string | null; postal_code: string | null; city: string | null;
   }>(`
     SELECT sponsor.id, sponsor.legal_name, sponsor.contact_email, tenant.name AS tenant_name,
+           sponsor.street, sponsor.postal_code, sponsor.city,
            (sponsor.logo_blob_key IS NOT NULL) AS logo_available, sponsor.logo_updated_at::text
     FROM sponsors sponsor JOIN tenants tenant ON tenant.id = sponsor.tenant_id
     WHERE sponsor.tenant_id = $1 AND sponsor.id = $2 LIMIT 1
@@ -155,6 +129,7 @@ async function loadSpace(client: DatabaseClient, tenantId: string, sponsorId: st
       legal_name: sponsor.rows[0].legal_name,
       contact_email: sponsor.rows[0].contact_email,
       tenant_name: sponsor.rows[0].tenant_name,
+      address: { street: sponsor.rows[0].street, postal_code: sponsor.rows[0].postal_code, city: sponsor.rows[0].city },
       logoAvailable: sponsor.rows[0].logo_available,
       logoUpdatedAt: sponsor.rows[0].logo_updated_at,
     },
@@ -306,10 +281,32 @@ async function listSpaces(user: User) {
 export default async (request: Request, context: Context) => {
   const user = await requireUser();
   if (isResponse(user)) return user;
+  if (!user.confirmedAt) return json({ error: "verified_email_required" }, 403);
   const pathname = new URL(request.url).pathname;
   const logoMatch = pathname.match(logoRoute);
 
   if (logoMatch) return handleSponsorLogo(request, context, user, logoMatch[1], logoMatch[2]);
+
+  const addressMatch = pathname.match(addressRoute);
+  if (addressMatch) {
+    if (request.method !== "PATCH") return json({ error: "method_not_allowed" }, 405);
+    const invalidOrigin = verifyMutation(request);
+    if (invalidOrigin) return invalidOrigin;
+    const [, tenantId, sponsorId] = addressMatch;
+    if (!isUuid(tenantId) || !isUuid(sponsorId)) return json({ error: "invalid_target" }, 422);
+    const parsed = parseSponsorAddress(await request.json().catch(() => null));
+    if (!parsed.ok) return json({ error: parsed.error }, 422);
+    try {
+      const result = await withSession(user.id, tenantId,
+        (client) => updateSponsorAddress(client, tenantId, sponsorId, user.id, parsed.value), user.email);
+      if (result.state === "denied") return json({ error: "sponsor_access_denied" }, 403);
+      if (result.state === "conflict") return json({ error: "sponsor_address_conflict" }, 409);
+      return json({ address: result.address });
+    } catch (error) {
+      console.error("sponsor_address_update_failed", { requestId: context.requestId, tenantId, sponsorId, error });
+      return json({ error: "sponsor_address_update_failed", requestId: context.requestId }, 500);
+    }
+  }
 
   if (pathname === "/api/sponsor-portal/claim") {
     if (request.method !== "POST") return json({ error: "method_not_allowed" }, 405);
@@ -428,5 +425,6 @@ export const config: Config = {
     "/api/sponsor-portal/claim",
     "/api/sponsor-portal/:tenantId/:transitionSponsorId/respond",
     "/api/sponsor-portal/:tenantId/:sponsorId/logo",
+    "/api/sponsor-portal/:tenantId/:sponsorId/address",
   ],
 };

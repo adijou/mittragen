@@ -31,6 +31,14 @@ export type ContractAccessEmail = Pick<ContractSigningEmail, "email" | "signerNa
   portalUrl: string;
 };
 
+export type SponsorSpaceInvitationEmail = {
+  email: string;
+  sponsorName: string;
+  organizationName: string;
+  portalUrl: string;
+  expiresAt: string;
+};
+
 export class ContractEmailDeliveryError extends Error {
   status?: number;
   constructor(message: string, status?: number) {
@@ -97,6 +105,14 @@ export function buildContractAccessEmail(input: ContractAccessEmail) {
   return { subject, html, text };
 }
 
+export function buildSponsorSpaceInvitationEmail(input: SponsorSpaceInvitationEmail) {
+  const expiry = new Intl.DateTimeFormat("de-CH", { dateStyle: "long", timeStyle: "short", timeZone: "Europe/Zurich" }).format(new Date(input.expiresAt));
+  const subject = `Einladung zum Sponsor-Space von ${input.organizationName}`;
+  const html = emailShell("Ihr persönlicher Sponsor-Space", `<p style="font-size:13px;font-weight:700;color:#53657a">Einladung von ${escapeHtml(input.organizationName)}</p><h1 style="margin:0 0 18px;font-size:25px">Willkommen, ${escapeHtml(input.sponsorName)}</h1><p style="font-size:16px;line-height:1.65">${escapeHtml(input.organizationName)} lädt Sie ein, den persönlichen Sponsor-Space von <strong>${escapeHtml(input.sponsorName)}</strong> zu nutzen. Hier können Sie Ihre freigegebenen Vertragsdokumente ansehen, Ihre Adresse aktualisieren und Ihr Logo hinterlegen.</p><p style="font-size:16px;line-height:1.65">Öffnen Sie Ihren Space und wählen Sie <strong>Konto erstellen</strong>. Verwenden Sie dabei <strong>${escapeHtml(input.email)}</strong> und bestätigen Sie anschliessend Ihre E-Mail-Adresse. Falls Sie bereits ein Konto haben, melden Sie sich mit dieser Adresse an.</p><table role="presentation" cellspacing="0" cellpadding="0"><tr><td style="border-radius:10px;background:#1f6bff"><a href="${escapeHtml(input.portalUrl)}" style="display:inline-block;padding:14px 22px;color:#fff;text-decoration:none;font-weight:700">Sponsor-Space öffnen</a></td></tr></table><p style="margin:24px 0 0;font-size:13px;line-height:1.6;color:#53657a">Bitte aktivieren Sie Ihren Zugang bis ${escapeHtml(expiry)}. Ein bereits aktivierter Zugang bleibt bestehen. Diese Einladung schliesst keinen neuen Sponsoringvertrag ab.</p>`);
+  const text = `${subject}\n\n${input.organizationName} lädt Sie zum Sponsor-Space von ${input.sponsorName} ein. Dort können Sie freigegebene Vertragsdokumente ansehen, Ihre Adresse ändern und Ihr Logo hinterlegen.\n\n${input.portalUrl}\n\nWählen Sie «Konto erstellen», verwenden Sie ${input.email} und bestätigen Sie Ihre E-Mail-Adresse. Falls bereits ein Konto besteht, melden Sie sich damit an.\n\nBitte aktivieren Sie den Zugang bis ${expiry}. Ein aktivierter Zugang bleibt bestehen. Diese Einladung schliesst keinen neuen Sponsoringvertrag ab.`;
+  return { subject, html, text };
+}
+
 async function deliver(email: string, content: { subject: string; html: string; text: string }, config: ContractEmailConfig, attachments?: Array<Record<string, string>>) {
   const payload: Record<string, unknown> = { from: config.from, to: [email], subject: content.subject, html: content.html, text: content.text };
   if (config.replyTo) payload.reply_to = config.replyTo;
@@ -122,4 +138,8 @@ export function sendContractCopyEmail(input: ContractCopyEmail, config: Contract
 
 export function sendContractAccessEmail(input: ContractAccessEmail, config: ContractEmailConfig) {
   return deliver(input.email, buildContractAccessEmail(input), config);
+}
+
+export function sendSponsorSpaceInvitationEmail(input: SponsorSpaceInvitationEmail, config: ContractEmailConfig) {
+  return deliver(input.email, buildSponsorSpaceInvitationEmail(input), config);
 }

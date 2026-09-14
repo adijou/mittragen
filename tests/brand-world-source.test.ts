@@ -52,7 +52,7 @@ test("legacy prototypes are closed and absent from the productive workspace menu
     readFile(files.productiveAccess, "utf8"),
   ]);
   assert.match(main, /\["\/admin", "\/space", "\/ueberfuehren"\]/);
-  assert.match(main, /window\.history\.replaceState\(\{\}, "", "\/login"\)/);
+  assert.match(main, /window\.history\.replaceState\(\{\}, "", ["`]\/login/);
   assert.doesNotMatch(productiveAccess, />Überführungs-Prototyp</);
   assert.match(productiveAccess, /const goToWebsite = \(\) => window\.location\.assign\("\/"\)/);
   assert.match(productiveAccess, /<AuthPage \{\.\.\.session\} onHome=\{goToWebsite\}/);

@@ -22,6 +22,7 @@ Die produktive Anwendung setzt die Markenwelt von **mittragen.ch** konsequent um
 - Owner-Einstellungen für einen veränderbaren Anzeigenamen bei stabilem technischem Kurzname
 - Teamverwaltung mit Einladungsversand über Netlify Identity
 - Gebrandete Identity-Einladung unter `/emails/invitation.html` (in Netlify als Einladungsvorlage hinterlegen)
+- Deutsche Bestätigungsmail mit Bildmarke unter `/emails/confirmation.html` (in Netlify separat aktivieren) und sichtbare Erfolgsmeldung nach E-Mail-Bestätigung
 - Produktive Excel-/CSV-Datenübernahme mit Blattwahl, persistierten Importläufen, Feldzuordnung, Vorprüfung und atomarem Sponsorimport
 - explizite Zuordnung importierter Paketbezeichnungen zu veröffentlichten Paketversionen mit Preisübernahme
 - editierbares Klubprofil und automatisch generiertes Sponsoringdossier als PDF aus den öffentlichen Paketen
@@ -32,6 +33,8 @@ Die produktive Anwendung setzt die Markenwelt von **mittragen.ch** konsequent um
 - Vertragscenter mit organisationsspezifischen Absender- und Laufzeitregeln
 - gebrandete, durchsuchbare Vertrags-PDFs aus einem unveränderlichen Paket- und Stammdatensnapshot
 - protokollierte Klickbestätigung im Sponsorbereich mit Identität, E-Mail, Funktion, Zeitpunkt und Dokument-Fingerabdruck
+- selbständiger Sponsorzugang nach Vertragsbestätigung: Konto erstellen oder anmelden, E-Mail bestätigen und den zugeordneten Space öffnen
+- Sponsor-Space mit den Bereichen Dokumente, Adresse und Logo; Adressänderungen aktualisieren ausschliesslich die Stammdaten und werden protokolliert
 - unveränderliches Ereignisprotokoll sowie Row-Level Security für Verträge und Nachweise
 - mandantenfähiges Event-/Matchball-Sponsoring mit Spielplan, direkter öffentlicher Anmeldung ohne Konto und Doppelbelegungsschutz
 - gebrandete A4-Matchblätter je Spiel aus dem zentralen Organisationslogo und der hinterlegten Farbpalette
@@ -109,6 +112,8 @@ Priorisierte nächste Schritte:
 1. Rechnungsübersicht und Zahlungsstatus für Sponsoren ergänzen.
 2. Dokumentablage, Versionierung und geschützte Downloads ausbauen.
 3. Zahlungs- und Signaturprovider über austauschbare Adapter anbinden.
+
+Der aktuelle Zugang nach Vertragsunterzeichnung und die Abgrenzung zwischen Stammdaten und Vertragsstand sind in [`docs/sponsor-space.md`](docs/sponsor-space.md) beschrieben.
 
 ## Sicherheitsmodell
 

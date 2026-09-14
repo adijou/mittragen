@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AuthError,
   MissingIdentityError,
@@ -25,6 +25,9 @@ import { ContractManagement } from "./ContractManagement";
 import { SponsoringDossier } from "./SponsoringDossier";
 import { EventSponsoringManagement } from "./EventSponsoringManagement";
 import { Brand } from "./ProductBrand";
+import { clearSponsorEntry, readSponsorEntry, shouldOpenSponsorSpace } from "./sponsorAccess";
+import { confirmedEmailCallback, createIdentityInitializer, identityCallbackKind, identityErrorMessage } from "./identityFeedback";
+import { EmailConfirmationSuccess } from "./EmailConfirmationSuccess";
 
 type ProductivePage = "login" | "workspace";
 type Availability = "checking" | "ready" | "missing";
@@ -83,30 +86,41 @@ function useIdentitySession() {
   const [user, setUser] = useState<User | null>(null);
   const [callback, setCallback] = useState<CallbackResult | null>(null);
   const [error, setError] = useState("");
+  const callbackKind = useRef(identityCallbackKind(window.location.hash));
+  const initialize = useRef<ReturnType<typeof createIdentityInitializer> | null>(null);
+  if (!initialize.current) initialize.current = createIdentityInitializer({
+    checkSettings: async () => {
+      const response = await fetch("/.netlify/identity/settings", {
+        headers: { Accept: "application/json" }, signal: AbortSignal.timeout(4500),
+      });
+      if (!response.ok) throw new MissingIdentityError("Identity settings unavailable");
+    },
+    handleCallback: async () => {
+      if (callbackKind.current === "error") throw new AuthError("auth_callback_rejected");
+      const result = await handleAuthCallback();
+      if (callbackKind.current && !result) throw new AuthError("invalid_callback");
+      return result;
+    },
+    refreshSession,
+    getUser,
+  });
 
   useEffect(() => {
     let active = true;
     const load = async () => {
       try {
-        const settingsResponse = await fetch("/.netlify/identity/settings", {
-          headers: { Accept: "application/json" },
-          signal: AbortSignal.timeout(4500),
-        });
-        if (!settingsResponse.ok) throw new MissingIdentityError("Identity settings unavailable");
+        const result = await initialize.current!();
         if (!active) return;
         setAvailability("ready");
-        const callbackResult = await handleAuthCallback();
-        if (!active) return;
-        if (!callbackResult) await refreshSession();
-        if (!active) return;
-        setCallback(callbackResult);
-        setUser(callbackResult?.user ?? await getUser());
+        setCallback(result.callback);
+        setUser(result.user);
       } catch (reason) {
         if (!active) return;
-        if (reason instanceof MissingIdentityError || (reason instanceof AuthError && reason.status === 404)) {
+        if (reason instanceof MissingIdentityError) {
           setAvailability("missing");
         } else {
-          setError(reason instanceof Error ? reason.message : "Die Anmeldung konnte nicht initialisiert werden.");
+          setAvailability("ready");
+          setError(identityErrorMessage(reason, callbackKind.current ?? "initialization"));
         }
       }
     };
@@ -119,32 +133,34 @@ function useIdentitySession() {
   return { availability, user, setUser, callback, setCallback, error };
 }
 
-function AuthPage({ availability, user, callback, setCallback, setUser, onHome, onWorkspace, onSponsor }: {
+function AuthPage({ availability, user, callback, error: sessionError, setCallback, setUser, onHome, onWorkspace, onSponsor }: {
   availability: Availability;
   user: User | null;
   callback: CallbackResult | null;
+  error: string;
   setCallback: (result: CallbackResult | null) => void;
   setUser: (user: User | null) => void;
   onHome: () => void;
   onWorkspace: () => void;
   onSponsor: () => void;
 }) {
-  const initialMode = callback?.type === "invite" ? "invite" : callback?.type === "recovery" ? "recovery" : "login";
+  const [sponsorEntry] = useState(readSponsorEntry);
+  const initialMode = callback?.type === "invite" ? "invite" : callback?.type === "recovery" ? "recovery" : sponsorEntry?.mode ?? "login";
   const [mode, setMode] = useState<"login" | "signup" | "invite" | "recovery">(initialMode);
-  const [email, setEmail] = useState("");
+  const [email, setEmail] = useState(sponsorEntry?.email ?? "");
   const [password, setPassword] = useState("");
-  const [name, setName] = useState("");
+  const [name, setName] = useState(sponsorEntry?.name ?? "");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const callbackHandled = useRef(false);
   const finishLogin = async () => {
     const target = sessionStorage.getItem("mittragen-login-target");
-    sessionStorage.removeItem("mittragen-login-target");
-    if (target === "sponsor") { onSponsor(); return; }
+    if (target === "sponsor") { clearSponsorEntry(); onSponsor(); return; }
     try {
       const response = await fetch("/api/sponsor-portal/claim", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
-      const result = await response.json().catch(() => ({})) as { claimed?: number };
-      if (response.ok && Number(result.claimed) > 0) { onSponsor(); return; }
+      const result = await response.json().catch(() => ({})) as { claimed?: number; hasAccess?: boolean; hasWorkspace?: boolean };
+      if (response.ok && shouldOpenSponsorSpace(result)) { clearSponsorEntry(); onSponsor(); return; }
     } catch { /* Fall back to the organization workspace. */ }
     onWorkspace();
   };
@@ -153,6 +169,16 @@ function AuthPage({ availability, user, callback, setCallback, setUser, onHome, 
     if (callback?.type === "invite") setMode("invite");
     if (callback?.type === "recovery") setMode("recovery");
   }, [callback]);
+
+  useEffect(() => { if (sessionError) setMode("login"); }, [sessionError]);
+
+  useEffect(() => {
+    if (!callbackHandled.current && user?.confirmedAt && callback?.type === "oauth") {
+      callbackHandled.current = true;
+      setCallback(null);
+      void finishLogin();
+    }
+  }, [callback, user]);
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -170,7 +196,9 @@ function AuthPage({ availability, user, callback, setCallback, setUser, onHome, 
           setUser(currentUser);
           await finishLogin();
         } else {
-          setMessage("Konto erstellt. Bitte bestätigen Sie Ihre E-Mail-Adresse.");
+          setMessage(sponsorEntry
+            ? "Konto erstellt. Öffnen Sie den Bestätigungslink in Ihrer E-Mail. Danach gelangen Sie zu Ihrem persönlichen Space."
+            : "Konto erstellt. Bitte bestätigen Sie Ihre E-Mail-Adresse.");
         }
       } else if (mode === "invite" && callback?.token) {
         const currentUser = await acceptInvite(callback.token, password);
@@ -184,7 +212,7 @@ function AuthPage({ availability, user, callback, setCallback, setUser, onHome, 
         await finishLogin();
       }
     } catch (reason) {
-      setError(reason instanceof AuthError ? reason.message : "Die Aktion konnte nicht abgeschlossen werden.");
+      setError(identityErrorMessage(reason, mode));
     } finally {
       setBusy(false);
     }
@@ -198,13 +226,20 @@ function AuthPage({ availability, user, callback, setCallback, setUser, onHome, 
       await requestPasswordRecovery(email);
       setMessage("Falls ein Konto besteht, wurde ein Link zum Zurücksetzen versandt.");
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Der Wiederherstellungslink konnte nicht angefordert werden.");
+      setError(identityErrorMessage(reason, "recovery"));
     } finally {
       setBusy(false);
     }
   };
 
-  return <div className="access-page"><header className="access-header"><button onClick={onHome} className="access-brand-button"><Brand/></button><button className="access-link" onClick={onHome}>Zur Website</button></header><main className="auth-layout"><section className="auth-story"><p className="eyebrow">Produktiver Zugang</p><h1>Unterstützung sicher organisieren.</h1><p>Mandantengetrennte Daten, klar definierte Rollen und ein persönlicher Workspace für jede Organisation.</p><ul><li>PostgreSQL mit Row-Level Security</li><li>Serverseitige Rollenprüfung</li><li>Sichere Netlify-Identity-Sitzung</li></ul></section><section className="auth-card"><div className="auth-card__heading"><p className="eyebrow">{mode === "signup" ? "Organisation starten" : mode === "invite" ? "Einladung annehmen" : mode === "recovery" ? "Passwort erneuern" : "Willkommen zurück"}</p><h2>{mode === "signup" ? "Konto erstellen" : mode === "invite" ? "Zugang aktivieren" : mode === "recovery" ? "Neues Passwort setzen" : "Bei mittragen.ch anmelden"}</h2></div>{availability === "checking" ? <div className="auth-state">Anmeldung wird vorbereitet …</div> : availability === "missing" ? <div className="auth-warning"><strong>Identity ist noch nicht aktiviert.</strong><p>Die Anwendung ist vorbereitet. In Netlify muss für das Projekt «mittragen» einmalig Identity aktiviert werden.</p></div> : user && mode === "login" ? <div className="auth-state"><strong>Bereits angemeldet als {user.email}</strong><button className="access-primary" onClick={finishLogin}>Zugang öffnen</button></div> : <form onSubmit={submit}>{mode === "signup" && <label><span>Name</span><input required autoComplete="name" value={name} onChange={(event) => setName(event.target.value)} placeholder="Vorname Nachname"/></label>}{!['invite', 'recovery'].includes(mode) && <label><span>E-Mail</span><input required type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="name@organisation.ch"/></label>}<label><span>{mode === "recovery" ? "Neues Passwort" : "Passwort"}</span><input required minLength={8} type="password" autoComplete={mode === "login" ? "current-password" : "new-password"} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Mindestens 8 Zeichen"/></label>{error && <p className="form-error" role="alert">{error}</p>}{message && <p className="form-success" role="status">{message}</p>}<button className="access-primary" disabled={busy} type="submit">{busy ? "Bitte warten …" : mode === "signup" ? "Konto erstellen" : mode === "invite" ? "Einladung annehmen" : mode === "recovery" ? "Passwort speichern" : "Anmelden"}</button>{mode === "login" && <><button className="access-secondary" type="button" onClick={() => setMode("signup")}>Konto erstellen</button><button className="access-text" type="button" onClick={recover}>Passwort vergessen?</button></>}{mode === "signup" && <button className="access-text" type="button" onClick={() => setMode("login")}>Bereits ein Konto? Anmelden</button>}</form>}</section></main></div>;
+  const confirmedUser = confirmedEmailCallback(callback);
+  if (confirmedUser) return <EmailConfirmationSuccess email={confirmedUser.email!} preferSponsor={Boolean(sponsorEntry)} onHome={onHome} onContinue={(destination) => {
+    setCallback(null);
+    clearSponsorEntry();
+    if (destination === "sponsor") onSponsor(); else onWorkspace();
+  }}/>;
+
+  return <div className="access-page"><header className="access-header"><button onClick={onHome} className="access-brand-button"><Brand/></button><button className="access-link" onClick={onHome}>Zur Website</button></header><main className="auth-layout"><section className="auth-story">{sponsorEntry ? <><p className="eyebrow">Ihr persönlicher Space</p><h1>Ihr Sponsoring an einem Ort.</h1><p>Verwenden Sie die E-Mail-Adresse, an die Ihre Einladung gesendet wurde oder mit der Sie Ihren Vertrag bestätigt haben.</p><ul><li>Verträge ansehen und herunterladen</li><li>Adresse selbst aktualisieren</li><li>Ihr Logo hinterlegen und ersetzen</li></ul></> : <><p className="eyebrow">Ihr persönlicher Zugang</p><h1>Unterstützung sicher organisieren.</h1><p>Ein persönlicher Bereich für Sponsoren und Organisationen.</p><ul><li>Sponsoring an einem Ort</li><li>Verträge und Dokumente einsehen</li><li>Gemeinsam im Team arbeiten</li></ul></>}</section><section className="auth-card"><div className="auth-card__heading"><p className="eyebrow">{mode === "signup" ? sponsorEntry ? "Space einrichten" : "Konto einrichten" : mode === "invite" ? "Einladung annehmen" : mode === "recovery" ? "Passwort erneuern" : "Willkommen zurück"}</p><h2>{mode === "signup" ? "Konto erstellen" : mode === "invite" ? "Zugang aktivieren" : mode === "recovery" ? "Neues Passwort setzen" : "Bei mittragen.ch anmelden"}</h2></div>{sessionError && <p className="form-error" role="alert">{sessionError}</p>}{availability === "checking" ? <div className="auth-state">Anmeldung wird vorbereitet …</div> : availability === "missing" ? <div className="auth-warning"><strong>Die Anmeldung ist momentan nicht verfügbar.</strong><p>Bitte versuchen Sie es später erneut oder wenden Sie sich an die Organisation.</p></div> : user && (mode === "login" || mode === "signup") ? <div className="auth-state"><strong>Bereits angemeldet als {user.email}</strong><button className="access-primary" onClick={finishLogin}>{sponsorEntry ? "Meinen Space öffnen" : "Zugang öffnen"}</button><button className="access-text" onClick={() => void logout().then(() => { setUser(null); setMode("login"); })}>Mit anderem Konto anmelden</button></div> : <form onSubmit={submit}>{mode === "signup" && <label><span>Name</span><input required autoComplete="name" value={name} onChange={(event) => setName(event.target.value)} placeholder="Vorname Nachname"/></label>}{!['invite', 'recovery'].includes(mode) && <label><span>E-Mail</span><input required type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="name@organisation.ch"/></label>}<label><span>{mode === "recovery" ? "Neues Passwort" : "Passwort"}</span><input required minLength={8} type="password" autoComplete={mode === "login" ? "current-password" : "new-password"} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Mindestens 8 Zeichen"/></label>{error && <p className="form-error" role="alert">{error}</p>}{message && <p className="form-success" role="status">{message}</p>}<button className="access-primary" disabled={busy} type="submit">{busy ? "Bitte warten …" : mode === "signup" ? "Konto erstellen" : mode === "invite" ? "Einladung annehmen" : mode === "recovery" ? "Passwort speichern" : "Anmelden"}</button>{mode === "login" && <><button className="access-secondary" type="button" onClick={() => setMode("signup")}>Konto erstellen</button><button className="access-text" type="button" onClick={recover}>Passwort vergessen?</button></>}{mode === "signup" && <button className="access-text" type="button" onClick={() => setMode("login")}>Bereits ein Konto? Anmelden</button>}</form>}</section></main></div>;
 }
 
 class ApiRequestError extends Error {

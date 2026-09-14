@@ -3,6 +3,9 @@ import { AuthError, verifyRequestOrigin } from "@netlify/identity";
 import { hasPermission, isResponse, json, requireUser, type MembershipRole } from "./_shared/auth.ts";
 import { isUuid, withSession, type DatabaseClient } from "./_shared/database.ts";
 import { parseSponsorInput, type SponsorInput } from "./_shared/sponsor-input.ts";
+import { loadSponsorAccess, parseSponsorAccessInvitation, prepareSponsorAccessInvitation, recordSponsorAccessDelivery } from "./_shared/sponsor-access-invitations.ts";
+import { absoluteSiteUrl, contractEmailConfig } from "./_shared/contract-delivery.ts";
+import { sendSponsorSpaceInvitationEmail } from "./_shared/resend-contract-email.ts";
 
 type SponsorRow = SponsorInput & {
   id: string;
@@ -40,6 +43,51 @@ export default async (request: Request, context: Context) => {
   const sponsorId = context.params.sponsorId;
   if (!tenantId || !isUuid(tenantId)) return json({ error: "invalid_tenant" }, 422);
   if (sponsorId && !isUuid(sponsorId)) return json({ error: "invalid_sponsor" }, 422);
+
+  if (new URL(request.url).pathname.endsWith("/access")) {
+    if (!sponsorId) return json({ error: "sponsor_required" }, 422);
+    if (request.method === "GET") {
+      try {
+        const access = await withSession(user.id, tenantId, (client) => loadSponsorAccess(client, tenantId, sponsorId, user.id));
+        if (access.state === "denied") return json({ error: "permission_denied" }, 403);
+        if (access.state === "not_found") return json({ error: "sponsor_not_found" }, 404);
+        return json(access);
+      } catch (error) {
+        console.error("sponsor_access_load_failed", { requestId: context.requestId, tenantId, sponsorId, error });
+        return json({ error: "sponsor_access_load_failed" }, 500);
+      }
+    }
+    if (request.method !== "POST") return json({ error: "method_not_allowed" }, 405);
+    try { verifyRequestOrigin(request); }
+    catch (error) { return json({ error: "invalid_request_origin" }, (error as AuthError).status ?? 403); }
+    const parsed = parseSponsorAccessInvitation(await request.json().catch(() => null));
+    if (!parsed.ok) return json({ error: parsed.error }, 422);
+    try {
+      const prepared = await withSession(user.id, tenantId, (client) => prepareSponsorAccessInvitation(client, tenantId, sponsorId, user.id, parsed.email));
+      if (prepared.state === "denied") return json({ error: "permission_denied" }, 403);
+      if (prepared.state === "not_found") return json({ error: "sponsor_not_found" }, 404);
+      if (prepared.state === "busy") return json({ error: "invitation_recently_sent" }, 409);
+      try {
+        const emailId = await sendSponsorSpaceInvitationEmail({
+          email: prepared.invitation.email,
+          sponsorName: prepared.legal_name,
+          organizationName: prepared.tenant_name,
+          portalUrl: absoluteSiteUrl(request, "/sponsor"),
+          expiresAt: prepared.invitation.expires_at,
+        }, contractEmailConfig());
+        await withSession(user.id, tenantId, (client) => recordSponsorAccessDelivery(client, tenantId, sponsorId, user.id, prepared.invitation, { emailId }));
+        return json({ delivery: "sent", email: prepared.invitation.email }, 201);
+      } catch (error) {
+        await withSession(user.id, tenantId, (client) => recordSponsorAccessDelivery(client, tenantId, sponsorId, user.id, prepared.invitation,
+          { error: error instanceof Error ? error.message.slice(0, 500) : "delivery_failed" })).catch(() => undefined);
+        console.error("sponsor_access_delivery_failed", { requestId: context.requestId, tenantId, sponsorId, error });
+        return json({ error: "sponsor_access_delivery_failed", requestId: context.requestId }, 502);
+      }
+    } catch (error) {
+      console.error("sponsor_access_invitation_failed", { requestId: context.requestId, tenantId, sponsorId, error });
+      return json({ error: "sponsor_access_invitation_failed", requestId: context.requestId }, 500);
+    }
+  }
 
   if (request.method === "GET") {
     const result = await withSession(user.id, tenantId, async (client) => {
@@ -143,5 +191,5 @@ export default async (request: Request, context: Context) => {
 };
 
 export const config: Config = {
-  path: ["/api/sponsors/:tenantId", "/api/sponsors/:tenantId/:sponsorId"],
+  path: ["/api/sponsors/:tenantId", "/api/sponsors/:tenantId/:sponsorId", "/api/sponsors/:tenantId/:sponsorId/access"],
 };

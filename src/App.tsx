@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { ProductiveAccess } from "./ProductiveAccess";
+import { identityCallbackKind } from "./identityFeedback";
 import { SponsorPortal } from "./SponsorPortal";
 import { ContractSigning } from "./ContractSigning";
 import { EventSponsoringPublic } from "./EventSponsoringPublic";
@@ -92,7 +93,7 @@ function usePersistentState<T>(key: string, initialValue: T) {
 }
 
 const routeFromPath = (): Route => {
-  if (/#(?:confirmation_token|invite_token|recovery_token|access_token)=/.test(window.location.hash)) return "/login";
+  if (identityCallbackKind(window.location.hash)) return "/login";
   const path = window.location.pathname.replace(/\/$/, "") || "/";
   if (/^\/matchball\/[0-9a-f]{36}$/i.test(path)) return "/matchball";
   if (/^\/sponsoring\/[0-9a-f]{36}$/i.test(path)) return "/sponsoring";

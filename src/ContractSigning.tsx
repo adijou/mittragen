@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Brand } from "./ProductBrand";
+import { prepareSponsorAccess } from "./sponsorAccess";
 
 type SigningData = {
   contract: {
@@ -120,7 +121,7 @@ export function ContractSigning({ onHome }: { onHome: () => void }) {
           <dl><div><dt>Sponsor</dt><dd>{data.contract.sponsor.legalName}</dd></div><div><dt>Paket</dt><dd>{data.contract.package.name}</dd></div><div><dt>Jahreswert</dt><dd>{formatChf(data.contract.package.priceCents)}</dd></div><div><dt>Laufzeit</dt><dd>{data.contract.package.durationMonths} Monate</dd></div></dl>
           <button className="access-secondary" disabled={busy !== ""} onClick={() => void downloadPdf()}>{busy === "pdf" ? "PDF wird erstellt …" : "Vollständigen Vertrag als PDF öffnen"}</button>
         </section>
-        {confirmed ? <section className="contract-signing-card contract-signing-success"><span aria-hidden="true">✓</span><div><p className="eyebrow">Bestätigung abgeschlossen</p><h2>Vielen Dank, Ihre Bestätigung ist protokolliert.</h2><p>Die Organisation kann Ihnen nun einen persönlichen Zugang oder eine PDF-Kopie des bestätigten Vertrags zustellen.</p></div></section> : <section className="contract-signing-card contract-signing-confirm">
+        {confirmed ? <section className="contract-signing-card contract-signing-success"><span aria-hidden="true">✓</span><div><p className="eyebrow">Bestätigung abgeschlossen</p><h2>Vielen Dank für Ihre Unterstützung.</h2><p>Ihr Vertrag ist bestätigt. In Ihrem persönlichen Space finden Sie Ihre Dokumente, können Ihre Adresse ändern und Ihr Logo hinterlegen.</p><p>Erstellen Sie Ihren Zugang mit <strong>{data.signer.email}</strong> und bestätigen Sie Ihre E-Mail-Adresse. Ihr Sponsoring wird Ihnen automatisch zugeordnet.</p><div className="contract-signing-space-actions"><a className="access-primary" href="/login" onClick={() => prepareSponsorAccess({ email: data.signer.email, name: data.signer.name, mode: "signup" })}>Persönlichen Space einrichten</a><a className="access-secondary" href="/login" onClick={() => prepareSponsorAccess({ email: data.signer.email, name: data.signer.name, mode: "login" })}>Mit bestehendem Konto anmelden</a></div><small>Ihr Zugang bleibt auch nach Ablauf dieses Vertragslinks über mittragen.ch/sponsor erreichbar.</small>{error && <p className="form-error" role="alert">{error}</p>}</div></section> : <section className="contract-signing-card contract-signing-confirm">
           <p className="eyebrow">Unterzeichnende Person</p><h2>{data.signer.name}</h2><p>{data.signer.role} · {data.signer.email}</p>
           <label className="sponsor-ack"><input type="checkbox" checked={acknowledged} onChange={(event) => setAcknowledged(event.target.checked)}/><span>Ich habe den vollständigen Vertrag geprüft, bin zur Bestätigung berechtigt und stimme dem unveränderlichen Vertragsstand zu.</span></label>
           {error && <p className="form-error" role="alert">{error}</p>}

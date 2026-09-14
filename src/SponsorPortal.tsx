@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { getUser, logout, onAuthChange, refreshSession, type User } from "@netlify/identity";
 import { Brand } from "./ProductBrand";
+import { SponsorAddressForm, type SponsorAddress } from "./SponsorAddressForm";
+import { prepareSponsorAccess } from "./sponsorAccess";
 
 type Right = {
   id: string; name: string; description: string | null; quantity: number;
@@ -25,6 +27,7 @@ type Space = {
   sponsor: {
     id: string; legal_name: string; contact_email: string | null; tenant_name: string;
     logoAvailable: boolean; logoUpdatedAt: string | null;
+    address: SponsorAddress;
   };
   proposal: Proposal | null;
   catalog: PackageVersion[];
@@ -60,6 +63,7 @@ export function SponsorPortal({ onHome, onLogin }: { onHome: () => void; onLogin
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const [section, setSection] = useState<"documents" | "address" | "logo">("documents");
 
   const load = async (currentUser: User) => {
     await api<{ claimed: number }>("/api/sponsor-portal/claim", { method: "POST", body: "{}" });
@@ -80,7 +84,9 @@ export function SponsorPortal({ onHome, onLogin }: { onHome: () => void; onLogin
         setUser(currentUser);
         if (currentUser) await load(currentUser);
       } catch (reason) {
-        if (active) setError(reason instanceof Error ? reason.message : "Der Sponsorbereich konnte nicht geladen werden.");
+        if (active) setError(reason instanceof Error && reason.message === "verified_email_required"
+          ? "Bitte bestätigen Sie zuerst Ihre E-Mail-Adresse über den zugesandten Link."
+          : "Ihr Space konnte nicht geladen werden. Bitte versuchen Sie es erneut.");
       } finally {
         if (active) setLoading(false);
       }
@@ -107,7 +113,7 @@ export function SponsorPortal({ onHome, onLogin }: { onHome: () => void; onLogin
     setLogoInputKey((current) => current + 1);
   }, [selectedSpaceKey, space?.proposal?.id]);
 
-  const goToLogin = () => { sessionStorage.setItem("mittragen-login-target", "sponsor"); onLogin(); };
+  const goToLogin = (mode: "login" | "signup" = "login") => { prepareSponsorAccess({ mode }); onLogin(); };
 
   const respond = async (decision: "accept" | "alternative" | "advice" | "decline") => {
     if (!space?.proposal) return;
@@ -207,15 +213,19 @@ export function SponsorPortal({ onHome, onLogin }: { onHome: () => void; onLogin
   };
 
   if (loading) return <div className="sponsor-portal"><main className="sponsor-portal__state">Sponsorbereich wird geladen …</main></div>;
-  if (!user) return <div className="sponsor-portal"><header><button onClick={onHome} className="access-brand-button"><Brand/></button><button className="access-link" onClick={onHome}>Zur Website</button></header><main className="sponsor-portal__welcome"><p className="eyebrow">Persönlicher Sponsorbereich</p><h1>Ihr Vorschlag ist geschützt.</h1><p>Melden Sie sich mit der E-Mail-Adresse an, an die Ihre Einladung versandt wurde. Falls Sie noch kein Konto haben, können Sie es im nächsten Schritt erstellen.</p><button className="access-primary" onClick={goToLogin}>Anmelden oder Konto erstellen</button></main></div>;
+  if (!user) return <div className="sponsor-portal"><header><button onClick={onHome} className="access-brand-button"><Brand/></button><button className="access-link" onClick={onHome}>Zur Website</button></header><main className="sponsor-portal__welcome"><p className="eyebrow">Persönlicher Sponsorbereich</p><h1>Willkommen in Ihrem Space.</h1><p>Hier finden Sie Ihre Vertragsdokumente und verwalten Ihre Adresse und Ihr Logo. Melden Sie sich mit der E-Mail-Adresse an, mit der Sie den Vertrag bestätigt oder die Einladung erhalten haben.</p><div className="sponsor-space-entry-actions"><button className="access-primary" onClick={() => goToLogin()}>Anmelden</button><button className="access-secondary" onClick={() => goToLogin("signup")}>Konto erstellen</button></div></main></div>;
 
   return <div className="sponsor-portal">
     <header><button onClick={onHome} className="access-brand-button"><Brand/></button><div><span>{user.email}</span><button className="access-link" onClick={() => void logout().then(() => setUser(null))}>Abmelden</button></div></header>
     <main>
       {error && <p className="form-error" role="alert">{error}</p>}{message && <p className="form-success" role="status">{message}</p>}
-      {!space ? <section className="sponsor-portal__welcome"><p className="eyebrow">Noch kein Zugang</p><h1>Keine offene Einladung gefunden.</h1><p>Prüfen Sie, ob Sie mit derselben E-Mail-Adresse angemeldet sind, an die die Einladung gesendet wurde. Abgelaufene Zugänge kann Ihre Organisation neu versenden.</p></section> : <>
-        <section className="sponsor-portal__hero"><div><p className="eyebrow">{space.sponsor.tenant_name}</p><h1>Guten Tag {space.sponsor.legal_name}</h1><p>{space.proposal ? `${space.proposal.campaign_name} · ${space.proposal.target_period}` : "Ihr persönlicher Sponsorbereich"}</p></div>{spaces.length > 1 && <select value={selectedSpaceKey} onChange={(event) => setSelectedSpaceKey(event.target.value)}>{spaces.map((item) => <option value={`${item.tenantId}:${item.sponsor.id}`} key={`${item.tenantId}:${item.sponsor.id}`}>{item.sponsor.tenant_name}</option>)}</select>}</section>
-        <section className="sponsor-logo-management">
+      {!space ? <section className="sponsor-portal__welcome"><p className="eyebrow">Noch kein Zugang</p><h1>Noch kein Sponsoring zugeordnet.</h1><p>Verwenden Sie die Empfängeradresse Ihrer Einladung oder die E-Mail-Adresse, mit der Sie Ihren Vertrag bestätigt haben. Bestätigen Sie auch Ihre Konto-E-Mail. Falls Ihre Einladung abgelaufen ist, bitten Sie die Organisation um eine neue Einladung.</p><button className="access-secondary" onClick={() => void logout().then(() => { setSpaces([]); setUser(null); goToLogin(); })}>Mit anderem Konto anmelden</button></section> : <>
+        <section className="sponsor-portal__hero"><div><p className="eyebrow">{space.sponsor.tenant_name}</p><h1>Guten Tag {space.sponsor.legal_name}</h1><p>{"Ihre Dokumente, Ihre Adresse und Ihr Auftritt."}</p></div>{spaces.length > 1 && <select aria-label="Sponsoring auswählen" disabled={busy !== ""} value={selectedSpaceKey} onChange={(event) => setSelectedSpaceKey(event.target.value)}>{spaces.map((item) => <option value={`${item.tenantId}:${item.sponsor.id}`} key={`${item.tenantId}:${item.sponsor.id}`}>{item.sponsor.tenant_name} · {item.sponsor.legal_name}</option>)}</select>}</section>
+        <nav className="sponsor-space-nav" aria-label="Bereiche im Sponsor-Space">
+          {([['documents', 'Dokumente'], ['address', 'Adresse'], ['logo', 'Logo']] as const).map(([value, label]) => <button key={value} type="button" aria-pressed={section === value} disabled={busy !== ""} onClick={() => { setSection(value); setError(""); setMessage(""); }}>{label}</button>)}
+        </nav>
+        {section === "address" && <SponsorAddressForm key={`${space.tenantId}:${space.sponsor.id}`} tenantId={space.tenantId} sponsorId={space.sponsor.id} legalName={space.sponsor.legal_name} address={space.sponsor.address} disabled={busy !== ""} onBusyChange={(saving) => setBusy(saving ? "address-save" : "")} onSaved={(address) => setSpaces((current) => current.map((item) => item.tenantId === space.tenantId && item.sponsor.id === space.sponsor.id ? { ...item, sponsor: { ...item.sponsor, address } } : item))}/>}
+        {section === "logo" && <section className="sponsor-logo-management">
           <div className="sponsor-logo-management__identity">
             <div className="sponsor-logo-management__preview">{space.sponsor.logoAvailable
               ? <img src={`/api/sponsor-portal/${space.tenantId}/${space.sponsor.id}/logo?v=${encodeURIComponent(space.sponsor.logoUpdatedAt ?? "current")}`} alt={`Logo ${space.sponsor.legal_name}`}/>
@@ -229,15 +239,18 @@ export function SponsorPortal({ onHome, onLogin }: { onHome: () => void; onLogin
             {space.sponsor.logoAvailable && <button className="access-text sponsor-logo-management__delete" type="button" disabled={busy !== ""} onClick={() => window.confirm("Möchten Sie Ihr hinterlegtes Logo wirklich entfernen?") && void deleteLogo()}>{busy === "logo-delete" ? "Wird entfernt …" : "Logo entfernen"}</button>}
           </div>
           <small>PNG oder JPEG, maximal 2 MB. Das Logo kann jederzeit ersetzt oder entfernt werden.</small>
-        </section>
+        </section>}
+        {section === "documents" && <>
         <ProposalSection space={space} proposedPackage={proposedPackage} selectedPackage={selectedPackage} selectedPackageId={selectedPackageId} setSelectedPackageId={setSelectedPackageId} acknowledged={acknowledged} setAcknowledged={setAcknowledged} busy={busy} respond={respond}/>
-        {space.contracts.length > 0 && <section className="sponsor-contracts">
-          <header><div><p className="eyebrow">Dokumente</p><h2>Ihre Sponsoringverträge</h2></div><p>Der freigegebene Inhalt ist mit einer Prüfsumme gesichert und bleibt unverändert nachvollziehbar.</p></header>
+        <section className="sponsor-contracts">
+          <header><div><p className="eyebrow">Dokumente</p><h2>Ihre Dokumente</h2></div><p>Hier finden Sie Ihre freigegebenen und bestätigten Sponsoringverträge als PDF.</p></header>
+          {space.contracts.length === 0 && <p>Ihre Vertragsdokumente erscheinen hier, sobald die Organisation sie freigegeben hat.</p>}
           <div className="sponsor-contracts__list">{space.contracts.map((contract) => <article className={`sponsor-contract sponsor-contract--${contract.status}`} key={contract.id}>
             <div className="sponsor-contract__summary"><span className={`contract-status contract-status--${contract.status}`}>{contract.status === "confirmed" ? "Bestätigt" : "Ihre Bestätigung fehlt"}</span><h3>{contract.title}</h3><p>{contract.contract_number} · {contract.package_name} · {formatChf(contract.price_cents)}</p><small>{contract.status === "confirmed" && contract.confirmed_at ? `Bestätigt am ${formatDateTime(contract.confirmed_at)}` : `Freigegeben am ${formatDateTime(contract.released_at)}`}</small><button className="access-secondary" disabled={busy === `pdf-${contract.id}`} onClick={() => void downloadContract(contract)}>{busy === `pdf-${contract.id}` ? "PDF wird erstellt …" : "Vertrag als PDF"}</button></div>
             {contract.status === "released" ? contract.can_confirm ? <form className="sponsor-contract__confirm" onSubmit={(event) => { event.preventDefault(); void confirmContract(contract); }}><div><strong>Vertrag elektronisch bestätigen</strong><p>Ihr angemeldetes mittragen.ch-Konto weist Ihre Identität nach. Bitte lesen Sie zuerst das vollständige PDF.</p></div>{contract.signer_name ? <div className="sponsor-contract__identity"><span>Unterzeichnende Person</span><strong>{contract.signer_name}</strong><small>{contract.signer_role}</small></div> : <><label><span>Name der berechtigten Person</span><input required value={signingAuthorityName} onChange={(event) => setSigningAuthorityName(event.target.value)} autoComplete="name"/></label><label><span>Funktion beim Sponsor</span><input required value={signingAuthorityRole} onChange={(event) => setSigningAuthorityRole(event.target.value)} placeholder="z. B. Geschäftsführung"/></label></>}<label className="sponsor-ack"><input type="checkbox" checked={contractAcknowledged} onChange={(event) => setContractAcknowledged(event.target.checked)}/><span>Ich habe den vollständigen Vertrag geprüft, bin zur Bestätigung berechtigt und stimme dem unveränderlichen Vertragsstand zu.</span></label><button className="access-primary" disabled={!contractAcknowledged || (!contract.signer_name && (!signingAuthorityName.trim() || !signingAuthorityRole.trim())) || busy !== ""}>{busy === `confirm-${contract.id}` ? "Wird bestätigt …" : "Vertrag verbindlich bestätigen"}</button><small className="sponsor-contract__legal-note">Die Bestätigung wird mit Ihrem Konto, Zeitpunkt und dem unveränderlichen Vertragsstand protokolliert.</small></form> : <div className="sponsor-contract__proof"><strong>Bestätigung einer anderen Person zugewiesen</strong><p>Sie können den Vertrag ansehen. Verbindlich bestätigen kann nur das dafür bestimmte mittragen.ch-Konto.</p></div> : <div className="sponsor-contract__proof"><strong>Bestätigung protokolliert</strong><p>Das PDF enthält den freigegebenen Stand und den Bestätigungsnachweis.</p><code>{contract.snapshot_hash.slice(0, 16)}…</code></div>}
           </article>)}</div>
-        </section>}
+        </section>
+        </>}
       </>}
     </main>
   </div>;
@@ -251,7 +264,7 @@ type ProposalSectionProps = {
 };
 
 function ProposalSection({ space, proposedPackage, selectedPackage, selectedPackageId, setSelectedPackageId, acknowledged, setAcknowledged, busy, respond }: ProposalSectionProps) {
-  if (!space.proposal) return <section className="sponsor-portal__welcome sponsor-portal__welcome--compact"><h2>Aktuell liegt kein offener Paketvorschlag vor.</h2></section>;
+  if (!space.proposal) return null;
   const proposal = space.proposal;
   return <>
     <section className="sponsor-proposal"><div><span>Bisher</span><strong>{proposal.source_package}</strong><b>{formatChf(proposal.source_value_cents)}</b></div><span aria-hidden="true">→</span><div className="sponsor-proposal__new"><span>Vorschlag</span><strong>{proposal.proposed_package}</strong><b>{formatChf(proposal.proposed_value_cents)}</b></div></section>
