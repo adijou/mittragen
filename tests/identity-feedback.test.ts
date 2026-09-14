@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { readFile } from "node:fs/promises";
 import type { CallbackResult, User } from "@netlify/identity";
-import { confirmedAccessDestination, confirmedEmailCallback, createIdentityInitializer, identityCallbackKind, identityErrorMessage } from "../src/identityFeedback.ts";
+import { confirmedAccessDestination, confirmedEmailCallback, createIdentityInitializer, identityCallbackKind, identityErrorMessage, invitedConfirmationCallback } from "../src/identityFeedback.ts";
 
 const verified: User = { id: "test-account", email: "sponsor@example.invalid", confirmedAt: "2026-09-14T12:00:00Z" };
 
@@ -28,6 +28,16 @@ test("only a verified confirmation result can display a confirmation success", (
     { type: "oauth", user: verified }, { type: "invite", user: verified }]) {
     assert.equal(confirmedEmailCallback(callback as CallbackResult | null), null);
   }
+});
+
+test("a confirmation for a previously invited account continues with password activation", () => {
+  const invitedError = Object.assign(new Error("Invited users must specify a password"), { status: 422 });
+  assert.deepEqual(invitedConfirmationCallback(invitedError, "#confirmation_token=fresh-token"), {
+    type: "invite", user: null, token: "fresh-token",
+  });
+  assert.equal(invitedConfirmationCallback(invitedError, "#invite_token=fresh-token"), null);
+  assert.equal(invitedConfirmationCallback(Object.assign(new Error("Invalid token"), { status: 422 }), "#confirmation_token=fresh-token"), null);
+  assert.equal(invitedConfirmationCallback(Object.assign(new Error("Invited users must specify a password"), { status: 400 }), "#confirmation_token=fresh-token"), null);
 });
 
 test("two initialization subscribers redeem a one-time confirmation token exactly once", async () => {

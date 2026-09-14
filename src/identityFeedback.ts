@@ -18,6 +18,14 @@ export function confirmedEmailCallback(result: CallbackResult | null): User | nu
   return result?.type === "confirmation" && result.user?.confirmedAt && result.user.email ? result.user : null;
 }
 
+export function invitedConfirmationCallback(reason: unknown, hash: string): CallbackResult | null {
+  const message = reason instanceof Error ? reason.message : "";
+  const status = reason && typeof reason === "object" && "status" in reason ? reason.status : undefined;
+  if (status !== 422 || !/invited users must specify a password/i.test(message)) return null;
+  const token = new URLSearchParams(hash.replace(/^#/, "")).get("confirmation_token");
+  return token ? { type: "invite", user: null, token } : null;
+}
+
 export function identityErrorMessage(reason: unknown, context: IdentityCallbackKind | "login" | "signup" | "initialization" = "login") {
   const message = reason instanceof Error ? reason.message.toLowerCase() : "";
   const status = reason && typeof reason === "object" && "status" in reason ? reason.status : undefined;

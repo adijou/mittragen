@@ -26,7 +26,7 @@ import { SponsoringDossier } from "./SponsoringDossier";
 import { EventSponsoringManagement } from "./EventSponsoringManagement";
 import { Brand } from "./ProductBrand";
 import { clearSponsorEntry, readSponsorEntry, shouldOpenSponsorSpace } from "./sponsorAccess";
-import { confirmedEmailCallback, createIdentityInitializer, identityCallbackKind, identityErrorMessage } from "./identityFeedback";
+import { confirmedEmailCallback, createIdentityInitializer, identityCallbackKind, identityErrorMessage, invitedConfirmationCallback } from "./identityFeedback";
 import { EmailConfirmationSuccess } from "./EmailConfirmationSuccess";
 
 type ProductivePage = "login" | "workspace";
@@ -97,7 +97,16 @@ function useIdentitySession() {
     },
     handleCallback: async () => {
       if (callbackKind.current === "error") throw new AuthError("auth_callback_rejected");
-      const result = await handleAuthCallback();
+      let result: CallbackResult | null;
+      try {
+        result = await handleAuthCallback();
+      } catch (reason) {
+        const invited = callbackKind.current === "confirmation"
+          ? invitedConfirmationCallback(reason, window.location.hash)
+          : null;
+        if (invited) return invited;
+        throw reason;
+      }
       if (callbackKind.current && !result) throw new AuthError("invalid_callback");
       return result;
     },
@@ -202,9 +211,8 @@ function AuthPage({ availability, user, callback, error: sessionError, setCallba
         }
       } else if (mode === "invite" && callback?.token) {
         const currentUser = await acceptInvite(callback.token, password);
-        setCallback(null);
         setUser(currentUser);
-        await finishLogin();
+        setCallback({ type: "confirmation", user: currentUser });
       } else if (mode === "recovery") {
         const currentUser = await updateUser({ password });
         setCallback(null);
