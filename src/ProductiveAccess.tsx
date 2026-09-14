@@ -26,7 +26,7 @@ import { SponsoringDossier } from "./SponsoringDossier";
 import { EventSponsoringManagement } from "./EventSponsoringManagement";
 import { Brand } from "./ProductBrand";
 import { clearSponsorEntry, readSponsorEntry, shouldOpenSponsorSpace } from "./sponsorAccess";
-import { confirmedEmailCallback, createIdentityInitializer, identityCallbackKind, identityErrorMessage, invitedConfirmationCallback } from "./identityFeedback";
+import { confirmationDeliveryMessage, confirmedEmailCallback, createIdentityInitializer, identityCallbackKind, identityErrorMessage, invitedConfirmationCallback } from "./identityFeedback";
 import { EmailConfirmationSuccess } from "./EmailConfirmationSuccess";
 
 type ProductivePage = "login" | "workspace";
@@ -205,9 +205,10 @@ function AuthPage({ availability, user, callback, error: sessionError, setCallba
           setUser(currentUser);
           await finishLogin();
         } else {
-          setMessage(sponsorEntry
-            ? "Konto erstellt. Öffnen Sie den Bestätigungslink in Ihrer E-Mail. Danach gelangen Sie zu Ihrem persönlichen Space."
-            : "Konto erstellt. Bitte bestätigen Sie Ihre E-Mail-Adresse.");
+          const delivery = confirmationDeliveryMessage(currentUser);
+          setMessage(sponsorEntry && !delivery.startsWith("Es wurde noch keine neue")
+            ? `${delivery} Danach gelangen Sie zu Ihrem persönlichen Space.`
+            : delivery);
         }
       } else if (mode === "invite" && callback?.token) {
         const currentUser = await acceptInvite(callback.token, password);

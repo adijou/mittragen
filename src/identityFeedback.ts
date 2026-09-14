@@ -26,6 +26,24 @@ export function invitedConfirmationCallback(reason: unknown, hash: string): Call
   return token ? { type: "invite", user: null, token } : null;
 }
 
+export function confirmationDeliveryMessage(
+  user: Pick<User, "confirmationSentAt" | "invitedAt">,
+  now = Date.now(),
+) {
+  const sentAt = user.confirmationSentAt ? Date.parse(user.confirmationSentAt) : Number.NaN;
+  const sentWithThisRequest = Number.isFinite(sentAt) && Math.abs(now - sentAt) < 60_000;
+  if (!sentWithThisRequest) {
+    if (Number.isFinite(sentAt) && now >= sentAt && now - sentAt < 15 * 60_000) {
+      return "Es wurde noch keine neue Bestätigungsmail verschickt, weil für diese Adresse kürzlich bereits eine Mail erstellt wurde. Bitte verwenden Sie den zuletzt erhaltenen Link oder versuchen Sie es 15 Minuten nach der letzten Anforderung erneut.";
+    }
+    return "Ein neuer Mailversand konnte nicht bestätigt werden. Bitte versuchen Sie es erneut. Falls bereits eine Bestätigungsmail vorhanden ist, verwenden Sie den Link aus dieser Mail.";
+  }
+  if (user.invitedAt) {
+    return "Bestätigungsmail verschickt. Öffnen Sie den Link und legen Sie dort Ihr Passwort fest, um den Zugang zu aktivieren.";
+  }
+  return "Konto erstellt. Bitte öffnen Sie den Bestätigungslink in Ihrer E-Mail.";
+}
+
 export function identityErrorMessage(reason: unknown, context: IdentityCallbackKind | "login" | "signup" | "initialization" = "login") {
   const message = reason instanceof Error ? reason.message.toLowerCase() : "";
   const status = reason && typeof reason === "object" && "status" in reason ? reason.status : undefined;

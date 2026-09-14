@@ -66,6 +66,8 @@ Die Rückkehr auf die Website zeigt nach erfolgreicher Prüfung **E-Mail-Adresse
 
 Wurde dieselbe E-Mail-Adresse früher über Netlify Identity eingeladen, verlangt Identity beim Einlösen des Bestätigungscodes zusätzlich ein Passwort. Die Anwendung erkennt diesen Zustand und zeigt **Zugang aktivieren** statt einer Meldung über einen ungültigen Link. Das dort vergebene Passwort wird zusammen mit dem noch gültigen Code an Identity übermittelt und schliesst die Bestätigung ab.
 
+Netlify unterdrückt weitere Bestätigungsmails an dieselbe Adresse innerhalb seines Versandintervalls, obwohl der Registrierungsaufruf erfolgreich beantwortet wird. Die Anwendung vergleicht deshalb `confirmationSentAt` mit dem aktuellen Aufruf. Wurde keine neue Mail erstellt, verweist sie auf den zuletzt erhaltenen Link und den 15-Minuten-Abstand, statt einen Versand zu behaupten.
+
 Auch bisherige Links mit einem Bestätigungstoken an der Startseite werden verarbeitet. Ungültige, abgelaufene und bereits verwendete Links zeigen einen deutschen Hinweis. Ein vorhandenes anderes Login oder ein Token in der URL allein führt zu keiner Erfolgsmeldung. Die Initialisierung löst die Bestätigung auch unter React StrictMode nur einmal aus.
 
 **Veröffentlichungsstand:** Vorlage und Seitenänderung sind lokal vorbereitet. Der reine Website-Deploy aktiviert die Identity-Vorlage nicht automatisch. Erst die Veröffentlichung abwarten und prüfen, dass die beiden oben genannten Dateien öffentlich erreichbar sind; anschliessend Betreff und Template-Pfad in Identity setzen. Das Dashboard war bei der Prüfung nicht angemeldet, deshalb wurde seine Konfiguration nicht geändert. Die bisherige SMTP-Konfiguration wird weiterverwendet.
