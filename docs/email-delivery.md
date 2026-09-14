@@ -60,7 +60,7 @@ Nach Veröffentlichung der neuen Dateien in Netlify unter **Project configuratio
 | Subject | `Bitte bestätigen Sie Ihre E-Mail-Adresse – mittragen.ch` |
 | Template path | `/emails/confirmation.html` |
 
-Die Vorlage verwendet `{{ .SiteURL }}/login/#confirmation_token={{ .Token }}` für den Button **E-Mail-Adresse bestätigen** und den Ersatzlink. Die PNG-Bildmarke unter `/brand/mittragen-icon-email.png` ist aus der bestehenden SVG-Bildmarke exportiert. Für die Konto-Bestätigung bleibt `autoconfirm` deaktiviert.
+Die Vorlage verwendet `{{ .ConfirmationURL }}` für den Button **E-Mail-Adresse bestätigen** und den Ersatzlink. Damit erzeugt Netlify Identity den vollständigen, zum aktuellen Vorgang gehörenden Link. Die PNG-Bildmarke wird über die absolute URL `https://mittragen.ch/brand/mittragen-icon-email.png` geladen und ist aus der bestehenden SVG-Bildmarke exportiert. Für die Konto-Bestätigung bleibt `autoconfirm` deaktiviert.
 
 Die Rückkehr auf die Website zeigt nach erfolgreicher Prüfung **E-Mail-Adresse erfolgreich bestätigt**. Der Benutzer bleibt auf dieser Seite, bis er **Weiter zu meinem Space** beziehungsweise **Weiter zu meinem Zugang** wählt. Sponsorzuordnungen werden im Hintergrund anhand der bestätigten Konto-E-Mail ermittelt; das funktioniert auch in einem neuen Tab. Scheitert nur das Laden des Zugangs, bleibt die erfolgreiche Bestätigung sichtbar und die Zuordnung kann erneut geprüft werden.
 

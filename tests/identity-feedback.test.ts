@@ -102,14 +102,15 @@ test("the success screen resolves the sponsor in a new tab and exposes failures 
   await assert.rejects(confirmedAccessDestination(false, async () => Response.json({ error: "unavailable" }, { status: 503 })));
 });
 
-test("the German confirmation email preserves the Identity token, uses a matching fallback link and an email-compatible logo", async () => {
+test("the German confirmation email uses Identity's canonical URL twice and an absolute email-compatible logo", async () => {
   const template = await readFile(new URL("../public/emails/confirmation.html", import.meta.url), "utf8");
-  const target = "{{ .SiteURL }}/login/#confirmation_token={{ .Token }}";
+  const target = "{{ .ConfirmationURL }}";
   assert.equal(template.split(target).length - 1, 2);
+  assert.doesNotMatch(template, /confirmation_token=|\{\{ \.Token \}\}/);
   assert.match(template, /E-Mail-Adresse bestätigen/);
   assert.match(template, /lang="de"/);
   assert.doesNotMatch(template, /Confirm your|Confirm mail|Click here|<script|data:image|<svg/i);
-  assert.match(template, /src="\{\{ \.SiteURL \}\}\/brand\/mittragen-icon-email\.png"/);
+  assert.match(template, /src="https:\/\/mittragen\.ch\/brand\/mittragen-icon-email\.png"/);
   const logo = await readFile(new URL("../public/brand/mittragen-icon-email.png", import.meta.url));
   assert.deepEqual([...logo.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10]);
 });
