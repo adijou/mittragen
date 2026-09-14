@@ -29,6 +29,7 @@ export function invitedConfirmationCallback(reason: unknown, hash: string): Call
 export function confirmationDeliveryMessage(
   user: Pick<User, "confirmationSentAt" | "invitedAt">,
   now = Date.now(),
+  action: "signup" | "resend" = "signup",
 ) {
   const sentAt = user.confirmationSentAt ? Date.parse(user.confirmationSentAt) : Number.NaN;
   const sentWithThisRequest = Number.isFinite(sentAt) && Math.abs(now - sentAt) < 60_000;
@@ -41,7 +42,14 @@ export function confirmationDeliveryMessage(
   if (user.invitedAt) {
     return "Bestätigungsmail verschickt. Öffnen Sie den Link und legen Sie dort Ihr Passwort fest, um den Zugang zu aktivieren.";
   }
-  return "Konto erstellt. Bitte öffnen Sie den Bestätigungslink in Ihrer E-Mail.";
+  return action === "resend"
+    ? "Ein neuer Aktivierungslink wurde verschickt. Bitte verwenden Sie nur den Link aus der neuesten E-Mail."
+    : "Konto erstellt. Bitte öffnen Sie den Bestätigungslink in Ihrer E-Mail.";
+}
+
+export function emailConfirmationRequired(reason: unknown) {
+  const message = reason instanceof Error ? reason.message.toLowerCase() : "";
+  return /not confirmed|not verified|confirm.*email/.test(message);
 }
 
 export function identityErrorMessage(reason: unknown, context: IdentityCallbackKind | "login" | "signup" | "initialization" = "login") {
@@ -60,7 +68,7 @@ export function identityErrorMessage(reason: unknown, context: IdentityCallbackK
   if (context === "recovery") return "Das Passwort konnte nicht zurückgesetzt werden. Fordern Sie über «Passwort vergessen?» einen neuen Link an.";
   if (context === "email_change") return "Die neue E-Mail-Adresse konnte nicht bestätigt werden. Melden Sie sich an und öffnen Sie den aktuellen Bestätigungslink erneut.";
   if (context === "error" || context === "oauth") return "Die Anmeldung über diesen Link ist fehlgeschlagen. Bitte melden Sie sich unten erneut an.";
-  if (/not confirmed|not verified|confirm.*email/.test(message)) return "Bitte bestätigen Sie zuerst Ihre E-Mail-Adresse über den Link in Ihrer Bestätigungsmail.";
+  if (emailConfirmationRequired(reason)) return "Bitte bestätigen Sie zuerst Ihre E-Mail-Adresse über den Link in Ihrer Bestätigungsmail.";
   if (/already.*(registered|exists)|already been registered/.test(message)) return "Für diese E-Mail-Adresse besteht bereits ein Konto. Bitte melden Sie sich an oder wählen Sie «Passwort vergessen?».";
   if (/password.*(short|least|weak)|weak password/.test(message)) return "Bitte wählen Sie ein Passwort mit mindestens acht Zeichen.";
   if (/invalid.*email|email.*invalid/.test(message)) return "Bitte prüfen Sie die eingegebene E-Mail-Adresse.";

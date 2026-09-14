@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { readFile } from "node:fs/promises";
 import type { CallbackResult, User } from "@netlify/identity";
-import { confirmationDeliveryMessage, confirmedAccessDestination, confirmedEmailCallback, createIdentityInitializer, identityCallbackKind, identityErrorMessage, invitedConfirmationCallback } from "../src/identityFeedback.ts";
+import { confirmationDeliveryMessage, confirmedAccessDestination, confirmedEmailCallback, createIdentityInitializer, emailConfirmationRequired, identityCallbackKind, identityErrorMessage, invitedConfirmationCallback } from "../src/identityFeedback.ts";
 
 const verified: User = { id: "test-account", email: "sponsor@example.invalid", confirmedAt: "2026-09-14T12:00:00Z" };
 
@@ -48,6 +48,20 @@ test("confirmation delivery distinguishes a new email from Netlify's silent rese
   }, now), /Passwort fest/);
   assert.match(confirmationDeliveryMessage({ confirmationSentAt: "2026-09-14T13:25:00.000Z" }, now), /keine neue Bestätigungsmail/);
   assert.match(confirmationDeliveryMessage({ confirmationSentAt: "2026-09-14T12:00:00.000Z" }, now), /konnte nicht bestätigt werden/);
+  assert.match(confirmationDeliveryMessage({ confirmationSentAt: "2026-09-14T13:29:45.000Z" }, now, "resend"), /neuer Aktivierungslink/);
+});
+
+test("login errors expose the activation resend only for unconfirmed email addresses", () => {
+  assert.equal(emailConfirmationRequired(new Error("invalid_grant: Email not confirmed")), true);
+  assert.equal(emailConfirmationRequired(new Error("Email not verified")), true);
+  assert.equal(emailConfirmationRequired(new Error("Invalid login credentials")), false);
+});
+
+test("the login page provides an explicit activation-link resend action", async () => {
+  const source = await readFile(new URL("../src/ProductiveAccess.tsx", import.meta.url), "utf8");
+  assert.match(source, />Aktivierungslink erneut senden<\/button>/);
+  assert.match(source, /signup\(email, password\)/);
+  assert.match(source, /15-minütigen Sperrfrist/);
 });
 
 test("two initialization subscribers redeem a one-time confirmation token exactly once", async () => {

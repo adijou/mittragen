@@ -94,8 +94,9 @@ export function SponsorAccessPanel({ tenantId, sponsorId, contactEmail }: {
           {invitation.sent_at && <small>Zuletzt versendet: {formatDate(invitation.sent_at)}</small>}
           {!invitation.accepted_at && invitation.delivery_status === "sent" && <small>Gültig bis: {formatDate(invitation.expires_at)}</small>}
         </div>
-        <button type="button" className="sponsor-edit" disabled={sending || loading || Boolean(loadError)} onClick={() => { setEmail(invitation.email); void send(invitation.email); }} aria-label={`Einladung an ${invitation.email} erneut senden`}>Erneut senden</button>
+        <button type="button" className="sponsor-edit" disabled={sending || loading || Boolean(loadError)} onClick={() => { setEmail(invitation.email); void send(invitation.email); }} aria-label={`Sponsor-Einladung an ${invitation.email} erneut senden`}>Sponsor-Einladung erneut senden</button>
       </li>)}</ul>
+      {access.invitations.some((invitation) => !invitation.accepted_at) && <p className="sponsor-access-note">Diese Schaltfläche wiederholt die Sponsor-Einladung. Falls das Konto bereits erstellt, aber noch nicht bestätigt ist, kann die Person auf der Anmeldeseite einen neuen Aktivierungslink anfordern.</p>}
     </>}
   </section>;
 }

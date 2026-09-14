@@ -623,6 +623,8 @@ td small { margin-top: 3px; color: var(--ink-3); }
 .auth-warning, .auth-state { padding: 18px; border-radius: 8px; background: var(--gold-soft); }
 .auth-warning p { margin: 7px 0 0; font-size: 12px; }
 .auth-state { display: flex; flex-direction: column; gap: 15px; background: var(--blue-soft); }
+.auth-confirmation-resend { display: grid; gap: 11px; padding: 14px; border: 1px solid #ecd9a5; border-radius: 8px; background: var(--gold-soft); }
+.auth-confirmation-resend p { margin: 0; color: var(--ink-2); font-size: 12px; line-height: 1.55; }
 .email-confirmation-layout { display: grid; place-items: center; padding: 60px 20px; }
 .email-confirmation-card { width: min(100%, 610px); text-align: center; }
 .email-confirmation-card h1 { margin: 10px 0 22px; font-size: clamp(26px, 5vw, 36px); line-height: 1.2; }
