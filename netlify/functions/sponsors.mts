@@ -6,6 +6,7 @@ import { parseSponsorInput, type SponsorInput } from "./_shared/sponsor-input.ts
 import { loadSponsorAccess, parseSponsorAccessInvitation, prepareSponsorAccessInvitation, recordSponsorAccessDelivery } from "./_shared/sponsor-access-invitations.ts";
 import { absoluteSiteUrl, contractEmailConfig } from "./_shared/contract-delivery.ts";
 import { sendSponsorSpaceInvitationEmail } from "./_shared/resend-contract-email.ts";
+import { handleSponsorLogo } from "./_shared/sponsor-logo.ts";
 
 type SponsorRow = SponsorInput & {
   id: string;
@@ -43,6 +44,11 @@ export default async (request: Request, context: Context) => {
   const sponsorId = context.params.sponsorId;
   if (!tenantId || !isUuid(tenantId)) return json({ error: "invalid_tenant" }, 422);
   if (sponsorId && !isUuid(sponsorId)) return json({ error: "invalid_sponsor" }, 422);
+
+  if (new URL(request.url).pathname.endsWith("/logo")) {
+    if (!sponsorId) return json({ error: "sponsor_required" }, 422);
+    return handleSponsorLogo(request, context, user, tenantId, sponsorId, "admin");
+  }
 
   if (new URL(request.url).pathname.endsWith("/access")) {
     if (!sponsorId) return json({ error: "sponsor_required" }, 422);
@@ -98,7 +104,8 @@ export default async (request: Request, context: Context) => {
                sponsor.phone, sponsor.street, sponsor.postal_code, sponsor.city, sponsor.website,
                sponsor.source_organization, sponsor.status, sponsor.proposal_package,
                sponsor.assigned_package_version_id, version.name AS assigned_package_name,
-               sponsor.annual_value_cents, sponsor.notes, sponsor.created_at::text, sponsor.updated_at::text
+               sponsor.annual_value_cents, sponsor.notes, sponsor.created_at::text, sponsor.updated_at::text,
+               (sponsor.logo_blob_key IS NOT NULL) AS logo_available, sponsor.logo_updated_at::text
         FROM sponsors sponsor
         LEFT JOIN sponsorship_package_versions version
           ON version.id = sponsor.assigned_package_version_id AND version.tenant_id = sponsor.tenant_id
@@ -191,5 +198,5 @@ export default async (request: Request, context: Context) => {
 };
 
 export const config: Config = {
-  path: ["/api/sponsors/:tenantId", "/api/sponsors/:tenantId/:sponsorId", "/api/sponsors/:tenantId/:sponsorId/access"],
+  path: ["/api/sponsors/:tenantId", "/api/sponsors/:tenantId/:sponsorId", "/api/sponsors/:tenantId/:sponsorId/access", "/api/sponsors/:tenantId/:sponsorId/logo"],
 };

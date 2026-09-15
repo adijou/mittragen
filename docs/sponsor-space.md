@@ -25,12 +25,24 @@ Nur Rollen mit `sponsors:write` dürfen den Zugangsbereich aufrufen und Einladun
 ## Im Space
 
 - **Dokumente:** Freigegebene und bestätigte Sponsoringverträge können als PDF heruntergeladen werden. Ausstehende Vertragsbestätigungen und vorhandene Überführungsvorschläge bleiben erreichbar.
-- **Meine Angaben:** Firmen-/Sponsorname, Name der Kontaktperson, Kontakt-E-Mail und Telefon lassen sich im Formular „Name und Kontakt“ pflegen. Strasse/Hausnummer, Postleitzahl und Ort bleiben im separaten Adressformular erreichbar. Optionale Kontaktdaten können geleert werden. Parallele Änderungen werden erkannt und veraltete Speicherversuche abgewiesen.
+- **Meine Angaben:** Firmen-/Sponsorname, Name der Kontaktperson, Kontakt-E-Mail, Telefon und Website lassen sich im Formular „Name und Kontakt“ pflegen. Strasse/Hausnummer, Postleitzahl und Ort bleiben im separaten Adressformular erreichbar. Optionale Kontaktdaten können geleert werden. Parallele Änderungen werden erkannt und veraltete Speicherversuche abgewiesen.
 
 Die Kontakt-E-Mail dient der Kommunikation mit der Organisation. Die bestätigte Login-Adresse und bestehende Sponsorzugänge bleiben unverändert; eine neue Kontaktadresse erteilt keiner anderen Person Zugriff. Die Login-Adresse ist direkt beim E-Mail-Feld erklärt. Änderungen sind ausschliesslich für den eigenen Sponsor möglich; Paket, Betrag, Status, Rollen und Vertragsfelder sind nicht über diesen Endpunkt änderbar.
-- **Logo:** Die vorhandene Verwaltung für PNG/JPEG bis 2 MB ist im eigenen Bereich erreichbar.
+- **Logo:** Die gemeinsame Verwaltung für PNG/JPEG bis 2 MB ist im Sponsor-Space und im Adminbereich erreichbar. Beide Zugänge verwenden denselben gespeicherten Stand.
 
 Adress- und Kontaktänderungen werden unmittelbar in den Sponsor-Stammdaten der Organisation gespeichert und mit Vorher-/Nachherwerten protokolliert. Bereits freigegebene oder unterzeichnete Vertrags-Snapshots bleiben unverändert. Eine allgemeine Dateiablage und Rechnungsdokumente sind kein Bestandteil dieses Ausbaus.
+
+## Website und weitere Felder
+
+Die Website ist optional. Eine Eingabe wie `www.beispiel.ch` wird mit `https://` gespeichert; andere Protokolle sowie eingebettete Zugangsdaten werden abgewiesen. Leer speichern entfernt die Website aus den aktuellen Stammdaten.
+
+`shared/sponsor-contact.ts` definiert die ausdrücklich freigegebenen Felder, Labels, Eingabetypen und Längen für Formular und API. Ein zusätzliches Feld benötigt einen Eintrag dort und eine passende Datenbankspalte, gegebenenfalls eine Migration und fachliche Validierung. Neue Felder werden damit automatisch im Formular und beim Lesen/Speichern berücksichtigt. Unbekannte Felder, Rollen und Vertragswerte bleiben gesperrt. Teiländerungen und ältere geöffnete Formulare überschreiben keine nicht mitgesendeten Felder.
+
+## Logos im Adminbereich
+
+In **Sponsoren** zeigt die erste Spalte die Logo-Vorschau oder **Logo fehlt**. Der Filter **Logo-Status → Ohne Logo** zeigt alle noch offenen Einträge. Bei Schreibberechtigung öffnet ein Klick auf die Vorschau die Logo-Verwaltung; dieselbe Verwaltung steht oben in **Bearbeiten**.
+
+Logos können hochgeladen, ersetzt und entfernt werden. Eigentümer und Sponsoring-Administratoren dürfen ändern; Finance, Fulfillment und Viewer dürfen die Logos ihrer Organisation ansehen. Sponsorzugänge gelten weiterhin ausschliesslich für ihren eigenen Space. Die gemeinsame Implementierung unter `netlify/functions/_shared/sponsor-logo.ts` prüft bei jedem Zugriff Organisation und Berechtigung, liefert Bilder privat aus und protokolliert Änderungen samt Quelle und ausführender Person. Speicherpfade werden nicht in der Sponsorenliste offengelegt.
 
 ## Zugriff und Migration
 
@@ -48,8 +60,8 @@ Adress- und Kontaktänderungen prüfen zusätzlich zur Anmeldung die Kombination
 
 Die direkten Einladungen werden zusätzlich für fehlende Adminrechte, fremde Organisationen, Sponsoren ohne Vertrag, Altverträge ohne Unterzeichnungsanfrage, E-Mail-Abweichungen, Versandfehler, Ablauf, Wiederholung und verspätete Versandantworten geprüft. Der Versandtest verwendet einen simulierten Mailanbieter und verlangt dessen Versand-ID; es werden keine echten Einladungen versendet.
 
-Prüfstand 15. September 2026: 191 Tests und der Produktions-Build erfolgreich. Der Mailversand über Resend und die Freischaltung des Logins wurden vom Auftraggeber bestätigt. Ergänzt wurden Tests für fehlende serverseitige Profildaten, wirklich unbestätigte E-Mails, fremde Identitäten, Identity-Ausfälle und die automatische Zuordnung ohne Organisationsrolle. Ein zusätzlicher Test ruft den tatsächlichen API-Handler für Zugangszuordnung und Space-Abruf auf, sodass auch die vorgelagerte Bestätigungsprüfung abgedeckt ist. Der Sponsor-Space wurde mit dem betroffenen Konto produktiv geprüft: Dokumente, Adresse und Logo laden; der allgemeine Arbeitsbereich leitet in den Sponsor-Space weiter. Dieser Einladungsablauf setzt aktivierte Kontoerstellung und E-Mail-Bestätigung voraus.
+Prüfstand 15. September 2026: 197 Tests und der Produktions-Build erfolgreich. Der Mailversand über Resend und die Freischaltung des Logins wurden vom Auftraggeber bestätigt. Ergänzt wurden Tests für fehlende serverseitige Profildaten, wirklich unbestätigte E-Mails, fremde Identitäten, Identity-Ausfälle und die automatische Zuordnung ohne Organisationsrolle. Ein zusätzlicher Test ruft den tatsächlichen API-Handler für Zugangszuordnung und Space-Abruf auf, sodass auch die vorgelagerte Bestätigungsprüfung abgedeckt ist. Der Sponsor-Space wurde mit dem betroffenen Konto produktiv geprüft: Dokumente, Adresse und Logo laden; der allgemeine Arbeitsbereich leitet in den Sponsor-Space weiter. Dieser Einladungsablauf setzt aktivierte Kontoerstellung und E-Mail-Bestätigung voraus.
 
-Die zusätzliche Kontaktpflege ist mit realen Migrationen und RLS geprüft: Speichern und Leeren optionaler Felder, fremde Sponsoren, parallele Änderungen, Audit-Nachweis sowie unveränderte Verträge, Einladungen und Zugangsrechte. Der Handler-Test prüft zudem die Netlify-Routenregistrierung, die Herkunft der Anfrage und die Eingabeprüfung.
+Die zusätzliche Kontaktpflege ist mit realen Migrationen und RLS geprüft: Speichern und Leeren optionaler Felder, fremde Sponsoren, parallele Änderungen, Audit-Nachweis sowie unveränderte Verträge, Einladungen und Zugangsrechte. Die Handler-Tests prüfen zudem die Netlify-Routenregistrierung, die Herkunft der Anfrage und die Eingabeprüfung. Logo-Tests verwenden die echte API und SQL mit RLS sowie einen isolierten Blob-Speicher: Leserechte, Schreibrechte, fremde Organisationen, gemeinsamer Stand, Ersetzen, Entfernen, Audit und Fehler beim Upload sind abgedeckt.
 
 `npm run build` prüft Frontend und Serverfunktionen mit TypeScript und erzeugt den Produktions-Build. Vor der produktiven Abnahme ist zusätzlich der echte Identity-E-Mail-Rückweg zu prüfen; die lokalen Datenbanktests versenden keine E-Mails.

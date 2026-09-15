@@ -1,3 +1,4 @@
+import { pickSponsorContact } from "../shared/sponsor-contact";
 import { useEffect, useMemo, useState } from "react";
 import { getUser, logout, onAuthChange, refreshSession, type User } from "@netlify/identity";
 import { Brand } from "./ProductBrand";
@@ -230,7 +231,7 @@ export function SponsorPortal({ onHome, onLogin }: { onHome: () => void; onLogin
         <nav className="sponsor-space-nav" aria-label="Bereiche im Sponsor-Space">
           {([['documents', 'Dokumente'], ['address', 'Meine Angaben'], ['logo', 'Logo']] as const).map(([value, label]) => <button key={value} type="button" aria-pressed={section === value} disabled={busy !== ""} onClick={() => { setSection(value); setError(""); setMessage(""); }}>{label}</button>)}
         </nav>
-        {section === "address" && <SponsorContactForm key={`contact:${space.tenantId}:${space.sponsor.id}`} tenantId={space.tenantId} sponsorId={space.sponsor.id} contact={{ legal_name: space.sponsor.legal_name, contact_name: space.sponsor.contact_name, contact_email: space.sponsor.contact_email, phone: space.sponsor.phone }} loginEmail={user.email ?? ""} disabled={busy !== ""} onBusyChange={(saving) => setBusy(saving ? "contact-save" : "")} onSaved={(contact) => setSpaces((current) => current.map((item) => item.tenantId === space.tenantId && item.sponsor.id === space.sponsor.id ? { ...item, sponsor: { ...item.sponsor, ...contact } } : item))}/>}
+        {section === "address" && <SponsorContactForm key={`contact:${space.tenantId}:${space.sponsor.id}`} tenantId={space.tenantId} sponsorId={space.sponsor.id} contact={pickSponsorContact(space.sponsor)} loginEmail={user.email ?? ""} disabled={busy !== ""} onBusyChange={(saving) => setBusy(saving ? "contact-save" : "")} onSaved={(contact) => setSpaces((current) => current.map((item) => item.tenantId === space.tenantId && item.sponsor.id === space.sponsor.id ? { ...item, sponsor: { ...item.sponsor, ...contact } } : item))}/>}
         {section === "address" && <SponsorAddressForm key={`${space.tenantId}:${space.sponsor.id}`} tenantId={space.tenantId} sponsorId={space.sponsor.id} legalName={space.sponsor.legal_name} address={space.sponsor.address} disabled={busy !== ""} onBusyChange={(saving) => setBusy(saving ? "address-save" : "")} onSaved={(address) => setSpaces((current) => current.map((item) => item.tenantId === space.tenantId && item.sponsor.id === space.sponsor.id ? { ...item, sponsor: { ...item.sponsor, address } } : item))}/>}
         {section === "logo" && <section className="sponsor-logo-management">
           <div className="sponsor-logo-management__identity">

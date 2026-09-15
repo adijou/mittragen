@@ -19,7 +19,7 @@ test("sponsor logo validation rejects deceptive sizes and non-images", async () 
 });
 
 test("sponsor logo routes are account-bound, audited and private", async () => {
-  const source = await readFile(new URL("../netlify/functions/sponsor-portal.mts", import.meta.url), "utf8");
+  const source = await readFile(new URL("../netlify/functions/_shared/sponsor-logo.ts", import.meta.url), "utf8");
   assert.match(source, /JOIN sponsor_portal_access access/);
   assert.match(source, /access\.identity_user_id = \$3/);
   assert.match(source, /verifyMutation\(request\)/);

@@ -12,8 +12,8 @@ import { verifySponsorIdentity } from "../netlify/functions/_shared/sponsor-iden
 
 const original = { street: "Alte Gasse 1", postal_code: "3178", city: "Bösingen" };
 const newAddress = { street: "Neue Gasse 12", postal_code: "3186", city: "Düdingen" };
-const originalContact = { legal_name: "Testsponsor", contact_name: null, contact_email: null, phone: null };
-const newContact = { legal_name: "Neuer Sponsorname", contact_name: "Anna Muster", contact_email: "kontakt@example.invalid", phone: "+41 (0)26 123 45 67" };
+const originalContact = { legal_name: "Testsponsor", contact_name: null, contact_email: null, phone: null, website: null };
+const newContact = { legal_name: "Neuer Sponsorname", contact_name: "Anna Muster", contact_email: "kontakt@example.invalid", phone: "+41 (0)26 123 45 67", website: "https://beispiel.ch" };
 
 test("contact input permits names and contact details but never access, status or contract fields", () => {
   const value = { ...newContact, original: originalContact };
@@ -28,8 +28,20 @@ test("contact input permits names and contact details but never access, status o
   }
 });
 
+test("website updates normalize domains and reject unsafe URLs without allowing arbitrary fields", () => {
+  for (const input of ["beispiel.ch", "www.beispiel.ch", "https://beispiel.ch/kontakt", "http://beispiel.ch"]) {
+    const result = parseSponsorContact({ website: input, original: { website: null } });
+    assert.equal(result.ok, true);
+    if (result.ok) assert.equal(result.value.website, input.startsWith("http") ? input : `https://${input}`);
+  }
+  for (const website of ["javascript:alert(1)", "data:text/html,hi", "ftp://beispiel.ch", "https://person:pass@beispiel.ch", "bad url", "https://", "localhost", "a".repeat(501)]) {
+    assert.deepEqual(parseSponsorContact({ website, original: { website: null } }), { ok: false, error: "invalid_website" });
+  }
+  assert.deepEqual(parseSponsorContact({ website: "", original: { website: "https://beispiel.ch" } }), { ok: true, value: { website: null, original: { website: "https://beispiel.ch" } } });
+});
+
 test("optional contact details can be cleared without requiring an existing postal address", () => {
-  assert.deepEqual(parseSponsorContact({ legal_name: "Testsponsor", contact_name: "", contact_email: " ", phone: null, original: newContact }), {
+  assert.deepEqual(parseSponsorContact({ legal_name: "Testsponsor", contact_name: "", contact_email: " ", phone: null, website: "", original: newContact }), {
     ok: true, value: { ...originalContact, original: newContact },
   });
 });
@@ -198,6 +210,11 @@ test("self-service runs against PostgreSQL with real migrations and a role subje
       assert.equal((await saveContact({ ...originalContact, original: originalContact })).state, "conflict");
       assert.deepEqual(await saveContact({ ...newContact, original: newContact }), { state: "saved", contact: newContact });
       assert.equal((await db.query("SELECT id FROM audit_events WHERE action='sponsor.contact_updated' AND object_id=$1", [signed.sponsorId])).rows.length, 1);
+      const partial = await saveContact({ contact_name: "Neue Kontaktperson", original: { contact_name: newContact.contact_name } });
+      assert.deepEqual(partial, { state: "saved", contact: { ...newContact, contact_name: "Neue Kontaktperson" } });
+      // A form opened before the Website field was added must preserve its value.
+      const { website, ...oldForm } = newContact;
+      assert.deepEqual(await saveContact({ ...oldForm, original: { ...oldForm, contact_name: "Neue Kontaktperson" } }), { state: "saved", contact: newContact });
       assert.deepEqual(await saveContact({ ...originalContact, original: newContact }), { state: "saved", contact: originalContact });
     });
 

@@ -2,13 +2,9 @@ import type { User } from "@netlify/identity";
 import type { DatabaseClient } from "./database.ts";
 
 export type SponsorAddress = { street: string | null; postal_code: string | null; city: string | null };
-export type SponsorContact = {
-  legal_name: string; contact_name: string | null; contact_email: string | null; phone: string | null;
-};
-export type SponsorContactUpdate = SponsorContact & { original: SponsorContact };
-
-const contactFields = { legal_name: 160, contact_name: 160, contact_email: 254, phone: 80 } as const;
-const contactKeys = Object.keys(contactFields) as Array<keyof SponsorContact>;
+export type { SponsorContact } from "../../../shared/sponsor-contact.ts";
+import { normalizeSponsorWebsite, sponsorContactFields, sponsorContactKeys as contactKeys, type SponsorContact } from "../../../shared/sponsor-contact.ts";
+export type SponsorContactUpdate = Partial<SponsorContact> & { original: Partial<SponsorContact> };
 
 export function parseSponsorContact(body: unknown):
   | { ok: true; value: SponsorContactUpdate }
@@ -25,18 +21,27 @@ export function parseSponsorContact(body: unknown):
   if (Object.keys(original).some((key) => !contactKeys.includes(key as keyof SponsorContact))) {
     return { ok: false, error: "original_contact_required" };
   }
+  const fields = contactKeys.filter((field) => Object.hasOwn(record, field));
+  if (fields.length === 0) return { ok: false, error: "no_changes" };
+  if (Object.keys(original).some((key) => !fields.includes(key as keyof SponsorContact))) {
+    return { ok: false, error: "original_contact_required" };
+  }
   const value = { original: {} } as SponsorContactUpdate;
-  for (const field of contactKeys) {
+  for (const field of fields) {
     const input = record[field];
-    if (input !== null && (typeof input !== "string" || input.trim().length > contactFields[field]
+    if (input !== null && (typeof input !== "string" || input.trim().length > sponsorContactFields[field].maxLength
       || /[\u0000-\u001f\u007f]/.test(input))) return { ok: false, error: `invalid_${field}` };
-    const normalized = typeof input === "string" ? input.trim() || null : null;
+    let normalized = typeof input === "string" ? input.trim() || null : null;
     if (field === "legal_name" && !normalized) return { ok: false, error: "invalid_legal_name" };
     if (field === "contact_email" && normalized && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) {
       return { ok: false, error: "invalid_contact_email" };
     }
+    if (field === "website" && normalized) {
+      normalized = normalizeSponsorWebsite(normalized);
+      if (!normalized || normalized.length > sponsorContactFields.website.maxLength) return { ok: false, error: "invalid_website" };
+    }
     const previous = original[field];
-    if (previous !== null && (typeof previous !== "string" || previous.length > contactFields[field])
+    if (previous !== null && (typeof previous !== "string" || previous.length > sponsorContactFields[field].maxLength)
       || field === "legal_name" && (typeof previous !== "string" || !previous.trim())) {
       return { ok: false, error: "original_contact_required" };
     }
@@ -50,7 +55,7 @@ export async function updateSponsorContact(
   client: DatabaseClient, tenantId: string, sponsorId: string, userId: string, value: SponsorContactUpdate,
 ) {
   const current = await client.query<SponsorContact>(`
-    SELECT sponsor.legal_name, sponsor.contact_name, sponsor.contact_email, sponsor.phone
+    SELECT ${contactKeys.map((field) => `sponsor.${field}`).join(", ")}
     FROM sponsors sponsor
     JOIN sponsor_portal_access access ON access.tenant_id = sponsor.tenant_id AND access.sponsor_id = sponsor.id
     WHERE sponsor.tenant_id = $1 AND sponsor.id = $2 AND access.identity_user_id = $3
@@ -58,12 +63,13 @@ export async function updateSponsorContact(
   `, [tenantId, sponsorId, userId]);
   const contact = current.rows[0];
   if (!contact) return { state: "denied" as const };
-  if (contactKeys.some((field) => contact[field] !== value.original[field])) return { state: "conflict" as const };
-  if (contactKeys.every((field) => contact[field] === value[field])) return { state: "saved" as const, contact };
+  const fields = contactKeys.filter((field) => Object.hasOwn(value, field));
+  if (fields.some((field) => contact[field] !== value.original[field])) return { state: "conflict" as const };
+  if (fields.every((field) => contact[field] === value[field])) return { state: "saved" as const, contact };
   const updated = await client.query<SponsorContact>(`UPDATE sponsors
-    SET legal_name = $3, contact_name = $4, contact_email = $5, phone = $6, updated_at = now()
-    WHERE tenant_id = $1 AND id = $2 RETURNING legal_name, contact_name, contact_email, phone`,
-  [tenantId, sponsorId, value.legal_name, value.contact_name, value.contact_email, value.phone]);
+    SET ${fields.map((field, index) => `${field} = $${index + 3}`).join(", ")}, updated_at = now()
+    WHERE tenant_id = $1 AND id = $2 RETURNING ${contactKeys.join(", ")}`,
+  [tenantId, sponsorId, ...fields.map((field) => value[field])]);
   await client.query(`INSERT INTO audit_events (tenant_id, actor_user_id, action, object_type, object_id, metadata)
     VALUES ($1,$2,'sponsor.contact_updated','sponsor',$3::text,
       jsonb_build_object('source','sponsor_portal','before',$4::jsonb,'after',$5::jsonb))`,
