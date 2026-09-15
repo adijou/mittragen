@@ -18,6 +18,8 @@ import {
 import { OrganizationSettings, type OrganizationTenant } from "./OrganizationSettings";
 import { SponsorDirectory } from "./SponsorDirectory";
 import { TeamManagement } from "./TeamManagement";
+import { WorkspaceHelp } from "./WorkspaceHelp";
+import type { HelpSection } from "./workspaceHelpContent";
 import { ImportManagement } from "./ImportManagement";
 import { TransitionManagement } from "./TransitionManagement";
 import { PackageManagement } from "./PackageManagement";
@@ -50,7 +52,7 @@ type WorkspaceData = {
   auditEvents: Array<{ action: string; created_at: string; metadata: Record<string, unknown> }>;
 };
 
-type WorkspaceSection = "overview" | "sponsors" | "packages" | "dossier" | "events" | "transitions" | "contracts" | "imports" | "team" | "settings";
+type WorkspaceSection = HelpSection | "help";
 
 const activeTenantStorageKey = "mittragen-active-tenant";
 
@@ -456,7 +458,7 @@ function WorkspacePage({ user, setUser, onHome, onLogin, onSponsor, onPrototype:
     <aside className="workspace-sidebar">
       <button onClick={onHome} className="access-brand-button"><Brand inverse/></button>
       <div className="workspace-user"><span>{(user.name ?? user.email ?? "M").slice(0, 2).toUpperCase()}</span><div><strong>{user.name ?? "mittragen.ch User"}</strong><small>{user.email}</small></div></div>
-      <nav>
+      <nav aria-label="Vereinsverwaltung">
         <button className={workspaceSection === "overview" ? "active" : ""} onClick={() => setWorkspaceSection("overview")}>Übersicht</button>
         <button className={workspaceSection === "sponsors" ? "active" : ""} onClick={() => setWorkspaceSection("sponsors")}>Sponsoren</button>
         <button className={workspaceSection === "packages" ? "active" : ""} onClick={() => setWorkspaceSection("packages")}>Pakete</button>
@@ -467,6 +469,7 @@ function WorkspacePage({ user, setUser, onHome, onLogin, onSponsor, onPrototype:
         {workspace?.membership.permissions.includes("sponsors:write") && <button className={workspaceSection === "imports" ? "active" : ""} onClick={() => setWorkspaceSection("imports")}>Datenübernahme</button>}
         {workspace?.membership.permissions.includes("members:manage") && <button className={workspaceSection === "team" ? "active" : ""} onClick={() => setWorkspaceSection("team")}>Team</button>}
         <button className={workspaceSection === "settings" ? "active" : ""} onClick={() => setWorkspaceSection("settings")}>Organisation</button>
+        <button className={workspaceSection === "help" ? "active" : ""} aria-current={workspaceSection === "help" ? "page" : undefined} onClick={() => setWorkspaceSection("help")}>FAQ & Hilfe</button>
       </nav>
       <button className="workspace-logout" onClick={signOut}>Abmelden</button>
     </aside>
@@ -480,7 +483,8 @@ function WorkspacePage({ user, setUser, onHome, onLogin, onSponsor, onPrototype:
         </div>}
       </header>
 
-      {loading ? <div className="workspace-loading">Workspace wird geladen …</div>
+      {workspaceSection === "help" ? <WorkspaceHelp permissions={workspace?.membership.permissions ?? []} hasWorkspace={Boolean(workspace)} onOpenSection={setWorkspaceSection}/>
+        : loading ? <div className="workspace-loading">Workspace wird geladen …</div>
         : workspaceError ? <div className="workspace-error"><strong>Der Workspace konnte nicht geladen werden.</strong><p>{workspaceError}</p></div>
           : tenants.length === 0 ? <section className="onboarding-card"><div><p className="eyebrow">Schritt 1 von 3</p><h1>Organisation einrichten</h1><p>mittragen.ch erstellt einen isolierten Mandanten und weist Ihnen die Owner-Rolle zu.</p></div>{tenantForm}</section>
             : workspaceSection === "sponsors" && workspace ? <SponsorDirectory tenantId={selectedTenantId} canWrite={workspace.membership.permissions.includes("sponsors:write")} onChanged={() => { void reloadWorkspace(); }}/>

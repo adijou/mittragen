@@ -30,12 +30,12 @@ Die produktive Anwendung umfasst:
 - selbständiger Sponsorzugang nach Vertragsbestätigung: Konto erstellen oder anmelden, E-Mail bestätigen und den zugeordneten Space öffnen
 - Sponsor-Space mit Dokumenten, Kontakt- und Adresspflege, Website und Logo; Änderungen aktualisieren die Stammdaten und werden protokolliert
 - Logo-Vorschau, Logo-Filter und Logo-Verwaltung in der Administration
+- «FAQ & Hilfe» im Adminpanel mit durchsuchbaren Schritt-für-Schritt-Anleitungen für alle Verwaltungsbereiche
 - Schutz vor Kontoverwechslungen bei Sponsorlinks und persönlichen Aktivierungslinks
 - unveränderliches Ereignisprotokoll sowie Row-Level Security für Verträge und Nachweise
 - mandantenfähiges Event-/Matchball-Sponsoring mit Spielplan, direkter öffentlicher Anmeldung ohne Konto und Doppelbelegungsschutz
 - gebrandete A4-Matchblätter je Spiel aus dem zentralen Organisationslogo und der hinterlegten Farbpalette
 
-Die SMTP- und Template-Konfiguration für Identity ist in [`docs/email-delivery.md`](docs/email-delivery.md) dokumentiert. Secrets werden ausschliesslich in den geschützten Netlify-/Resend-Einstellungen gespeichert.
 - serverseitige Rollenvergabe, automatische Einladungsübernahme und Schutz der letzten Owner-Rolle
 - relationaler PostgreSQL-Kern via Netlify Database
 - serverseitige Rollenprüfung und erzwungene Row-Level Security für alle mandanteneigenen Tabellen
@@ -46,9 +46,15 @@ Die SMTP- und Template-Konfiguration für Identity ist in [`docs/email-delivery.
 - responsive Darstellung und zugängliche Basisinteraktionen
 - Netlify-Konfiguration für Continuous Deployment aus GitHub
 
+Die SMTP- und Template-Konfiguration für Identity ist in [`docs/email-delivery.md`](docs/email-delivery.md) dokumentiert. Secrets werden ausschliesslich in den geschützten Netlify-/Resend-Einstellungen gespeichert.
+
+Für die Pilotphase kann `REGISTRATION_NOTIFICATION_TO` eine interne Benachrichtigung nach erfolgreicher Kontoaktivierung einschalten. Der Hintergrundversand, die Produktionseinstellungen und die Behandlung von Wiederholungen sind in [`docs/registration-notifications.md`](docs/registration-notifications.md) beschrieben.
+
 Die Daten im öffentlichen Überführungs-Prototyp sind bewusst als Demo-Daten gekennzeichnet und bleiben im Browser gespeichert. Änderungen im geschützten Workspace werden dagegen produktiv und mandantengetrennt in PostgreSQL gespeichert. Ein Kampagnenversand erfolgt ausschliesslich nach einer ausdrücklichen Bestätigung im Adminbereich; Deployments lösen keine E-Mail aus.
 
 ## Lokal starten
+
+Die Hilfe ist im Workspace über «FAQ & Hilfe» erreichbar. Themenfilter und Volltextsuche durchsuchen Fragen, Schritte und Hinweise; berechtigte Teammitglieder können direkt zum beschriebenen Bereich wechseln. Die Inhalte stehen in `src/workspaceHelpContent.ts` und sollen bei Änderungen an Bedienabläufen mitgepflegt werden. Die Hilfe ist auch vor dem Anlegen einer Organisation verfügbar und lädt keine zusätzlichen Vereinsdaten.
 
 Voraussetzung: Node.js 22.12 oder neuer.
 

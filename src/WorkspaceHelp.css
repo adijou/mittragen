@@ -1,0 +1,50 @@
+.workspace-help { width: min(1180px, calc(100% - 64px)); margin: 40px auto 60px; }
+.workspace-help__heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; margin-bottom: 26px; }
+.workspace-help__heading h1 { margin: 0 0 10px; font-size: clamp(30px, 4vw, 42px); letter-spacing: -.04em; }
+.workspace-help__heading p { max-width: 650px; margin: 0; }
+.workspace-help__heading .eyebrow { margin-bottom: 9px; }
+.workspace-help__count { flex-shrink: 0; padding: 10px 14px; border-radius: 24px; background: var(--blue-soft); color: var(--blue-dark); font-size: 12px; font-weight: 700; }
+.workspace-help__filters { display: grid; grid-template-columns: minmax(0, 1fr) minmax(200px, .55fr); gap: 20px; padding: 24px; border: 1px solid var(--line); border-radius: 14px; background: #fff; }
+.workspace-help__filters label { display: grid; gap: 9px; min-width: 0; font-size: 13px; font-weight: 700; }
+.workspace-help__filters input, .workspace-help__filters select { width: 100%; min-width: 0; min-height: 46px; padding: 11px 13px; border: 1px solid var(--line-strong); border-radius: 8px; background: #fff; color: var(--navy); font: inherit; font-weight: 400; }
+.workspace-help :is(input, select, button, summary, a):focus-visible { outline: 3px solid var(--blue); outline-offset: 3px; }
+.workspace-help__result-bar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; margin: 14px 0 10px; }
+.workspace-help__result-bar p { margin: 0; font-size: 13px; }
+.workspace-help__permissions { margin: 0 0 24px; max-width: 850px; font-size: 13px; }
+.workspace-help__topics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; align-items: start; }
+.workspace-help__topic { min-width: 0; border: 1px solid var(--line); border-radius: 14px; background: #fff; overflow: hidden; }
+.workspace-help__topic > header { display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 12px; padding: 23px 24px; background: #f9fbfe; }
+.workspace-help__topic h2 { margin: 0 0 6px; font-size: 19px; letter-spacing: -.02em; }
+.workspace-help__topic header div > span { color: var(--ink-2); font-size: 12px; }
+.workspace-help__topic header button { margin: 0; padding: 0; text-align: left; font-size: 12px; }
+.workspace-help__article { border-top: 1px solid var(--line); }
+.workspace-help__article summary { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 19px 24px; cursor: pointer; list-style: none; font-size: 14px; font-weight: 700; line-height: 1.5; }
+.workspace-help__article summary::-webkit-details-marker { display: none; }
+.workspace-help__article summary:hover { background: var(--blue-soft); }
+.workspace-help__toggle { flex-shrink: 0; color: var(--blue); font-size: 21px; line-height: 1; }
+.workspace-help__article[open] .workspace-help__toggle { transform: rotate(45deg); }
+.workspace-help__article[open] summary { color: var(--blue-dark); }
+.workspace-help__answer { padding: 0 24px 24px; font-size: 14px; line-height: 1.7; overflow-wrap: anywhere; }
+.workspace-help__answer > p:first-child { margin-top: 0; }
+.workspace-help__answer ol { padding-left: 22px; margin: 16px 0; color: var(--ink-2); }
+.workspace-help__answer li { padding-left: 5px; margin-bottom: 12px; }
+.workspace-help__answer li::marker { color: var(--blue-dark); font-weight: 750; }
+.workspace-help__note { margin: 18px 0 0; padding: 14px 16px; border-left: 3px solid var(--gold); border-radius: 0 8px 8px 0; background: var(--gold-soft); font-size: 13px; }
+.workspace-help__empty { padding: 36px 28px; border: 1px dashed var(--line-strong); border-radius: 14px; background: #fff; }
+.workspace-help__empty h2 { margin: 0 0 8px; font-size: 21px; }
+.workspace-help__empty p { margin: 0; }
+.workspace-help__footer { margin-top: 28px; padding: 24px; border-radius: 14px; background: var(--blue-soft); font-size: 14px; }
+.workspace-help__footer p { margin: 7px 0 0; }
+.workspace-help__footer a { color: var(--blue-dark); text-underline-offset: 3px; }
+
+@media (max-width: 1100px) {
+  .workspace-help__heading { flex-direction: column; gap: 16px; }
+  .workspace-help__topics { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 720px) {
+  .workspace-help { width: calc(100% - 28px); margin-top: 28px; }
+  .workspace-help__filters { grid-template-columns: 1fr; padding: 20px; }
+  .workspace-help__topic > header, .workspace-help__article summary { padding: 18px 20px; }
+  .workspace-help__answer { padding: 0 20px 20px; }
+}

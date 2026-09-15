@@ -77,6 +77,7 @@ export function ProductSite() {
         <a href="#funktionen" onClick={() => setMenuOpen(false)}>Funktionen</a>
         <a href="#zusammenarbeit" onClick={() => setMenuOpen(false)}>Für Vereine</a>
         <a className="ps-header-contact" href="#pilot" onClick={() => setMenuOpen(false)}>Interessiert? <Icon name="arrow" size={16}/></a>
+        <a className="ps-header-login" href="/login" onClick={() => setMenuOpen(false)}>Login</a>
       </nav>
       <button className="ps-menu" aria-label={menuOpen ? "Menü schliessen" : "Menü öffnen"} aria-expanded={menuOpen} aria-controls="product-navigation" onClick={() => setMenuOpen(!menuOpen)}><span/><span/></button>
     </header>
