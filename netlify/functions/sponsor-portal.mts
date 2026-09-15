@@ -280,9 +280,13 @@ async function listSpaces(user: User) {
 }
 
 export default async (request: Request, context: Context) => {
-  const user = await requireUser();
-  if (isResponse(user)) return user;
-  if (!user.confirmedAt) return json({ error: "verified_email_required" }, 403);
+  const sessionUser = await requireUser();
+  if (isResponse(sessionUser)) return sessionUser;
+  const accessToken = context.cookies.get("nf_jwt")
+    ?? request.headers.get("authorization")?.match(/^Bearer\s+(\S+)$/i)?.[1];
+  const verified = await verifySponsorIdentity(sessionUser, accessToken, getIdentityConfig()?.url);
+  if (verified.error) return json({ error: verified.error, requestId: context.requestId }, verified.status);
+  const user = verified.user;
   const pathname = new URL(request.url).pathname;
   const logoMatch = pathname.match(logoRoute);
 
@@ -314,11 +318,7 @@ export default async (request: Request, context: Context) => {
     const invalidOrigin = verifyMutation(request);
     if (invalidOrigin) return invalidOrigin;
     try {
-      const accessToken = context.cookies.get("nf_jwt")
-        ?? request.headers.get("authorization")?.match(/^Bearer\s+(\S+)$/i)?.[1];
-      const verified = await verifySponsorIdentity(user, accessToken, getIdentityConfig()?.url);
-      if (verified.error) return json({ error: verified.error, requestId: context.requestId }, verified.status);
-      const result = await claimInvitations(verified.user);
+      const result = await claimInvitations(user);
       return "error" in result ? json({ error: result.error }, 422) : json(result);
     } catch (error) {
       console.error("sponsor_portal_claim_failed", { requestId: context.requestId, userId: user.id, error });
