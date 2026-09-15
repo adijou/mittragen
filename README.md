@@ -2,20 +2,14 @@
 
 **Unterstützung. Einfach weiter.**
 
-mittragen.ch ist das Schweizer Support-OS für Vereine, Events und Projekte. Die Plattform führt Unterstützungsbeziehungen durch ihren gesamten Lebenszyklus: vom Paket und Vertrag über Dokumente und Leistungserfüllung bis zur nächsten Veränderung.
+mittragen.ch unterstützt Schweizer Vereine bei der Organisation von Sponsoren, Paketen, Verträgen und Matchbällen. Jeder Verein verfügt über eigene Daten und Teamrollen; Sponsoren erhalten einen persönlichen Space. Der Einstieg für weitere Vereine erfolgt als begleiteter Pilot über [Digital Bell](https://digitalbell.ch/).
 
 ## Aktueller Stand
 
-Die produktive Anwendung setzt die Markenwelt von **mittragen.ch** konsequent um:
+Die produktive Anwendung umfasst:
 
-- öffentliche Startseite und Markenauftritt
-- Organisations-Dashboard mit Aufgaben, Kennzahlen und Übergangsstatus
-- Sponsor-Space mit Paketvorschlag, Vergleich, Rechnungen und Dokumenten
-- geführter Überführungsprozess mit Datenbasis, Mapping, Vorschlägen und Versandprüfung
-- sieben fiktive Testszenarien für Doppelsponsoren, Exklusivität, Laufzeit, Rechtsträger, Betragstreue, Sachleistungen und Standardmigration
-- drei Mapping-Simulationen mit dynamischer Wert- und Konfliktanzeige
-- persönliche Paketwahl, Alternative, Beratung oder Ablehnung ohne Sackgasse
-- lokale Status-Persistenz und Audit-Protokoll für den vollständigen Prototyp-Test
+- öffentliche Produktseite mit Funktionsübersicht, Beispielansichten für Verein und Sponsor, Mehrvereinsverwaltung, Pilot-Einstieg und Kontakt zu Digital Bell
+- getrennte Organisationsbereiche mit Teamrollen und eigenem Markenauftritt
 - produktiver Zugang mit Netlify Identity: Login, Registrierung, Bestätigung, Wiederherstellung und Einladungsannahme
 - Self-Service-Onboarding für neue Klubs, Vereine, Events und Projekte
 - verständliche Organisationstypen mit «Sportklub» und «Verein / Organisation»
@@ -34,7 +28,9 @@ Die produktive Anwendung setzt die Markenwelt von **mittragen.ch** konsequent um
 - gebrandete, durchsuchbare Vertrags-PDFs aus einem unveränderlichen Paket- und Stammdatensnapshot
 - protokollierte Klickbestätigung im Sponsorbereich mit Identität, E-Mail, Funktion, Zeitpunkt und Dokument-Fingerabdruck
 - selbständiger Sponsorzugang nach Vertragsbestätigung: Konto erstellen oder anmelden, E-Mail bestätigen und den zugeordneten Space öffnen
-- Sponsor-Space mit den Bereichen Dokumente, Adresse und Logo; Adressänderungen aktualisieren ausschliesslich die Stammdaten und werden protokolliert
+- Sponsor-Space mit Dokumenten, Kontakt- und Adresspflege, Website und Logo; Änderungen aktualisieren die Stammdaten und werden protokolliert
+- Logo-Vorschau, Logo-Filter und Logo-Verwaltung in der Administration
+- Schutz vor Kontoverwechslungen bei Sponsorlinks und persönlichen Aktivierungslinks
 - unveränderliches Ereignisprotokoll sowie Row-Level Security für Verträge und Nachweise
 - mandantenfähiges Event-/Matchball-Sponsoring mit Spielplan, direkter öffentlicher Anmeldung ohne Konto und Doppelbelegungsschutz
 - gebrandete A4-Matchblätter je Spiel aus dem zentralen Organisationslogo und der hinterlegten Farbpalette
@@ -107,11 +103,9 @@ Der Pflichtenheft-Schritt «Klickbarer Prototyp des Sponsor-Überführungswegs m
 
 Netlify Identity ist im Projekt aktiviert. Die Datenbank und Migrationen werden durch `@netlify/database` beim Deploy bereitgestellt.
 
-Priorisierte nächste Schritte:
+Der [Pilot-Rollout-Plan](docs/pilot-rollout.md) unterscheidet die Freigabe für begleitete Pilotvereine von den offenen Anforderungen des vollständigen SaaS-Erstreleases. Vor weiteren Piloten stehen die Abnahme mit zwei Vereinen, vollständige Login-/Mailtests, ein wiederholbarer Einrichtungsablauf, Entzug von Zugängen sowie Betrieb und Wiederherstellung im Vordergrund.
 
-1. Rechnungsübersicht und Zahlungsstatus für Sponsoren ergänzen.
-2. Dokumentablage, Versionierung und geschützte Downloads ausbauen.
-3. Zahlungs- und Signaturprovider über austauschbare Adapter anbinden.
+Rechnungsübersicht, Zahlungsstatus, allgemeine Dokumentablage, weitere Leistungserfüllung, Verlängerungen sowie Tarifwahl und Plattform-Abrechnung sind noch auszubauen. Die öffentliche Produktseite kennzeichnet den Pilotumfang und stellt diese Funktionen nicht als bereits verfügbar dar.
 
 Der aktuelle Zugang nach Vertragsunterzeichnung und die Abgrenzung zwischen Stammdaten und Vertragsstand sind in [`docs/sponsor-space.md`](docs/sponsor-space.md) beschrieben.
 

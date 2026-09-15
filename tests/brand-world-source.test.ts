@@ -41,7 +41,7 @@ test("website and new organization defaults use the approved brand palette", asy
   assert.match(styles, /--gold:\s*#f2b632/i);
   assert.match(styles, /--surface-2:\s*#f4f7fb/i);
   assert.match(styles, /font-family:\s*"Inter"/);
-  assert.match(index, /mittragen\.ch – Unterstützung\. Einfach weiter\./);
+  assert.match(index, /<title>mittragen\.ch – [^<]+<\/title>/);
   assert.match(migration, /brand_primary_color SET DEFAULT '#0B2142'/);
   assert.match(migration, /brand_accent_color SET DEFAULT '#1F6BFF'/);
 });

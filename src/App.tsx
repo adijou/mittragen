@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { ProductSite } from "./ProductSite";
 import { ProductiveAccess } from "./ProductiveAccess";
 import { identityCallbackKind } from "./identityFeedback";
 import { SponsorPortal } from "./SponsorPortal";
@@ -190,40 +191,6 @@ function Status({ tone, children }: { tone: Tone; children: React.ReactNode }) {
   return <span className={`status status--${tone}`}>{children}</span>;
 }
 
-function PublicHeader({ navigate }: { navigate: (route: Route) => void }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <header className="public-header">
-      <button className="brand-button" onClick={() => navigate("/")} aria-label="Zur Startseite"><Brand/></button>
-      <nav className={`public-nav ${open ? "public-nav--open" : ""}`} aria-label="Hauptnavigation">
-        <button onClick={() => { navigate("/"); setOpen(false); }}>Produkt</button>
-        <button onClick={() => { navigate("/ueberfuehren"); setOpen(false); }}>Überführen</button>
-        <button onClick={() => { navigate("/"); setOpen(false); }}>Preise</button>
-        <button onClick={() => { navigate("/login"); setOpen(false); }}>Login</button>
-      </nav>
-      <div className="public-header__actions">
-        <Button onClick={() => navigate("/admin")}>Prototyp öffnen</Button>
-        <button className="menu-button" aria-label="Menü öffnen" aria-expanded={open} onClick={() => setOpen(!open)}>
-          <span/><span/><span/>
-        </button>
-      </div>
-    </header>
-  );
-}
-
-const kpis = [
-  { label: "Aktive Unterstützende", value: "24", detail: "+3 seit letzter Saison", tone: "green" as const },
-  { label: "Jährliche Beiträge", value: "CHF 286’000", detail: "+12% zum Vorjahr", tone: "green" as const },
-  { label: "Offene Rechnungen", value: "3", detail: "CHF 12’400", tone: "red" as const },
-  { label: "Verträge im Übergang", value: "5", detail: "in Bearbeitung", tone: "blue" as const },
-];
-
-const tasks = [
-  { title: "Vorschlag für Bergbau AG prüfen", detail: "Unterstützung Gold · fällig heute", status: "Dringend", tone: "red" as const },
-  { title: "Vertrag mit Solartec gegenzeichnen", detail: "Unterstützung Silber · fällig in 3 Tagen", status: "Offen", tone: "blue" as const },
-  { title: "Rechnung an Fischer & Partner", detail: "CHF 5’000 · fällig in 5 Tagen", status: "Offen", tone: "gold" as const },
-];
-
 const initialSponsors: TransitionSponsor[] = [
   {
     id: "bergbau",
@@ -350,20 +317,6 @@ const initialAuditEvents: AuditEvent[] = [
   { id: "audit-3", time: "2026-09-08T17:45:00.000Z", action: "Vorschlag freigegeben", detail: "Fischer & Partner · Unterstützung Silber" },
 ];
 
-function MetricCards({ compact = false }: { compact?: boolean }) {
-  return (
-    <div className={`metrics ${compact ? "metrics--compact" : ""}`}>
-      {kpis.map((item) => (
-        <article className="metric" key={item.label}>
-          <span className="metric__label">{item.label}</span>
-          <strong>{item.value}</strong>
-          <span className={`metric__detail metric__detail--${item.tone}`}>{item.detail}</span>
-        </article>
-      ))}
-    </div>
-  );
-}
-
 function ProcessBar({ active = 1 }: { active?: number }) {
   const steps = [
     { title: "Bisher", detail: "Aktuelles Engagement" },
@@ -379,80 +332,6 @@ function ProcessBar({ active = 1 }: { active?: number }) {
         </li>
       ))}
     </ol>
-  );
-}
-
-function DashboardPreview({ navigate }: { navigate: (route: Route) => void }) {
-  return (
-    <div className="dashboard-preview" aria-label="Vorschau der Mittragen-Übersicht">
-      <aside className="preview-sidebar">
-        <Brand compact/>
-        <div className="org-select">FC Alpenblick <span>⌄</span></div>
-        {["Übersicht", "Unterstützende", "Pakete", "Verträge", "Rechnungen", "Überführen", "Berichte"].map((item, index) => (
-          <div className={`preview-nav-item ${index === 0 ? "preview-nav-item--active" : ""}`} key={item}>{item}</div>
-        ))}
-      </aside>
-      <div className="preview-main">
-        <div className="preview-topline"><div><small>Willkommen zurück</small><h3>Übersicht</h3></div><span className="season-chip">Saison 2027/28⌄</span></div>
-        <MetricCards compact/>
-        <div className="preview-section-title"><strong>Laufende Überführungen</strong><button onClick={() => navigate("/ueberfuehren")}>Alle anzeigen <Icon name="arrow" size={14}/></button></div>
-        <ProcessBar/>
-        <div className="preview-grid">
-          <section className="mini-panel">
-            <div className="preview-section-title"><strong>Aktuelle Aufgaben</strong><span>Alle anzeigen</span></div>
-            {tasks.map((task) => <div className="mini-task" key={task.title}><i className={`dot dot--${task.tone}`}/><div><strong>{task.title}</strong><small>{task.detail}</small></div><Status tone={task.tone}>{task.status}</Status></div>)}
-          </section>
-          <section className="mini-panel">
-            <div className="preview-section-title"><strong>Beiträge nach Paket</strong><span>2027/28</span></div>
-            <div className="bars">
-              {[{n:"Gold",h:82,v:"120’000"},{n:"Silber",h:62,v:"86’000"},{n:"Bronze",h:44,v:"52’000"},{n:"Classic",h:27,v:"28’000"}].map((bar) => <div className="bar" key={bar.n}><small>{bar.v}</small><i style={{height:`${bar.h}%`}}/><span>{bar.n}</span></div>)}
-            </div>
-          </section>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function HomePage({ navigate }: { navigate: (route: Route) => void }) {
-  return (
-    <div className="public-page">
-      <PublicHeader navigate={navigate}/>
-      <main>
-        <section className="hero shell">
-          <div className="hero__copy">
-            <p className="eyebrow">Das Support-OS für Vereine, Events und Projekte.</p>
-            <h1>Unterstützung.<br/><span>Einfach weiter.</span></h1>
-            <p className="lead">Mittragen verbindet Gönner, Pakete, Verträge, Rechnungen und Veränderungen in einem klaren Prozess.</p>
-            <div className="button-row"><Button onClick={() => navigate("/admin")} icon="arrow">Prototyp öffnen</Button><Button variant="secondary" onClick={() => navigate("/ueberfuehren")}>Überführung ansehen</Button></div>
-            <div className="proof-row"><span><Icon name="check" size={16}/> Schnell eingeführt</span><span><Icon name="check" size={16}/> Für Teams jeder Grösse</span><span><Icon name="check" size={16}/> Entwickelt für die Schweiz</span></div>
-          </div>
-          <div className="hero__product"><DashboardPreview navigate={navigate}/></div>
-        </section>
-
-        <section className="support-strip">
-          <div className="shell support-strip__inner">
-            <p className="eyebrow">Klarer Prozess. Starker Rückhalt.</p>
-            <h2>Vom bisherigen Engagement zur passenden Unterstützung – nachvollziehbar und gemeinsam.</h2>
-            <div className="support-cards">
-              <article><span className="feature-icon"><Icon name="users"/></span><h3>Ein Space für Unterstützende</h3><p>Pläne, Rechnungen, Dokumente, Kontaktdaten und Logo an einem verständlichen Ort.</p><button onClick={() => navigate("/space")}>Sponsor-Space öffnen <Icon name="arrow" size={15}/></button></article>
-              <article><span className="feature-icon"><Icon name="transfer"/></span><h3>Veränderung ohne Sackgasse</h3><p>Persönliche Vorschläge, echte Alternativen, Beratung und Bestätigung in einem geführten Weg.</p><button onClick={() => navigate("/ueberfuehren")}>Überführung ansehen <Icon name="arrow" size={15}/></button></article>
-              <article><span className="feature-icon"><Icon name="lock"/></span><h3>Jede Aktion nachvollziehbar</h3><p>Verträge, Zahlungen, Versände und Änderungen erzeugen einen klaren Audit-Trail.</p><button onClick={() => navigate("/admin")}>Backoffice ansehen <Icon name="arrow" size={15}/></button></article>
-            </div>
-          </div>
-        </section>
-
-        <section className="statement shell">
-          <div><p className="eyebrow">Sponsor first. Change by design.</p><h2>Eine Plattform, die Beziehungen durch Veränderung trägt.</h2></div>
-          <div className="statement__stats"><div><strong>1</strong><span>gemeinsame Datenbasis</span></div><div><strong>4</strong><span>klare Wahlmöglichkeiten</span></div><div><strong>100%</strong><span>mobil nutzbar</span></div></div>
-        </section>
-
-        <section className="cta-band">
-          <div className="shell cta-band__inner"><div><p className="eyebrow">Der erste Produkt-Slice ist bereit.</p><h2>Erlebe den Ablauf aus beiden Perspektiven.</h2></div><div className="button-row"><Button onClick={() => navigate("/admin")}>Backoffice öffnen</Button><Button variant="secondary" onClick={() => navigate("/space")}>Sponsor-Space öffnen</Button></div></div>
-        </section>
-      </main>
-      <footer className="public-footer shell"><Brand compact/><span>Das Support-OS für Vereine, Events und Projekte.</span><span>Made in Switzerland.</span></footer>
-    </div>
   );
 }
 
@@ -732,5 +611,5 @@ export default function App() {
   if (route === "/admin") return <AdminPage navigate={navigate} sponsors={sponsors} auditEvents={auditEvents}/>;
   if (route === "/space") return <SponsorSpace navigate={navigate} sponsors={sponsors} updateSponsor={updateSponsor} addAudit={addAudit}/>;
   if (route === "/ueberfuehren") return <TransitionPage navigate={navigate} sponsors={sponsors} updateSponsor={updateSponsor} addAudit={addAudit} resetSponsors={resetSponsors}/>;
-  return <HomePage navigate={navigate}/>;
+  return <ProductSite/>;
 }
