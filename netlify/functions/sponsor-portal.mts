@@ -8,6 +8,7 @@ import { parseSponsorDecision } from "./_shared/sponsor-portal-input.ts";
 import { claimContractSpaces, parseSponsorAddress, updateSponsorAddress, parseSponsorContact, updateSponsorContact } from "./_shared/sponsor-self-service.ts";
 import { claimSponsorInvitations } from "./_shared/sponsor-access-invitations.ts";
 import { verifySponsorIdentity } from "./_shared/sponsor-identity.ts";
+import { readSponsorTarget, type SponsorTarget } from "../../shared/sponsor-space-link.ts";
 
 type AccessRow = { tenant_id: string; sponsor_id: string };
 
@@ -25,12 +26,18 @@ function verifyMutation(request: Request): Response | null {
   }
 }
 
-async function claimInvitations(user: User) {
+async function claimInvitations(user: User, target?: SponsorTarget) {
   const email = user.email?.trim().toLowerCase();
   if (!email || !user.confirmedAt) return { error: "verified_email_required" as const };
   const claimed = await withSession(user.id, null, async (client) => {
     let count = await claimSponsorInvitations(client, user);
     count += await claimContractSpaces(client, user);
+    if (target) {
+      const access = await client.query(`SELECT id FROM sponsor_portal_access
+        WHERE identity_user_id = $1 AND tenant_id = $2 AND sponsor_id = $3 LIMIT 1`,
+      [user.id, target.tenantId, target.sponsorId]);
+      if (!access.rows[0]) return { error: "sponsor_link_access_denied" as const };
+    }
     const access = await client.query<{ present: boolean; workspace: boolean }>(`SELECT
       EXISTS (SELECT 1 FROM sponsor_portal_access WHERE identity_user_id = $1) AS present,
       EXISTS (SELECT 1 FROM tenant_memberships WHERE identity_user_id = $1) AS workspace`, [user.id]);
@@ -143,7 +150,7 @@ async function loadSpace(client: DatabaseClient, tenantId: string, sponsorId: st
   };
 }
 
-async function listSpaces(user: User) {
+async function listSpaces(user: User, target?: SponsorTarget) {
   return withSession(user.id, null, async (client) => {
     const accesses = await client.query<AccessRow>(`
       SELECT tenant_id, sponsor_id FROM sponsor_portal_access
@@ -151,6 +158,7 @@ async function listSpaces(user: User) {
     `, [user.id]);
     const spaces = [];
     for (const access of accesses.rows) {
+      if (target && (access.tenant_id !== target.tenantId || access.sponsor_id !== target.sponsorId)) continue;
       await client.query("SELECT set_config('app.tenant_id', $1, true)", [access.tenant_id]);
       const space = await loadSpace(client, access.tenant_id, access.sponsor_id, user.id);
       if (space) spaces.push(space);
@@ -160,7 +168,7 @@ async function listSpaces(user: User) {
 }
 
 export default async (request: Request, context: Context) => {
-  const sessionUser = await requireUser();
+  const sessionUser = await requireUser(request);
   if (isResponse(sessionUser)) return sessionUser;
   const accessToken = context.cookies.get("nf_jwt")
     ?? request.headers.get("authorization")?.match(/^Bearer\s+(\S+)$/i)?.[1];
@@ -168,6 +176,7 @@ export default async (request: Request, context: Context) => {
   if (verified.error) return json({ error: verified.error, requestId: context.requestId }, verified.status);
   const user = verified.user;
   const pathname = new URL(request.url).pathname;
+  if (pathname === "/api/sponsor-portal/session" && request.method === "GET") return json({ id: user.id });
   const logoMatch = pathname.match(logoRoute);
 
   if (logoMatch) return handleSponsorLogo(request, context, user, logoMatch[1], logoMatch[2]);
@@ -218,9 +227,14 @@ export default async (request: Request, context: Context) => {
     if (request.method !== "POST") return json({ error: "method_not_allowed" }, 405);
     const invalidOrigin = verifyMutation(request);
     if (invalidOrigin) return invalidOrigin;
+    const body = await request.json().catch(() => ({}));
+    const target = body?.target as SponsorTarget | undefined;
+    if (target !== undefined && (!target || !isUuid(target.tenantId) || !isUuid(target.sponsorId))) return json({ error: "invalid_sponsor_link" }, 422);
+    if (target) { target.tenantId = target.tenantId.toLowerCase(); target.sponsorId = target.sponsorId.toLowerCase(); }
+    if (body?.expectedEmail !== undefined && (typeof body.expectedEmail !== "string" || body.expectedEmail.trim().toLowerCase() !== user.email?.trim().toLowerCase())) return json({ error: "sponsor_recipient_mismatch" }, 403);
     try {
-      const result = await claimInvitations(user);
-      return "error" in result ? json({ error: result.error }, 422) : json(result);
+      const result = await claimInvitations(user, target);
+      return "error" in result ? json({ error: result.error }, result.error === "sponsor_link_access_denied" ? 403 : 422) : json(result);
     } catch (error) {
       console.error("sponsor_portal_claim_failed", { requestId: context.requestId, userId: user.id, error });
       return json({ error: "sponsor_portal_claim_failed", requestId: context.requestId }, 500);
@@ -228,8 +242,12 @@ export default async (request: Request, context: Context) => {
   }
 
   if (pathname === "/api/sponsor-portal" && request.method === "GET") {
+    const target = readSponsorTarget(new URL(request.url).search);
+    if (target && (!isUuid(target.tenantId) || !isUuid(target.sponsorId))) return json({ error: "invalid_sponsor_link" }, 422);
     try {
-      return json({ spaces: await listSpaces(user) });
+      const spaces = await listSpaces(user, target);
+      if (target && !spaces.length) return json({ error: "sponsor_link_access_denied" }, 403);
+      return json({ spaces });
     } catch (error) {
       console.error("sponsor_portal_load_failed", { requestId: context.requestId, userId: user.id, error });
       return json({ error: "sponsor_portal_load_failed", requestId: context.requestId }, 500);
@@ -328,7 +346,7 @@ export default async (request: Request, context: Context) => {
 export const config: Config = {
   path: [
     "/api/sponsor-portal",
-    "/api/sponsor-portal/claim",
+    "/api/sponsor-portal/claim", "/api/sponsor-portal/session",
     "/api/sponsor-portal/:tenantId/:transitionSponsorId/respond",
     "/api/sponsor-portal/:tenantId/:sponsorId/logo",
     "/api/sponsor-portal/:tenantId/:sponsorId/address",

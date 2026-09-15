@@ -1,4 +1,5 @@
-type SponsorEntry = { email?: string; name?: string; mode: "login" | "signup" };
+import type { SponsorTarget } from "../shared/sponsor-space-link.ts";
+type SponsorEntry = { email?: string; name?: string; target?: SponsorTarget; mode: "login" | "signup" };
 const entryKey = "mittragen-sponsor-entry";
 const targetKey = "mittragen-login-target";
 
@@ -20,6 +21,10 @@ export function readSponsorEntry(storage: Storage = sessionStorage): SponsorEntr
       mode: entry?.mode === "signup" ? "signup" : "login",
       email: typeof entry?.email === "string" ? entry.email.slice(0, 320) : undefined,
       name: typeof entry?.name === "string" ? entry.name.slice(0, 160) : undefined,
+      ...(entry?.target ? { target: {
+        tenantId: String(entry.target.tenantId ?? "").slice(0, 100),
+        sponsorId: String(entry.target.sponsorId ?? "").slice(0, 100),
+      } } : {}),
     };
   } catch { return { mode: "login" }; }
 }

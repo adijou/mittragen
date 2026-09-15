@@ -12,7 +12,8 @@ const inputValues = (contact: SponsorContact) => Object.fromEntries(
   sponsorContactKeys.map((field) => [field, contact[field] ?? ""]),
 ) as Record<SponsorContactKey, string>;
 
-export function SponsorContactForm({ tenantId, sponsorId, contact, loginEmail, disabled, onBusyChange, onSaved }: {
+export function SponsorContactForm({ fetcher = fetch, tenantId, sponsorId, contact, loginEmail, disabled, onBusyChange, onSaved }: {
+  fetcher?: typeof fetch;
   tenantId: string; sponsorId: string; contact: SponsorContact; loginEmail: string; disabled: boolean;
   onBusyChange: (busy: boolean) => void; onSaved: (contact: SponsorContact) => void;
 }) {
@@ -33,7 +34,7 @@ export function SponsorContactForm({ tenantId, sponsorId, contact, loginEmail, d
     event.preventDefault();
     setSaving(true); onBusyChange(true); setError(""); setMessage("");
     try {
-      const response = await fetch(`/api/sponsor-portal/${tenantId}/${sponsorId}/contact`, {
+      const response = await fetcher(`/api/sponsor-portal/${tenantId}/${sponsorId}/contact`, {
         method: "PATCH", headers: { "Content-Type": "application/json" }, signal: AbortSignal.timeout(20000),
         body: JSON.stringify({ ...values, original: contact }),
       });

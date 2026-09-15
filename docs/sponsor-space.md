@@ -10,6 +10,16 @@ Sponsorinnen und Sponsoren benötigen einen geschützten Login für ihren Space,
 
 Netlify Identity kann serverseitig ein verkürztes, geprüftes JWT-Benutzerobjekt ohne `confirmedAt` liefern. In diesem Fall liest der Claim-Endpunkt das Identity-Profil über `/user` mit dem eigenen Sitzungstoken des angemeldeten Kontos. Benutzer-ID und E-Mail müssen übereinstimmen, und das Profil muss `confirmed_at` enthalten. Ein Operator-Token und vom Benutzer änderbare Metadaten werden dafür nicht verwendet. Eine nicht erreichbare Identity-Prüfung wird getrennt von einer tatsächlich unbestätigten E-Mail behandelt.
 
+## Schutz vor Kontoverwechslungen
+
+Neue Sponsor-Einladungen, Vertragszugänge und Überführungsmails verweisen auf eine bestimmte Kombination aus Organisation und Sponsor. Diese IDs sind ausschliesslich Navigationshinweise. Die API prüft nach wie vor die verifizierte Identität und die tatsächliche Zugangsberechtigung. Ein anderer Sponsor-Space wird bei fehlendem Zugriff nicht als Ersatz geöffnet. Auch bei mehreren eigenen Sponsorings wird nur der im Link bezeichnete Space geladen. Der Weg von einer bestätigten Einmallink-Unterzeichnung zur Anmeldung übernimmt dieselbe Zielzuordnung.
+
+Bereits verschickte allgemeine `/sponsor`-Links enthalten keine Empfängerzuordnung. Bei einem bestehenden Login zeigt die Seite deshalb zuerst das Konto und verlangt eine ausdrückliche Auswahl: mit diesem Konto fortfahren oder mit einem anderen Konto anmelden. Vor dieser Auswahl werden keine Sponsordaten geladen.
+
+Bei Identity-Bestätigungs-, Einladungs- und Wiederherstellungslinks wird eine vorhandene Anmeldung zuerst angezeigt. **Abmelden und Link prüfen** beendet die Sitzung, bevor der persönliche Token verarbeitet wird. Abbrechen lässt die bisherige Anmeldung bestehen. Fehlgeschlagene und noch nicht angenommene Einladungen übernehmen keinen vorher angemeldeten Benutzer.
+
+Portal-Anfragen, Änderungen, Logoabrufe und Vertragsdownloads prüfen zusätzlich, ob das serverseitig angemeldete Konto noch dem angezeigten Konto entspricht. Bei einem Kontowechsel werden geladene Daten verworfen; verspätete Antworten stellen sie nicht wieder her. Beim Zurückkehren aus einem anderen Tab wird die Sitzung erneut geprüft. Browsernavigation zu einem neuen Link startet die Zugangsprüfung erneut.
+
 ## Bestehenden Sponsor aus der Administration einladen
 
 1. Im Workspace **Sponsoren** öffnen und beim gewünschten Sponsor **Zugang einrichten** wählen. Derselbe Bereich steht im Bearbeitungsformular unter den Stammdaten bereit.
@@ -65,3 +75,5 @@ Prüfstand 15. September 2026: 197 Tests und der Produktions-Build erfolgreich. 
 Die zusätzliche Kontaktpflege ist mit realen Migrationen und RLS geprüft: Speichern und Leeren optionaler Felder, fremde Sponsoren, parallele Änderungen, Audit-Nachweis sowie unveränderte Verträge, Einladungen und Zugangsrechte. Die Handler-Tests prüfen zudem die Netlify-Routenregistrierung, die Herkunft der Anfrage und die Eingabeprüfung. Logo-Tests verwenden die echte API und SQL mit RLS sowie einen isolierten Blob-Speicher: Leserechte, Schreibrechte, fremde Organisationen, gemeinsamer Stand, Ersetzen, Entfernen, Audit und Fehler beim Upload sind abgedeckt.
 
 `npm run build` prüft Frontend und Serverfunktionen mit TypeScript und erzeugt den Produktions-Build. Vor der produktiven Abnahme ist zusätzlich der echte Identity-E-Mail-Rückweg zu prüfen; die lokalen Datenbanktests versenden keine E-Mails.
+
+Prüfstand der Sicherheitskorrektur: 210 Tests und Produktions-Build erfolgreich. Die Sicherheitskorrektur wird zusätzlich mit zwei getrennten Sponsoren, echten PostgreSQL-RLS-Regeln und dem tatsächlichen API-Handler geprüft: falsches Konto, gültige Einladung, mehrere eigene Spaces, unvollständige Links, falsche Organisationszuordnung, abweichende Empfängeradresse und Kontoänderung zwischen Ansicht und Anfrage. Callback-Tests sichern die ausdrückliche Abmeldung vor Tokenverarbeitung und die einmalige Einlösung ab; Tests für verspätete Antworten sichern das Verwerfen alter Daten. Die lokale Browser-Vorschau ist in dieser Umgebung gesperrt; ein vollständiger Browserdurchlauf dieser Korrektur ist dadurch lokal nicht bestätigt.

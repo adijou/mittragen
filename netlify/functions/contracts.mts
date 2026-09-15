@@ -1,3 +1,4 @@
+import { sponsorSpacePath } from "../../shared/sponsor-space-link.ts";
 import { createHash, randomBytes } from "node:crypto";
 import type { Config, Context } from "@netlify/functions";
 import { AuthError, verifyRequestOrigin } from "@netlify/identity";
@@ -355,7 +356,7 @@ function pdfData(contract: ContractRow, brand: OrganizationPdfBrand): ContractPd
 }
 
 export default async (request: Request, context: Context) => {
-  const user = await requireUser();
+  const user = await requireUser(request);
   if (isResponse(user)) return user;
   const pathname = new URL(request.url).pathname;
   const match = routes.settings.exec(pathname) ?? routes.legacyCreate.exec(pathname) ?? routes.release.exec(pathname)
@@ -964,7 +965,7 @@ export default async (request: Request, context: Context) => {
       if (!prepared) return json({ error: "contract_not_released" }, 409);
 
       const confirmationUrl = mode === "account"
-        ? absoluteSiteUrl(request, "/sponsor")
+        ? absoluteSiteUrl(request, sponsorSpacePath({ tenantId, sponsorId: authorized.contract.sponsor_id }))
         : absoluteSiteUrl(request, `/unterzeichnen?token=${encodeURIComponent(rawToken!)}`);
       let resendEmailId: string;
       try {
@@ -1126,7 +1127,7 @@ export default async (request: Request, context: Context) => {
           signerName: signing.signer_name,
           organizationName: authorized.tenantName,
           sponsorName: authorized.detail.contract.sponsor_snapshot.legalName,
-          portalUrl: absoluteSiteUrl(request, "/sponsor"),
+          portalUrl: absoluteSiteUrl(request, sponsorSpacePath({ tenantId, sponsorId: authorized.detail.contract.sponsor_id })),
         }, contractEmailConfig());
         delivery = "existing_user";
       }

@@ -1,5 +1,6 @@
 import type { CallbackResult, User } from "@netlify/identity";
 import { shouldOpenSponsorSpace } from "./sponsorAccess.ts";
+import type { SponsorTarget } from "../shared/sponsor-space-link.ts";
 
 export type IdentityCallbackKind = "confirmation" | "invite" | "recovery" | "oauth" | "email_change" | "error";
 
@@ -55,6 +56,9 @@ export function emailConfirmationRequired(reason: unknown) {
 export function identityErrorMessage(reason: unknown, context: IdentityCallbackKind | "login" | "signup" | "initialization" = "login") {
   const message = reason instanceof Error ? reason.message.toLowerCase() : "";
   const status = reason && typeof reason === "object" && "status" in reason ? reason.status : undefined;
+  if (message === "sponsor_account_changed") return "Das angemeldete Konto hat gewechselt. Bitte melden Sie sich mit der Empfängeradresse des Links an.";
+  if (message === "sponsor_link_access_denied" || message === "sponsor_recipient_mismatch") return "Dieser Sponsor-Link kann mit dem angemeldeten Konto nicht geöffnet werden. Bitte melden Sie sich mit der Empfängeradresse an.";
+  if (message === "invalid_sponsor_link") return "Dieser Sponsor-Link ist unvollständig oder ungültig. Bitte verwenden Sie den vollständigen Link aus Ihrer Einladung.";
   if (message === "verified_email_required") return "Bitte bestätigen Sie zuerst Ihre E-Mail-Adresse über den Link in Ihrer Bestätigungsmail.";
   if (message === "authentication_required") return "Ihre Sitzung ist abgelaufen. Bitte melden Sie sich erneut an.";
   if (message === "access_check_failed" || message === "identity_verification_unavailable") {
@@ -87,26 +91,38 @@ export function identityErrorMessage(reason: unknown, context: IdentityCallbackK
 
 type IdentityInitialization = { callback: CallbackResult | null; user: User | null };
 
+export class IdentityAccountSwitchRequired extends Error {
+  currentUser: User;
+  constructor(currentUser: User) { super("identity_account_switch_required"); this.currentUser = currentUser; }
+}
+
 // React StrictMode mounts effects twice. The same one-time token must be redeemed once.
 export function createIdentityInitializer(dependencies: {
   checkSettings: () => Promise<void>;
   handleCallback: () => Promise<CallbackResult | null>;
   refreshSession: () => Promise<unknown>;
   getUser: () => Promise<User | null>;
+  callbackKind?: IdentityCallbackKind | null;
 }) {
   let pending: Promise<IdentityInitialization> | undefined;
   return () => pending ??= (async () => {
     await dependencies.checkSettings();
+    if (["confirmation", "invite", "recovery", "oauth"].includes(dependencies.callbackKind ?? "")) {
+      const existing = await dependencies.getUser();
+      if (existing) throw new IdentityAccountSwitchRequired(existing);
+    }
     const callback = await dependencies.handleCallback();
     if (callback?.type === "confirmation" && !confirmedEmailCallback(callback)) throw new Error("email_confirmation_failed");
     if (!callback) await dependencies.refreshSession();
-    return { callback, user: callback?.user ?? await dependencies.getUser() };
+    return { callback, user: callback ? callback.user : await dependencies.getUser() };
   })();
 }
 
-export async function confirmedAccessDestination(preferSponsor: boolean, fetcher: typeof fetch = fetch): Promise<"sponsor" | "workspace"> {
+export async function confirmedAccessDestination(preferSponsor: boolean, fetcher: typeof fetch = fetch,
+  context: { accountId?: string; email?: string; target?: SponsorTarget } = {}): Promise<"sponsor" | "workspace"> {
   const response = await fetcher("/api/sponsor-portal/claim", {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+    method: "POST", headers: { "Content-Type": "application/json", ...(context.accountId ? { "X-Sponsor-Account": context.accountId } : {}) },
+    body: JSON.stringify({ target: context.target, expectedEmail: context.email }),
     signal: AbortSignal.timeout(12000),
   });
   if (!response.ok) {

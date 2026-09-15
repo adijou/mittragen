@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ProductiveAccess } from "./ProductiveAccess";
 import { identityCallbackKind } from "./identityFeedback";
 import { SponsorPortal } from "./SponsorPortal";
@@ -103,20 +103,29 @@ const routeFromPath = (): Route => {
 
 function useRoute() {
   const [route, setRoute] = useState<Route>(routeFromPath);
+  const [entryVersion, setEntryVersion] = useState(0);
+  const entryUrl = useRef(window.location.href);
 
   useEffect(() => {
-    const onPopState = () => setRoute(routeFromPath());
+    const onPopState = () => {
+      if (entryUrl.current === window.location.href) return;
+      entryUrl.current = window.location.href;
+      setRoute(routeFromPath()); setEntryVersion((value) => value + 1);
+    };
     window.addEventListener("popstate", onPopState);
-    return () => window.removeEventListener("popstate", onPopState);
+    window.addEventListener("hashchange", onPopState);
+    return () => { window.removeEventListener("popstate", onPopState); window.removeEventListener("hashchange", onPopState); };
   }, []);
 
   const navigate = (next: Route) => {
     window.history.pushState({}, "", next);
+    entryUrl.current = window.location.href;
     setRoute(next);
+    setEntryVersion((value) => value + 1);
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
-  return { route, navigate };
+  return { route, navigate, entryVersion };
 }
 
 function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
@@ -698,7 +707,7 @@ function TransitionPage({ navigate, sponsors, updateSponsor, addAudit, resetSpon
 }
 
 export default function App() {
-  const { route, navigate } = useRoute();
+  const { route, navigate, entryVersion } = useRoute();
   const [sponsors, setSponsors] = usePersistentState<TransitionSponsor[]>("mittragen-transition-sponsors-v2", initialSponsors);
   const [auditEvents, setAuditEvents] = usePersistentState<AuditEvent[]>("mittragen-audit-events-v2", initialAuditEvents);
 
@@ -715,9 +724,9 @@ export default function App() {
     setAuditEvents([{ id: `${Date.now()}-reset`, time: new Date().toISOString(), action: "Demo-Daten zurückgesetzt", detail: "Sieben Testszenarien auf Ausgangsstand gesetzt" }, ...initialAuditEvents]);
   };
 
-  if (route === "/login" || route === "/workspace") return <ProductiveAccess page={route === "/login" ? "login" : "workspace"} onHome={() => navigate("/")} onLogin={() => navigate("/login")} onWorkspace={() => navigate("/workspace")} onSponsor={() => navigate("/sponsor")} onPrototype={() => navigate("/ueberfuehren")}/>;
-  if (route === "/sponsor") return <SponsorPortal onHome={() => navigate("/")} onLogin={() => navigate("/login")}/>;
-  if (route === "/unterzeichnen") return <ContractSigning onHome={() => navigate("/")}/>;
+  if (route === "/login" || route === "/workspace") return <ProductiveAccess key={entryVersion} page={route === "/login" ? "login" : "workspace"} onHome={() => navigate("/")} onLogin={() => navigate("/login")} onWorkspace={() => navigate("/workspace")} onSponsor={() => navigate("/sponsor")} onPrototype={() => navigate("/ueberfuehren")}/>;
+  if (route === "/sponsor") return <SponsorPortal key={entryVersion} onHome={() => navigate("/")} onLogin={() => navigate("/login")}/>;
+  if (route === "/unterzeichnen") return <ContractSigning key={entryVersion} onHome={() => navigate("/")}/>;
   if (route === "/matchball") return <EventSponsoringPublic onHome={() => navigate("/")}/>;
   if (route === "/sponsoring") return <SponsoringCheckoutPublic/>;
   if (route === "/admin") return <AdminPage navigate={navigate} sponsors={sponsors} auditEvents={auditEvents}/>;

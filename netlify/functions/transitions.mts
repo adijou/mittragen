@@ -1,3 +1,4 @@
+import { sponsorSpacePath } from "../../shared/sponsor-space-link.ts";
 import type { Config, Context } from "@netlify/functions";
 import { AuthError, verifyRequestOrigin } from "@netlify/identity";
 import { hasPermission, isResponse, json, requireUser, type MembershipRole } from "./_shared/auth.ts";
@@ -412,7 +413,7 @@ export default async (request: Request, context: Context) => {
 
   if (dispatchMatch && request.method === "POST" && campaignId) {
     type Prepared = {
-      invitation_id: string;
+      invitation_id: string; sponsor_id: string;
       email: string;
       legal_name: string;
       tenant_name: string;
@@ -448,7 +449,7 @@ export default async (request: Request, context: Context) => {
                   resend_email_id = NULL, sent_at = NULL, updated_at = now()
             RETURNING id, transition_sponsor_id, email
           )
-          SELECT invitations.id AS invitation_id, invitations.email, sponsor.legal_name, tenant.name AS tenant_name,
+          SELECT invitations.id AS invitation_id, invitations.email, sponsor.id AS sponsor_id, sponsor.legal_name, tenant.name AS tenant_name,
                  campaign.name AS campaign_name, campaign.response_deadline::text,
                  proposal.source_value_cents, proposal.proposed_value_cents, proposal.proposed_package
           FROM invitations
@@ -465,7 +466,6 @@ export default async (request: Request, context: Context) => {
       if (prepared.state === "empty") return json({ error: "campaign_has_no_dispatchable_sponsors" }, 409);
 
       const siteUrl = Netlify.env.get("URL")?.trim() || new URL(request.url).origin;
-      const portalUrl = new URL("/sponsor", siteUrl).toString();
       const config = resendConfig();
       let sent = 0;
       let failed = 0;
@@ -480,7 +480,7 @@ export default async (request: Request, context: Context) => {
             sourceValueCents: invitation.source_value_cents,
             proposedValueCents: invitation.proposed_value_cents,
             responseDeadline: invitation.response_deadline,
-            portalUrl,
+            portalUrl: new URL(sponsorSpacePath({ tenantId, sponsorId: invitation.sponsor_id }), siteUrl).toString(),
           }, config);
           await withSession(user.id, tenantId, async (client) => {
             await client.query(

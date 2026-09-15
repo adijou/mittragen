@@ -1,10 +1,13 @@
 import { pickSponsorContact } from "../shared/sponsor-contact";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { getUser, logout, onAuthChange, refreshSession, type User } from "@netlify/identity";
 import { Brand } from "./ProductBrand";
 import { SponsorAddressForm, type SponsorAddress } from "./SponsorAddressForm";
 import { SponsorContactForm, type SponsorContact } from "./SponsorContactForm";
-import { prepareSponsorAccess } from "./sponsorAccess";
+import { clearSponsorEntry, prepareSponsorAccess, readSponsorEntry } from "./sponsorAccess";
+import { readSponsorTarget, sponsorTargetQuery } from "../shared/sponsor-space-link";
+import { identityErrorMessage } from "./identityFeedback";
+import { accountScopedFetch, createSponsorLoadGuard } from "./sponsorSession";
 
 type Right = {
   id: string; name: string; description: string | null; quantity: number;
@@ -43,13 +46,6 @@ const formatDateTime = (value: string) => new Intl.DateTimeFormat("de-CH", {
   dateStyle: "long", timeStyle: "short",
 }).format(new Date(value));
 
-async function api<T>(path: string, options?: RequestInit): Promise<T> {
-  const response = await fetch(path, { ...options, headers: { "Content-Type": "application/json", ...options?.headers } });
-  const body = await response.json().catch(() => ({})) as T & { error?: string };
-  if (!response.ok) throw new Error(body.error ?? `request_failed_${response.status}`);
-  return body;
-}
-
 export function SponsorPortal({ onHome, onLogin }: { onHome: () => void; onLogin: () => void }) {
   const [user, setUser] = useState<User | null>(null);
   const [spaces, setSpaces] = useState<Space[]>([]);
@@ -68,39 +64,89 @@ export function SponsorPortal({ onHome, onLogin }: { onHome: () => void; onLogin
   const [section, setSection] = useState<"documents" | "address" | "logo">("documents");
   const [loadAttempt, setLoadAttempt] = useState(0);
 
+  const [entry] = useState(readSponsorEntry);
+  const [target] = useState(() => readSponsorTarget(window.location.search) ?? entry?.target);
+  const [accountApproved, setAccountApproved] = useState(false);
+  const [accountChoice, setAccountChoice] = useState(false);
+  const identityId = useRef<string | null>(null);
+  const loadGuard = useRef(createSponsorLoadGuard());
+  const accountEpoch = useRef(0);
+
+  const discardAccount = () => {
+    loadGuard.current.invalidate();
+    accountEpoch.current++;
+    setSpaces([]); setSelectedSpaceKey(""); setSelectedPackageId("");
+    setLogoFile(null); setMessage(""); setBusy(""); setLoading(false);
+    setAccountApproved(false); setAccountChoice(true);
+  };
+  const accountChanged = () => {
+    discardAccount();
+    setError(identityErrorMessage(new Error("sponsor_account_changed")));
+  };
+  const requestEpoch = accountEpoch.current;
+  const sessionFetch = accountScopedFetch(user?.id ?? "missing-account", accountChanged, fetch, () => accountEpoch.current === requestEpoch);
+  async function api<T>(path: string, options?: RequestInit): Promise<T> {
+    const response = await sessionFetch(path, { ...options, headers: { "Content-Type": "application/json", ...options?.headers } });
+    const body = await response.json().catch(() => ({})) as T & { error?: string };
+    if (!response.ok) throw new Error(body.error ?? `request_failed_${response.status}`);
+    return body;
+  }
+
   const load = async (currentUser: User) => {
-    await api<{ claimed: number }>("/api/sponsor-portal/claim", { method: "POST", body: "{}" });
-    const result = await api<{ spaces: Space[] }>("/api/sponsor-portal");
+    const isCurrent = loadGuard.current.begin();
+    const fetchForAccount = accountScopedFetch(currentUser.id, accountChanged);
+    const claim = await fetchForAccount("/api/sponsor-portal/claim", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ target, expectedEmail: entry?.email }),
+    });
+    if (!claim.ok) throw new Error((await claim.json()).error ?? "access_check_failed");
+    if (!isCurrent()) return;
+    const response = await fetchForAccount(`/api/sponsor-portal${target ? `?${sponsorTargetQuery(target)}` : ""}`);
+    const result = await response.json() as { spaces: Space[]; error?: string };
+    if (!response.ok) throw new Error(result.error ?? "access_check_failed");
+    if (!isCurrent()) return;
     setSpaces(result.spaces);
     const first = result.spaces[0];
-    setSelectedSpaceKey((current) => current || (first ? `${first.tenantId}:${first.sponsor.id}` : ""));
-    setUser(currentUser);
+    setSelectedSpaceKey((current) => result.spaces.some((item) => `${item.tenantId}:${item.sponsor.id}` === current)
+      ? current : first ? `${first.tenantId}:${first.sponsor.id}` : "");
+    clearSponsorEntry();
   };
 
   useEffect(() => {
     let active = true;
-    setLoading(true);
-    setError("");
+    setLoading(true); setError(""); setSpaces([]);
     const initialize = async () => {
       try {
         await refreshSession();
         const currentUser = await getUser();
         if (!active) return;
+        identityId.current = currentUser?.id ?? null;
         setUser(currentUser);
+        // Old emails contain only /sponsor. Their recipient cannot be inferred;
+        // require a conscious account choice before any sponsor data is loaded.
+        if (currentUser && !target && !accountApproved) { setAccountChoice(true); return; }
+        setAccountChoice(false);
         if (currentUser) await load(currentUser);
       } catch (reason) {
-        if (active) setError(reason instanceof Error && reason.message === "verified_email_required"
-          ? "Bitte bestätigen Sie zuerst Ihre E-Mail-Adresse über den zugesandten Link."
-          : reason instanceof Error && reason.message === "identity_verification_unavailable"
-            ? "Ihr Anmeldestatus konnte gerade nicht geprüft werden. Bitte versuchen Sie es erneut."
-            : "Ihr Space konnte nicht geladen werden. Bitte versuchen Sie es erneut.");
-      } finally {
-        if (active) setLoading(false);
-      }
+        if (active) setError(identityErrorMessage(reason));
+      } finally { if (active) setLoading(false); }
     };
     void initialize();
-    const unsubscribe = onAuthChange((_event, currentUser) => setUser(currentUser));
-    return () => { active = false; unsubscribe(); };
+    const unsubscribe = onAuthChange((_event, currentUser) => {
+      if (identityId.current && identityId.current !== currentUser?.id) {
+        discardAccount(); setUser(currentUser);
+        identityId.current = currentUser?.id ?? null;
+      }
+    });
+    // A different tab can change the shared login cookie without this tab's
+    // SDK emitting an event. Recheck the displayed identity when returning.
+    const checkSession = () => {
+      if (!identityId.current || document.visibilityState === "hidden") return;
+      void accountScopedFetch(identityId.current, accountChanged)("/api/sponsor-portal/session")
+        .catch(() => {});
+    };
+    window.addEventListener("focus", checkSession);
+    return () => { active = false; loadGuard.current.invalidate(); accountEpoch.current++; unsubscribe(); window.removeEventListener("focus", checkSession); };
   }, [loadAttempt]);
 
   const space = useMemo(
@@ -120,7 +166,7 @@ export function SponsorPortal({ onHome, onLogin }: { onHome: () => void; onLogin
     setLogoInputKey((current) => current + 1);
   }, [selectedSpaceKey, space?.proposal?.id]);
 
-  const goToLogin = (mode: "login" | "signup" = "login") => { prepareSponsorAccess({ mode }); onLogin(); };
+  const goToLogin = (mode: "login" | "signup" = "login") => { prepareSponsorAccess({ ...entry, mode, target }); onLogin(); };
 
   const respond = async (decision: "accept" | "alternative" | "advice" | "decline") => {
     if (!space?.proposal) return;
@@ -159,7 +205,7 @@ export function SponsorPortal({ onHome, onLogin }: { onHome: () => void; onLogin
     if (!space) return;
     setBusy(`pdf-${contract.id}`); setError("");
     try {
-      const response = await fetch(`/api/contracts/${space.tenantId}/${contract.id}/pdf`);
+      const response = await sessionFetch(`/api/contracts/${space.tenantId}/${contract.id}/pdf`);
       if (!response.ok) throw new Error("contract_pdf_failed");
       const url = URL.createObjectURL(await response.blob());
       const link = document.createElement("a");
@@ -187,7 +233,7 @@ export function SponsorPortal({ onHome, onLogin }: { onHome: () => void; onLogin
     try {
       const form = new FormData();
       form.set("logo", logoFile);
-      const response = await fetch(`/api/sponsor-portal/${space.tenantId}/${space.sponsor.id}/logo`, { method: "POST", body: form });
+      const response = await sessionFetch(`/api/sponsor-portal/${space.tenantId}/${space.sponsor.id}/logo`, { method: "POST", body: form });
       const body = await response.json().catch(() => ({})) as { error?: string; logo?: { available: boolean; updatedAt: string | null } };
       if (!response.ok || !body.logo) throw new Error(body.error ?? "sponsor_logo_save_failed");
       updateLogoState(body.logo.available, body.logo.updatedAt);
@@ -222,6 +268,14 @@ export function SponsorPortal({ onHome, onLogin }: { onHome: () => void; onLogin
   if (loading) return <div className="sponsor-portal"><main className="sponsor-portal__state">Sponsorbereich wird geladen …</main></div>;
   if (!user) return <div className="sponsor-portal"><header><button onClick={onHome} className="access-brand-button"><Brand/></button><button className="access-link" onClick={onHome}>Zur Website</button></header><main className="sponsor-portal__welcome"><p className="eyebrow">Persönlicher Sponsorbereich</p><h1>Willkommen in Ihrem Space.</h1><p>Hier finden Sie Ihre Vertragsdokumente und verwalten Ihre Kontaktdaten, Adresse und Ihr Logo. Melden Sie sich mit der E-Mail-Adresse an, mit der Sie den Vertrag bestätigt oder die Einladung erhalten haben.</p><div className="sponsor-space-entry-actions"><button className="access-primary" onClick={() => goToLogin()}>Anmelden</button><button className="access-secondary" onClick={() => goToLogin("signup")}>Sponsor-Zugang einrichten</button></div></main></div>;
 
+  if (accountChoice) return <div className="sponsor-portal"><header><button onClick={onHome} className="access-brand-button"><Brand/></button></header><main className="sponsor-portal__welcome">
+    <p className="eyebrow">Sponsor-Space öffnen</p><h1>Mit welchem Konto möchten Sie fortfahren?</h1>
+    <p>Sie sind als <strong>{user.email}</strong> angemeldet. Wenn die Einladung an eine andere E-Mail-Adresse ging, melden Sie sich bitte mit dieser Adresse an.</p>
+    {error && <p className="form-error" role="alert">{error}</p>}
+    <div className="sponsor-space-entry-actions"><button className="access-primary" disabled={busy !== ""} onClick={() => { setLoading(true); setAccountChoice(false); setAccountApproved(true); setLoadAttempt((value) => value + 1); }}>Mit {user.email} fortfahren</button>
+    <button className="access-secondary" disabled={busy !== ""} onClick={() => { setBusy("logout"); void logout().then(() => { discardAccount(); setUser(null); goToLogin(); }).catch(() => { setBusy(""); setError("Die Abmeldung ist fehlgeschlagen. Bitte versuchen Sie es erneut."); }); }}>Mit anderem Konto anmelden</button></div>
+  </main></div>;
+
   return <div className="sponsor-portal">
     <header><button onClick={onHome} className="access-brand-button"><Brand/></button><div><span>{user.email}</span><button className="access-link" onClick={() => void logout().then(() => setUser(null))}>Abmelden</button></div></header>
     <main>
@@ -231,12 +285,12 @@ export function SponsorPortal({ onHome, onLogin }: { onHome: () => void; onLogin
         <nav className="sponsor-space-nav" aria-label="Bereiche im Sponsor-Space">
           {([['documents', 'Dokumente'], ['address', 'Meine Angaben'], ['logo', 'Logo']] as const).map(([value, label]) => <button key={value} type="button" aria-pressed={section === value} disabled={busy !== ""} onClick={() => { setSection(value); setError(""); setMessage(""); }}>{label}</button>)}
         </nav>
-        {section === "address" && <SponsorContactForm key={`contact:${space.tenantId}:${space.sponsor.id}`} tenantId={space.tenantId} sponsorId={space.sponsor.id} contact={pickSponsorContact(space.sponsor)} loginEmail={user.email ?? ""} disabled={busy !== ""} onBusyChange={(saving) => setBusy(saving ? "contact-save" : "")} onSaved={(contact) => setSpaces((current) => current.map((item) => item.tenantId === space.tenantId && item.sponsor.id === space.sponsor.id ? { ...item, sponsor: { ...item.sponsor, ...contact } } : item))}/>}
-        {section === "address" && <SponsorAddressForm key={`${space.tenantId}:${space.sponsor.id}`} tenantId={space.tenantId} sponsorId={space.sponsor.id} legalName={space.sponsor.legal_name} address={space.sponsor.address} disabled={busy !== ""} onBusyChange={(saving) => setBusy(saving ? "address-save" : "")} onSaved={(address) => setSpaces((current) => current.map((item) => item.tenantId === space.tenantId && item.sponsor.id === space.sponsor.id ? { ...item, sponsor: { ...item.sponsor, address } } : item))}/>}
+        {section === "address" && <SponsorContactForm fetcher={sessionFetch} key={`contact:${space.tenantId}:${space.sponsor.id}`} tenantId={space.tenantId} sponsorId={space.sponsor.id} contact={pickSponsorContact(space.sponsor)} loginEmail={user.email ?? ""} disabled={busy !== ""} onBusyChange={(saving) => setBusy(saving ? "contact-save" : "")} onSaved={(contact) => setSpaces((current) => current.map((item) => item.tenantId === space.tenantId && item.sponsor.id === space.sponsor.id ? { ...item, sponsor: { ...item.sponsor, ...contact } } : item))}/>}
+        {section === "address" && <SponsorAddressForm fetcher={sessionFetch} key={`${space.tenantId}:${space.sponsor.id}`} tenantId={space.tenantId} sponsorId={space.sponsor.id} legalName={space.sponsor.legal_name} address={space.sponsor.address} disabled={busy !== ""} onBusyChange={(saving) => setBusy(saving ? "address-save" : "")} onSaved={(address) => setSpaces((current) => current.map((item) => item.tenantId === space.tenantId && item.sponsor.id === space.sponsor.id ? { ...item, sponsor: { ...item.sponsor, address } } : item))}/>}
         {section === "logo" && <section className="sponsor-logo-management">
           <div className="sponsor-logo-management__identity">
             <div className="sponsor-logo-management__preview">{space.sponsor.logoAvailable
-              ? <img src={`/api/sponsor-portal/${space.tenantId}/${space.sponsor.id}/logo?v=${encodeURIComponent(space.sponsor.logoUpdatedAt ?? "current")}`} alt={`Logo ${space.sponsor.legal_name}`}/>
+              ? <img src={`/api/sponsor-portal/${space.tenantId}/${space.sponsor.id}/logo?account=${encodeURIComponent(user.id)}&v=${encodeURIComponent(space.sponsor.logoUpdatedAt ?? "current")}`} alt={`Logo ${space.sponsor.legal_name}`}/>
               : <span>{space.sponsor.legal_name.slice(0, 2).toUpperCase()}</span>}</div>
             <div><p className="eyebrow">Ihr Auftritt</p><h2>Sponsorlogo verwalten</h2><p>Hinterlegen Sie Ihr aktuelles Logo zentral für Sponsorendarstellungen dieser Organisation.</p></div>
           </div>

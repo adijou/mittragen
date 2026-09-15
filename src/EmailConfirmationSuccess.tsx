@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { Brand } from "./ProductBrand";
+import { readSponsorEntry } from "./sponsorAccess";
 import { confirmedAccessDestination } from "./identityFeedback";
 
-export function EmailConfirmationSuccess({ email, preferSponsor, onHome, onContinue }: {
+export function EmailConfirmationSuccess({ accountId, email, preferSponsor, onHome, onContinue }: {
+  accountId: string;
   email: string;
   preferSponsor: boolean;
   onHome: () => void;
@@ -16,14 +18,14 @@ export function EmailConfirmationSuccess({ email, preferSponsor, onHome, onConti
   useEffect(() => {
     let active = true;
     setError("");
-    check.current ??= confirmedAccessDestination(preferSponsor);
+    check.current ??= confirmedAccessDestination(preferSponsor, fetch, { accountId, email: readSponsorEntry()?.email, target: readSponsorEntry()?.target });
     void check.current.then((result) => {
       if (active) setDestination(result);
     }).catch(() => {
       if (active) setError("Ihre E-Mail-Adresse ist bestätigt. Ihr Zugang konnte noch nicht geladen werden. Bitte versuchen Sie es erneut.");
     });
     return () => { active = false; };
-  }, [preferSponsor, attempt]);
+  }, [accountId, preferSponsor, attempt]);
 
   return <div className="access-page">
     <header className="access-header"><button onClick={onHome} className="access-brand-button"><Brand/></button><button className="access-link" onClick={onHome}>Zur Website</button></header>

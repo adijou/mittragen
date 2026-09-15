@@ -1,7 +1,7 @@
 import { getUser, refreshSession, type User } from "@netlify/identity";
 export { hasPermission, permissionsFor, type MembershipRole, type Permission } from "./permissions.ts";
 
-export async function requireUser(): Promise<User | Response> {
+export async function requireUser(request?: Request): Promise<User | Response> {
   try {
     await refreshSession();
   } catch (error) {
@@ -9,6 +9,8 @@ export async function requireUser(): Promise<User | Response> {
   }
   const user = await getUser();
   if (!user) return json({ error: "authentication_required" }, 401);
+  const expected = request?.headers.get("X-Sponsor-Account") ?? (request ? new URL(request.url).searchParams.get("account") : null);
+  if (expected && expected !== user.id) return json({ error: "sponsor_account_changed" }, 409);
   return user;
 }
 

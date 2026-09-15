@@ -242,6 +242,7 @@ export default async (request: Request, context: Context) => {
     });
     if (result.state !== "ready") return json({ error: "contract_signing_request_failed", requestId: context.requestId }, 500);
     return Response.json({
+      spaceTarget: { tenantId: result.signing.tenant_id, sponsorId: result.signing.sponsor_id },
       contract: {
         contractNumber: result.contract.contract_number,
         title: result.contract.title,

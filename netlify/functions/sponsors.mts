@@ -1,3 +1,4 @@
+import { sponsorSpacePath } from "../../shared/sponsor-space-link.ts";
 import type { Config, Context } from "@netlify/functions";
 import { AuthError, verifyRequestOrigin } from "@netlify/identity";
 import { hasPermission, isResponse, json, requireUser, type MembershipRole } from "./_shared/auth.ts";
@@ -78,7 +79,7 @@ export default async (request: Request, context: Context) => {
           email: prepared.invitation.email,
           sponsorName: prepared.legal_name,
           organizationName: prepared.tenant_name,
-          portalUrl: absoluteSiteUrl(request, "/sponsor"),
+          portalUrl: absoluteSiteUrl(request, sponsorSpacePath({ tenantId, sponsorId })),
           expiresAt: prepared.invitation.expires_at,
         }, contractEmailConfig());
         await withSession(user.id, tenantId, (client) => recordSponsorAccessDelivery(client, tenantId, sponsorId, user.id, prepared.invitation, { emailId }));

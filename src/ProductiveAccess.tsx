@@ -26,7 +26,7 @@ import { SponsoringDossier } from "./SponsoringDossier";
 import { EventSponsoringManagement } from "./EventSponsoringManagement";
 import { Brand } from "./ProductBrand";
 import { clearSponsorEntry, readSponsorEntry } from "./sponsorAccess";
-import { confirmationDeliveryMessage, confirmedAccessDestination, confirmedEmailCallback, createIdentityInitializer, emailConfirmationRequired, identityCallbackKind, identityErrorMessage, invitedConfirmationCallback, type IdentityCallbackKind } from "./identityFeedback";
+import { IdentityAccountSwitchRequired, confirmationDeliveryMessage, confirmedAccessDestination, confirmedEmailCallback, createIdentityInitializer, emailConfirmationRequired, identityCallbackKind, identityErrorMessage, invitedConfirmationCallback, type IdentityCallbackKind } from "./identityFeedback";
 import { EmailConfirmationSuccess } from "./EmailConfirmationSuccess";
 
 type ProductivePage = "login" | "workspace";
@@ -87,8 +87,13 @@ function useIdentitySession() {
   const [callback, setCallback] = useState<CallbackResult | null>(null);
   const [error, setError] = useState("");
   const callbackKind = useRef(identityCallbackKind(window.location.hash));
+  const [switchFrom, setSwitchFrom] = useState<User | null>(null);
+  const [switching, setSwitching] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  const acceptAuthEvents = useRef(false);
   const initialize = useRef<ReturnType<typeof createIdentityInitializer> | null>(null);
   if (!initialize.current) initialize.current = createIdentityInitializer({
+    callbackKind: callbackKind.current,
     checkSettings: async () => {
       const response = await fetch("/.netlify/identity/settings", {
         headers: { Accept: "application/json" }, signal: AbortSignal.timeout(4500),
@@ -121,11 +126,15 @@ function useIdentitySession() {
         const result = await initialize.current!();
         if (!active) return;
         setAvailability("ready");
+        acceptAuthEvents.current = true;
         setCallback(result.callback);
         setUser(result.user);
       } catch (reason) {
         if (!active) return;
-        if (reason instanceof MissingIdentityError) {
+        if (reason instanceof IdentityAccountSwitchRequired) {
+          setAvailability("ready");
+          setSwitchFrom(reason.currentUser);
+        } else if (reason instanceof MissingIdentityError) {
           setAvailability("missing");
         } else {
           setAvailability("ready");
@@ -135,11 +144,26 @@ function useIdentitySession() {
     };
 
     void load();
-    const unsubscribe = onAuthChange((_event, currentUser) => setUser(currentUser));
+    const unsubscribe = onAuthChange((_event, currentUser) => {
+      if (acceptAuthEvents.current) setUser(currentUser);
+    });
     return () => { active = false; unsubscribe(); };
-  }, []);
+  }, [attempt]);
 
-  return { availability, user, setUser, callback, setCallback, error, callbackKind: callbackKind.current };
+  const continuePersonalLink = async () => {
+    setSwitching(true); setError("");
+    try {
+      await logout();
+      setUser(null); setSwitchFrom(null); setAvailability("checking");
+      initialize.current = null;
+      setAttempt((value) => value + 1);
+    } catch {
+      setError("Die bisherige Sitzung konnte nicht beendet werden. Bitte versuchen Sie es erneut. Der Link wurde noch nicht verwendet.");
+    } finally { setSwitching(false); }
+  };
+
+  return { availability, user, setUser, callback, setCallback, error, callbackKind: callbackKind.current, switchFrom, switching, continuePersonalLink };
+
 }
 
 function AuthPage({ availability, user, callback, error: sessionError, callbackKind, setCallback, setUser, onHome, onWorkspace, onSponsor }: {
@@ -166,12 +190,15 @@ function AuthPage({ availability, user, callback, error: sessionError, callbackK
   const [confirmationRequired, setConfirmationRequired] = useState(callbackKind === "confirmation" && Boolean(sessionError));
   const [showSessionError, setShowSessionError] = useState(Boolean(sessionError));
   const callbackHandled = useRef(false);
-  const finishLogin = async () => {
+  const finishLogin = async (authenticatedUser?: User) => {
     setError("");
     try {
+      const account = authenticatedUser ?? user ?? await getUser();
       const destination = await confirmedAccessDestination(Boolean(sponsorEntry)
-        || sessionStorage.getItem("mittragen-login-target") === "sponsor");
-      if (destination === "sponsor") { clearSponsorEntry(); onSponsor(); }
+        || sessionStorage.getItem("mittragen-login-target") === "sponsor", fetch, {
+          accountId: account?.id, email: sponsorEntry?.email, target: sponsorEntry?.target,
+        });
+      if (destination === "sponsor") { onSponsor(); }
       else onWorkspace();
     } catch (reason) {
       setError(identityErrorMessage(reason));
@@ -209,12 +236,12 @@ function AuthPage({ availability, user, callback, error: sessionError, callbackK
       if (mode === "login") {
         const currentUser = await login(email, password);
         setUser(currentUser);
-        await finishLogin();
+        await finishLogin(currentUser);
       } else if (mode === "signup") {
         const currentUser = await signup(email, password, { full_name: name });
         if (currentUser.confirmedAt) {
           setUser(currentUser);
-          await finishLogin();
+          await finishLogin(currentUser);
         } else {
           setConfirmationRequired(true);
           const delivery = confirmationDeliveryMessage(currentUser);
@@ -231,7 +258,7 @@ function AuthPage({ availability, user, callback, error: sessionError, callbackK
         setCallback(null);
         setUser(currentUser);
         setMode("login");
-        await finishLogin();
+        await finishLogin(currentUser);
       }
     } catch (reason) {
       if (mode === "login" && emailConfirmationRequired(reason)) setConfirmationRequired(true);
@@ -276,13 +303,13 @@ function AuthPage({ availability, user, callback, error: sessionError, callbackK
   };
 
   const confirmedUser = confirmedEmailCallback(callback);
-  if (confirmedUser) return <EmailConfirmationSuccess email={confirmedUser.email!} preferSponsor={Boolean(sponsorEntry)} onHome={onHome} onContinue={(destination) => {
+  if (confirmedUser) return <EmailConfirmationSuccess accountId={confirmedUser.id} email={confirmedUser.email!} preferSponsor={Boolean(sponsorEntry)} onHome={onHome} onContinue={(destination) => {
     setCallback(null);
-    clearSponsorEntry();
+    if (destination !== "sponsor") clearSponsorEntry();
     if (destination === "sponsor") onSponsor(); else onWorkspace();
   }}/>;
 
-  return <div className="access-page"><header className="access-header"><button onClick={onHome} className="access-brand-button"><Brand/></button><button className="access-link" onClick={onHome}>Zur Website</button></header><main className="auth-layout"><section className="auth-story">{sponsorEntry ? <><p className="eyebrow">Ihr persönlicher Space</p><h1>Ihr Sponsoring an einem Ort.</h1><p>Verwenden Sie die E-Mail-Adresse, an die Ihre Einladung gesendet wurde oder mit der Sie Ihren Vertrag bestätigt haben.</p><ul><li>Verträge ansehen und herunterladen</li><li>Adresse selbst aktualisieren</li><li>Ihr Logo hinterlegen und ersetzen</li></ul></> : <><p className="eyebrow">Ihr persönlicher Zugang</p><h1>Unterstützung sicher organisieren.</h1><p>Ein persönlicher Bereich für Sponsoren und Organisationen.</p><ul><li>Sponsoring an einem Ort</li><li>Verträge und Dokumente einsehen</li><li>Gemeinsam im Team arbeiten</li></ul></>}</section><section className="auth-card"><div className="auth-card__heading"><p className="eyebrow">{mode === "signup" ? sponsorEntry ? "Space einrichten" : "Konto einrichten" : mode === "invite" ? "Einladung annehmen" : mode === "recovery" ? "Zugang einrichten" : "Willkommen zurück"}</p><h2>{mode === "signup" ? sponsorEntry ? "Sponsor-Zugang einrichten" : "Konto erstellen" : mode === "invite" ? "Zugang aktivieren" : mode === "recovery" ? "Neues Passwort setzen" : sponsorEntry ? "In meinem Sponsor-Space anmelden" : "Bei mittragen.ch anmelden"}</h2></div>{showSessionError && sessionError && <p className="form-error" role="alert">{sessionError}</p>}{availability === "checking" ? <div className="auth-state">Anmeldung wird vorbereitet …</div> : availability === "missing" ? <div className="auth-warning"><strong>Die Anmeldung ist momentan nicht verfügbar.</strong><p>Bitte versuchen Sie es später erneut oder wenden Sie sich an die Organisation.</p></div> : user && (mode === "login" || mode === "signup") ? <div className="auth-state"><strong>Bereits angemeldet als {user.email}</strong>{error && <p className="form-error" role="alert">{error}</p>}<button className="access-primary" onClick={finishLogin}>{sponsorEntry ? "Meinen Space öffnen" : "Zugang öffnen"}</button><button className="access-text" onClick={() => void logout().then(() => { setUser(null); setMode("login"); })}>Mit anderem Konto anmelden</button></div> : <form onSubmit={submit}>{mode === "signup" && <label><span>Name</span><input required autoComplete="name" value={name} onChange={(event) => setName(event.target.value)} placeholder="Vorname Nachname"/></label>}{!['invite', 'recovery'].includes(mode) && <label><span>E-Mail</span><input required type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="name@organisation.ch"/></label>}<label><span>{mode === "recovery" ? "Neues Passwort" : "Passwort"}</span><input required minLength={8} type="password" autoComplete={mode === "login" ? "current-password" : "new-password"} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Mindestens 8 Zeichen"/></label>{error && <p className="form-error" role="alert">{error}</p>}{message && <p className="form-success" role="status">{message}</p>}<button className="access-primary" disabled={busy} type="submit">{busy ? "Bitte warten …" : mode === "signup" ? sponsorEntry ? "Sponsor-Zugang einrichten" : "Konto erstellen" : mode === "invite" ? "Einladung annehmen" : mode === "recovery" ? "Passwort speichern" : "Anmelden"}</button>{confirmationRequired && (mode === "login" || mode === "signup") && <div className="auth-confirmation-resend"><p>Kein gültiger Link mehr vorhanden? Fordern Sie einen neuen Zugangslink an. Öffnen Sie danach nur die neueste E-Mail und legen Sie dort Ihr Passwort fest.</p><button className="access-secondary" type="button" disabled={busy} onClick={() => void resendConfirmation()}>{busy ? "Link wird angefordert …" : "Neuen Aktivierungslink senden"}</button></div>}{mode === "login" && <><button className="access-secondary" type="button" onClick={() => setMode("signup")}>{sponsorEntry ? "Sponsor-Zugang einrichten" : "Konto erstellen"}</button>{!confirmationRequired && <button className="access-text" type="button" onClick={() => { setError(""); setMessage(""); setConfirmationRequired(true); }}>Aktivierungslink erneut senden</button>}<button className="access-text" type="button" onClick={recover}>Passwort vergessen?</button></>}{mode === "signup" && <button className="access-text" type="button" onClick={() => setMode("login")}>Bereits ein Konto? Anmelden</button>}</form>}</section></main></div>;
+  return <div className="access-page"><header className="access-header"><button onClick={onHome} className="access-brand-button"><Brand/></button><button className="access-link" onClick={onHome}>Zur Website</button></header><main className="auth-layout"><section className="auth-story">{sponsorEntry ? <><p className="eyebrow">Ihr persönlicher Space</p><h1>Ihr Sponsoring an einem Ort.</h1><p>Verwenden Sie die E-Mail-Adresse, an die Ihre Einladung gesendet wurde oder mit der Sie Ihren Vertrag bestätigt haben.</p><ul><li>Verträge ansehen und herunterladen</li><li>Adresse selbst aktualisieren</li><li>Ihr Logo hinterlegen und ersetzen</li></ul></> : <><p className="eyebrow">Ihr persönlicher Zugang</p><h1>Unterstützung sicher organisieren.</h1><p>Ein persönlicher Bereich für Sponsoren und Organisationen.</p><ul><li>Sponsoring an einem Ort</li><li>Verträge und Dokumente einsehen</li><li>Gemeinsam im Team arbeiten</li></ul></>}</section><section className="auth-card"><div className="auth-card__heading"><p className="eyebrow">{mode === "signup" ? sponsorEntry ? "Space einrichten" : "Konto einrichten" : mode === "invite" ? "Einladung annehmen" : mode === "recovery" ? "Zugang einrichten" : "Willkommen zurück"}</p><h2>{mode === "signup" ? sponsorEntry ? "Sponsor-Zugang einrichten" : "Konto erstellen" : mode === "invite" ? "Zugang aktivieren" : mode === "recovery" ? "Neues Passwort setzen" : sponsorEntry ? "In meinem Sponsor-Space anmelden" : "Bei mittragen.ch anmelden"}</h2></div>{showSessionError && sessionError && <p className="form-error" role="alert">{sessionError}</p>}{availability === "checking" ? <div className="auth-state">Anmeldung wird vorbereitet …</div> : availability === "missing" ? <div className="auth-warning"><strong>Die Anmeldung ist momentan nicht verfügbar.</strong><p>Bitte versuchen Sie es später erneut oder wenden Sie sich an die Organisation.</p></div> : user && (mode === "login" || mode === "signup") ? <div className="auth-state"><strong>Bereits angemeldet als {user.email}</strong>{error && <p className="form-error" role="alert">{error}</p>}<button className="access-primary" onClick={() => void finishLogin()}>{sponsorEntry ? "Meinen Space öffnen" : "Zugang öffnen"}</button><button className="access-text" onClick={() => void logout().then(() => { setUser(null); setMode("login"); })}>Mit anderem Konto anmelden</button></div> : <form onSubmit={submit}>{mode === "signup" && <label><span>Name</span><input required autoComplete="name" value={name} onChange={(event) => setName(event.target.value)} placeholder="Vorname Nachname"/></label>}{!['invite', 'recovery'].includes(mode) && <label><span>E-Mail</span><input required type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="name@organisation.ch"/></label>}<label><span>{mode === "recovery" ? "Neues Passwort" : "Passwort"}</span><input required minLength={8} type="password" autoComplete={mode === "login" ? "current-password" : "new-password"} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Mindestens 8 Zeichen"/></label>{error && <p className="form-error" role="alert">{error}</p>}{message && <p className="form-success" role="status">{message}</p>}<button className="access-primary" disabled={busy} type="submit">{busy ? "Bitte warten …" : mode === "signup" ? sponsorEntry ? "Sponsor-Zugang einrichten" : "Konto erstellen" : mode === "invite" ? "Einladung annehmen" : mode === "recovery" ? "Passwort speichern" : "Anmelden"}</button>{confirmationRequired && (mode === "login" || mode === "signup") && <div className="auth-confirmation-resend"><p>Kein gültiger Link mehr vorhanden? Fordern Sie einen neuen Zugangslink an. Öffnen Sie danach nur die neueste E-Mail und legen Sie dort Ihr Passwort fest.</p><button className="access-secondary" type="button" disabled={busy} onClick={() => void resendConfirmation()}>{busy ? "Link wird angefordert …" : "Neuen Aktivierungslink senden"}</button></div>}{mode === "login" && <><button className="access-secondary" type="button" onClick={() => setMode("signup")}>{sponsorEntry ? "Sponsor-Zugang einrichten" : "Konto erstellen"}</button>{!confirmationRequired && <button className="access-text" type="button" onClick={() => { setError(""); setMessage(""); setConfirmationRequired(true); }}>Aktivierungslink erneut senden</button>}<button className="access-text" type="button" onClick={recover}>Passwort vergessen?</button></>}{mode === "signup" && <button className="access-text" type="button" onClick={() => setMode("login")}>Bereits ein Konto? Anmelden</button>}</form>}</section></main></div>;
 }
 
 class ApiRequestError extends Error {
@@ -324,9 +351,10 @@ function WorkspacePage({ user, setUser, onHome, onLogin, onSponsor, onPrototype:
     setWorkspaceError("");
     let active = true;
     const loadAccess = async () => {
-      const destination = await confirmedAccessDestination(Boolean(readSponsorEntry()));
+      const entry = readSponsorEntry();
+      const destination = await confirmedAccessDestination(Boolean(entry), fetch, { accountId: user.id, email: entry?.email, target: entry?.target });
       if (!active) return;
-      if (destination === "sponsor") { clearSponsorEntry(); onSponsor(); return; }
+      if (destination === "sponsor") { onSponsor(); return; }
       await api("/api/team/claim", { method: "POST" });
       const result = await api<{ tenants: Tenant[] }>("/api/tenants");
       if (!active) return;
@@ -483,6 +511,14 @@ function WorkspacePage({ user, setUser, onHome, onLogin, onSponsor, onPrototype:
 export function ProductiveAccess({ page, onLogin, onWorkspace, onSponsor, onPrototype }: { page: ProductivePage; onHome: () => void; onLogin: () => void; onWorkspace: () => void; onSponsor: () => void; onPrototype: () => void }) {
   const session = useIdentitySession();
   const goToWebsite = () => window.location.assign("/");
+  if (session.switchFrom) return <div className="access-page"><main className="email-confirmation-layout"><section className="auth-card">
+    <p className="eyebrow">Persönlichen Link öffnen</p><h1>Zuerst das Konto wechseln</h1>
+    <p>Sie sind bereits als <strong>{session.switchFrom.email}</strong> angemeldet. Dieser persönliche Link kann zu einem anderen Konto gehören.</p>
+    <p>Zum Prüfen des Links wird zuerst die bestehende Sitzung beendet. Ihr bisheriger Sponsor-Space wird dabei nicht geöffnet.</p>
+    {session.error && <p className="form-error" role="alert">{session.error}</p>}
+    <button className="access-primary" disabled={session.switching} onClick={() => void session.continuePersonalLink()}>{session.switching ? "Sitzung wird beendet …" : "Abmelden und Link prüfen"}</button>
+    <button className="access-secondary" disabled={session.switching} onClick={goToWebsite}>Abbrechen</button>
+  </section></main></div>;
   if (page === "login") return <AuthPage {...session} onHome={goToWebsite} onWorkspace={onWorkspace} onSponsor={onSponsor}/>;
   if (session.availability === "checking") return <div className="access-page"><main className="access-empty">Zugang wird geprüft …</main></div>;
   return <WorkspacePage user={session.user} setUser={session.setUser} onHome={goToWebsite} onLogin={onLogin} onSponsor={onSponsor} onPrototype={onPrototype}/>;

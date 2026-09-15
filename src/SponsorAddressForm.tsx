@@ -11,7 +11,8 @@ const errorLabels: Record<string, string> = {
   authentication_required: "Ihre Sitzung ist abgelaufen. Bitte melden Sie sich erneut an.",
 };
 
-export function SponsorAddressForm({ tenantId, sponsorId, legalName, address, disabled, onBusyChange, onSaved }: {
+export function SponsorAddressForm({ fetcher = fetch, tenantId, sponsorId, legalName, address, disabled, onBusyChange, onSaved }: {
+  fetcher?: typeof fetch;
   tenantId: string; sponsorId: string; legalName: string; address: SponsorAddress; disabled: boolean;
   onBusyChange: (busy: boolean) => void; onSaved: (address: SponsorAddress) => void;
 }) {
@@ -33,7 +34,7 @@ export function SponsorAddressForm({ tenantId, sponsorId, legalName, address, di
     event.preventDefault();
     setSaving(true); onBusyChange(true); setError(""); setMessage("");
     try {
-      const response = await fetch(`/api/sponsor-portal/${tenantId}/${sponsorId}/address`, {
+      const response = await fetcher(`/api/sponsor-portal/${tenantId}/${sponsorId}/address`, {
         method: "PATCH", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ street, postal_code: postalCode, city, original: address }),
       });
