@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { getUser, logout, onAuthChange, refreshSession, type User } from "@netlify/identity";
 import { Brand } from "./ProductBrand";
 import { SponsorAddressForm, type SponsorAddress } from "./SponsorAddressForm";
+import { SponsorContactForm, type SponsorContact } from "./SponsorContactForm";
 import { prepareSponsorAccess } from "./sponsorAccess";
 
 type Right = {
@@ -24,8 +25,8 @@ type SponsorContract = {
 };
 type Space = {
   tenantId: string;
-  sponsor: {
-    id: string; legal_name: string; contact_email: string | null; tenant_name: string;
+  sponsor: SponsorContact & {
+    id: string; tenant_name: string;
     logoAvailable: boolean; logoUpdatedAt: string | null;
     address: SponsorAddress;
   };
@@ -218,17 +219,18 @@ export function SponsorPortal({ onHome, onLogin }: { onHome: () => void; onLogin
   };
 
   if (loading) return <div className="sponsor-portal"><main className="sponsor-portal__state">Sponsorbereich wird geladen …</main></div>;
-  if (!user) return <div className="sponsor-portal"><header><button onClick={onHome} className="access-brand-button"><Brand/></button><button className="access-link" onClick={onHome}>Zur Website</button></header><main className="sponsor-portal__welcome"><p className="eyebrow">Persönlicher Sponsorbereich</p><h1>Willkommen in Ihrem Space.</h1><p>Hier finden Sie Ihre Vertragsdokumente und verwalten Ihre Adresse und Ihr Logo. Melden Sie sich mit der E-Mail-Adresse an, mit der Sie den Vertrag bestätigt oder die Einladung erhalten haben.</p><div className="sponsor-space-entry-actions"><button className="access-primary" onClick={() => goToLogin()}>Anmelden</button><button className="access-secondary" onClick={() => goToLogin("signup")}>Sponsor-Zugang einrichten</button></div></main></div>;
+  if (!user) return <div className="sponsor-portal"><header><button onClick={onHome} className="access-brand-button"><Brand/></button><button className="access-link" onClick={onHome}>Zur Website</button></header><main className="sponsor-portal__welcome"><p className="eyebrow">Persönlicher Sponsorbereich</p><h1>Willkommen in Ihrem Space.</h1><p>Hier finden Sie Ihre Vertragsdokumente und verwalten Ihre Kontaktdaten, Adresse und Ihr Logo. Melden Sie sich mit der E-Mail-Adresse an, mit der Sie den Vertrag bestätigt oder die Einladung erhalten haben.</p><div className="sponsor-space-entry-actions"><button className="access-primary" onClick={() => goToLogin()}>Anmelden</button><button className="access-secondary" onClick={() => goToLogin("signup")}>Sponsor-Zugang einrichten</button></div></main></div>;
 
   return <div className="sponsor-portal">
     <header><button onClick={onHome} className="access-brand-button"><Brand/></button><div><span>{user.email}</span><button className="access-link" onClick={() => void logout().then(() => setUser(null))}>Abmelden</button></div></header>
     <main>
       {error && <p className="form-error" role="alert">{error}</p>}{message && <p className="form-success" role="status">{message}</p>}
       {!space && error ? <section className="sponsor-portal__welcome"><h1>Ihr Space konnte gerade nicht geöffnet werden.</h1><button className="access-primary" onClick={() => setLoadAttempt((value) => value + 1)}>Zugang erneut prüfen</button><button className="access-secondary" onClick={() => void logout().then(() => { setSpaces([]); setUser(null); goToLogin(); })}>Erneut anmelden</button></section> : !space ? <section className="sponsor-portal__welcome"><p className="eyebrow">Noch kein Zugang</p><h1>Noch kein Sponsoring zugeordnet.</h1><p>Verwenden Sie die Empfängeradresse Ihrer Einladung oder die E-Mail-Adresse, mit der Sie Ihren Vertrag bestätigt haben. Falls Ihre Einladung abgelaufen ist, bitten Sie die Organisation um eine neue Einladung.</p><button className="access-secondary" onClick={() => void logout().then(() => { setSpaces([]); setUser(null); goToLogin(); })}>Mit anderem Konto anmelden</button></section> : <>
-        <section className="sponsor-portal__hero"><div><p className="eyebrow">{space.sponsor.tenant_name}</p><h1>Guten Tag {space.sponsor.legal_name}</h1><p>{"Ihre Dokumente, Ihre Adresse und Ihr Auftritt."}</p></div>{spaces.length > 1 && <select aria-label="Sponsoring auswählen" disabled={busy !== ""} value={selectedSpaceKey} onChange={(event) => setSelectedSpaceKey(event.target.value)}>{spaces.map((item) => <option value={`${item.tenantId}:${item.sponsor.id}`} key={`${item.tenantId}:${item.sponsor.id}`}>{item.sponsor.tenant_name} · {item.sponsor.legal_name}</option>)}</select>}</section>
+        <section className="sponsor-portal__hero"><div><p className="eyebrow">{space.sponsor.tenant_name}</p><h1>Guten Tag {space.sponsor.legal_name}</h1><p>{"Ihre Dokumente, Ihre Angaben und Ihr Auftritt."}</p></div>{spaces.length > 1 && <select aria-label="Sponsoring auswählen" disabled={busy !== ""} value={selectedSpaceKey} onChange={(event) => setSelectedSpaceKey(event.target.value)}>{spaces.map((item) => <option value={`${item.tenantId}:${item.sponsor.id}`} key={`${item.tenantId}:${item.sponsor.id}`}>{item.sponsor.tenant_name} · {item.sponsor.legal_name}</option>)}</select>}</section>
         <nav className="sponsor-space-nav" aria-label="Bereiche im Sponsor-Space">
-          {([['documents', 'Dokumente'], ['address', 'Adresse'], ['logo', 'Logo']] as const).map(([value, label]) => <button key={value} type="button" aria-pressed={section === value} disabled={busy !== ""} onClick={() => { setSection(value); setError(""); setMessage(""); }}>{label}</button>)}
+          {([['documents', 'Dokumente'], ['address', 'Meine Angaben'], ['logo', 'Logo']] as const).map(([value, label]) => <button key={value} type="button" aria-pressed={section === value} disabled={busy !== ""} onClick={() => { setSection(value); setError(""); setMessage(""); }}>{label}</button>)}
         </nav>
+        {section === "address" && <SponsorContactForm key={`contact:${space.tenantId}:${space.sponsor.id}`} tenantId={space.tenantId} sponsorId={space.sponsor.id} contact={{ legal_name: space.sponsor.legal_name, contact_name: space.sponsor.contact_name, contact_email: space.sponsor.contact_email, phone: space.sponsor.phone }} loginEmail={user.email ?? ""} disabled={busy !== ""} onBusyChange={(saving) => setBusy(saving ? "contact-save" : "")} onSaved={(contact) => setSpaces((current) => current.map((item) => item.tenantId === space.tenantId && item.sponsor.id === space.sponsor.id ? { ...item, sponsor: { ...item.sponsor, ...contact } } : item))}/>}
         {section === "address" && <SponsorAddressForm key={`${space.tenantId}:${space.sponsor.id}`} tenantId={space.tenantId} sponsorId={space.sponsor.id} legalName={space.sponsor.legal_name} address={space.sponsor.address} disabled={busy !== ""} onBusyChange={(saving) => setBusy(saving ? "address-save" : "")} onSaved={(address) => setSpaces((current) => current.map((item) => item.tenantId === space.tenantId && item.sponsor.id === space.sponsor.id ? { ...item, sponsor: { ...item.sponsor, address } } : item))}/>}
         {section === "logo" && <section className="sponsor-logo-management">
           <div className="sponsor-logo-management__identity">

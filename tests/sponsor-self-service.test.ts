@@ -4,7 +4,7 @@ import { readdir, readFile } from "node:fs/promises";
 import test from "node:test";
 import { PGlite } from "@electric-sql/pglite";
 import { pgcrypto } from "@electric-sql/pglite/contrib/pgcrypto";
-import { claimContractSpaces, parseSponsorAddress, updateSponsorAddress } from "../netlify/functions/_shared/sponsor-self-service.ts";
+import { claimContractSpaces, parseSponsorAddress, updateSponsorAddress, parseSponsorContact, updateSponsorContact } from "../netlify/functions/_shared/sponsor-self-service.ts";
 import type { DatabaseClient } from "../netlify/functions/_shared/database.ts";
 import { clearSponsorEntry, prepareSponsorAccess, readSponsorEntry, shouldOpenSponsorSpace } from "../src/sponsorAccess.ts";
 import { claimSponsorInvitations, loadSponsorAccess, prepareSponsorAccessInvitation, recordSponsorAccessDelivery } from "../netlify/functions/_shared/sponsor-access-invitations.ts";
@@ -12,6 +12,27 @@ import { verifySponsorIdentity } from "../netlify/functions/_shared/sponsor-iden
 
 const original = { street: "Alte Gasse 1", postal_code: "3178", city: "Bösingen" };
 const newAddress = { street: "Neue Gasse 12", postal_code: "3186", city: "Düdingen" };
+const originalContact = { legal_name: "Testsponsor", contact_name: null, contact_email: null, phone: null };
+const newContact = { legal_name: "Neuer Sponsorname", contact_name: "Anna Muster", contact_email: "kontakt@example.invalid", phone: "+41 (0)26 123 45 67" };
+
+test("contact input permits names and contact details but never access, status or contract fields", () => {
+  const value = { ...newContact, original: originalContact };
+  assert.deepEqual(parseSponsorContact({ ...value, legal_name: "  Neuer Sponsorname  " }), { ok: true, value });
+  for (const field of ["tenant_id", "sponsor_id", "identity_user_id", "email", "roles", "status", "annual_value_cents", "street", "sponsor_snapshot"]) {
+    assert.deepEqual(parseSponsorContact({ ...value, [field]: "changed" }), { ok: false, error: "contact_fields_only" });
+  }
+  for (const invalid of [null, [], {}, { ...value, original: {} }, { ...value, original: { ...originalContact, roles: ["admin"] } },
+    { ...value, legal_name: " " }, { ...value, legal_name: "x".repeat(161) }, { ...value, contact_name: "a\u0000b" },
+    { ...value, contact_email: "invalid-email" }, { ...value, phone: "x".repeat(81) }, { ...value, phone: 123 }]) {
+    assert.equal(parseSponsorContact(invalid).ok, false);
+  }
+});
+
+test("optional contact details can be cleared without requiring an existing postal address", () => {
+  assert.deepEqual(parseSponsorContact({ legal_name: "Testsponsor", contact_name: "", contact_email: " ", phone: null, original: newContact }), {
+    ok: true, value: { ...originalContact, original: newContact },
+  });
+});
 
 test("address input accepts postal addresses without allowing other sponsor fields to change", () => {
   const valid = { ...newAddress, original };
@@ -141,6 +162,43 @@ test("self-service runs against PostgreSQL with real migrations and a role subje
       assert.deepEqual(audit.rows[0].metadata, { source: "sponsor_portal", before: original, after: newAddress });
       const stale = await session(user, tenantA, (client) => updateSponsorAddress(client, tenantA, signed.sponsorId, user.id, { ...original, original }));
       assert.equal(stale.state, "conflict");
+    });
+
+    await t.test("contact writes deny other sponsors and another tenant under RLS", async () => {
+      for (const target of [other, foreign]) {
+        const result = await session(user, target.tenantId, (client) => updateSponsorContact(client, target.tenantId, target.sponsorId, user.id, { ...newContact, original: originalContact }));
+        assert.equal(result.state, "denied");
+      }
+    });
+
+    await t.test("contact changes persist and are audited while contracts, access and other sponsor fields remain unchanged", async () => {
+      const before = await db.query<Record<string, unknown>>("SELECT * FROM sponsors WHERE id=$1", [signed.sponsorId]);
+      const accessBefore = await db.query("SELECT * FROM sponsor_portal_access ORDER BY id");
+      const requestsBefore = await db.query("SELECT * FROM contract_signing_requests ORDER BY id");
+      const contractsBefore = await db.query("SELECT * FROM sponsorship_contracts ORDER BY id");
+      const result = await session(user, tenantA, (client) => updateSponsorContact(client, tenantA, signed.sponsorId, user.id, { ...newContact, original: originalContact }));
+      assert.deepEqual(result, { state: "saved", contact: newContact });
+      const after = await db.query<Record<string, unknown>>("SELECT * FROM sponsors WHERE id=$1", [signed.sponsorId]);
+      assert.deepEqual(after.rows[0], { ...before.rows[0], ...newContact, updated_at: after.rows[0].updated_at });
+      assert.deepEqual((await db.query("SELECT * FROM sponsor_portal_access ORDER BY id")).rows, accessBefore.rows);
+      assert.deepEqual((await db.query("SELECT * FROM contract_signing_requests ORDER BY id")).rows, requestsBefore.rows);
+      assert.deepEqual((await db.query("SELECT * FROM sponsorship_contracts ORDER BY id")).rows, contractsBefore.rows);
+      const audit = await db.query<{ metadata: unknown }>("SELECT metadata FROM audit_events WHERE action='sponsor.contact_updated' AND object_id=$1", [signed.sponsorId]);
+      assert.deepEqual(audit.rows[0].metadata, { source: "sponsor_portal", before: originalContact, after: newContact });
+      const stranger = { ...user, id: "new-contact-account", email: newContact.contact_email };
+      assert.equal(await session(stranger, null, (client) => claimContractSpaces(client, stranger)), 0);
+      assert.equal(await session(stranger, null, (client) => claimSponsorInvitations(client, stranger)), 0);
+      assert.equal((await session(stranger, tenantA, (client) => updateSponsorContact(client, tenantA, signed.sponsorId, stranger.id, { ...originalContact, original: newContact }))).state, "denied");
+      assert.equal((await db.query("SELECT * FROM tenant_memberships")).rows.length, 0);
+    });
+
+    await t.test("contact writes reject stale changes, accept repeated saves and allow optional details to be cleared", async () => {
+      const saveContact = (value: Parameters<typeof updateSponsorContact>[4]) => session(user, tenantA,
+        (client) => updateSponsorContact(client, tenantA, signed.sponsorId, user.id, value));
+      assert.equal((await saveContact({ ...originalContact, original: originalContact })).state, "conflict");
+      assert.deepEqual(await saveContact({ ...newContact, original: newContact }), { state: "saved", contact: newContact });
+      assert.equal((await db.query("SELECT id FROM audit_events WHERE action='sponsor.contact_updated' AND object_id=$1", [signed.sponsorId])).rows.length, 1);
+      assert.deepEqual(await saveContact({ ...originalContact, original: newContact }), { state: "saved", contact: originalContact });
     });
 
     const administrator = { ...user, id: "admin-a", email: "admin@example.invalid" };

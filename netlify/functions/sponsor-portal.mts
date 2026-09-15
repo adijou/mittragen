@@ -5,7 +5,7 @@ import { isResponse, json, requireUser } from "./_shared/auth.ts";
 import { isUuid, withSession, type DatabaseClient } from "./_shared/database.ts";
 import { validateLogoUpload } from "./_shared/logo-upload.ts";
 import { parseSponsorDecision } from "./_shared/sponsor-portal-input.ts";
-import { claimContractSpaces, parseSponsorAddress, updateSponsorAddress } from "./_shared/sponsor-self-service.ts";
+import { claimContractSpaces, parseSponsorAddress, updateSponsorAddress, parseSponsorContact, updateSponsorContact } from "./_shared/sponsor-self-service.ts";
 import { claimSponsorInvitations } from "./_shared/sponsor-access-invitations.ts";
 import { verifySponsorIdentity } from "./_shared/sponsor-identity.ts";
 
@@ -14,6 +14,7 @@ type AccessRow = { tenant_id: string; sponsor_id: string };
 const responseRoute = /^\/api\/sponsor-portal\/([0-9a-f-]+)\/([0-9a-f-]+)\/respond$/i;
 const logoRoute = /^\/api\/sponsor-portal\/([0-9a-f-]+)\/([0-9a-f-]+)\/logo$/i;
 const addressRoute = /^\/api\/sponsor-portal\/([0-9a-f-]+)\/([0-9a-f-]+)\/address$/i;
+const contactRoute = /^\/api\/sponsor-portal\/([0-9a-f-]+)\/([0-9a-f-]+)\/contact$/i;
 const BRAND_ASSET_STORE = "tenant-brand-assets";
 
 function verifyMutation(request: Request): Response | null {
@@ -47,11 +48,11 @@ async function loadSpace(client: DatabaseClient, tenantId: string, sponsorId: st
   if (!access.rows[0]) return null;
 
   const sponsor = await client.query<{
-    id: string; legal_name: string; contact_email: string | null; tenant_name: string;
+    id: string; legal_name: string; contact_name: string | null; contact_email: string | null; phone: string | null; tenant_name: string;
     logo_available: boolean; logo_updated_at: string | null;
     street: string | null; postal_code: string | null; city: string | null;
   }>(`
-    SELECT sponsor.id, sponsor.legal_name, sponsor.contact_email, tenant.name AS tenant_name,
+    SELECT sponsor.id, sponsor.legal_name, sponsor.contact_name, sponsor.contact_email, sponsor.phone, tenant.name AS tenant_name,
            sponsor.street, sponsor.postal_code, sponsor.city,
            (sponsor.logo_blob_key IS NOT NULL) AS logo_available, sponsor.logo_updated_at::text
     FROM sponsors sponsor JOIN tenants tenant ON tenant.id = sponsor.tenant_id
@@ -128,7 +129,9 @@ async function loadSpace(client: DatabaseClient, tenantId: string, sponsorId: st
     sponsor: {
       id: sponsor.rows[0].id,
       legal_name: sponsor.rows[0].legal_name,
+      contact_name: sponsor.rows[0].contact_name,
       contact_email: sponsor.rows[0].contact_email,
+      phone: sponsor.rows[0].phone,
       tenant_name: sponsor.rows[0].tenant_name,
       address: { street: sponsor.rows[0].street, postal_code: sponsor.rows[0].postal_code, city: sponsor.rows[0].city },
       logoAvailable: sponsor.rows[0].logo_available,
@@ -292,6 +295,27 @@ export default async (request: Request, context: Context) => {
 
   if (logoMatch) return handleSponsorLogo(request, context, user, logoMatch[1], logoMatch[2]);
 
+  const contactMatch = pathname.match(contactRoute);
+  if (contactMatch) {
+    if (request.method !== "PATCH") return json({ error: "method_not_allowed" }, 405);
+    const invalidOrigin = verifyMutation(request);
+    if (invalidOrigin) return invalidOrigin;
+    const [, tenantId, sponsorId] = contactMatch;
+    if (!isUuid(tenantId) || !isUuid(sponsorId)) return json({ error: "invalid_target" }, 422);
+    const parsed = parseSponsorContact(await request.json().catch(() => null));
+    if (!parsed.ok) return json({ error: parsed.error }, 422);
+    try {
+      const result = await withSession(user.id, tenantId,
+        (client) => updateSponsorContact(client, tenantId, sponsorId, user.id, parsed.value), user.email);
+      if (result.state === "denied") return json({ error: "sponsor_access_denied" }, 403);
+      if (result.state === "conflict") return json({ error: "sponsor_contact_conflict" }, 409);
+      return json({ contact: result.contact });
+    } catch (error) {
+      console.error("sponsor_contact_update_failed", { requestId: context.requestId, tenantId, sponsorId, error });
+      return json({ error: "sponsor_contact_update_failed", requestId: context.requestId }, 500);
+    }
+  }
+
   const addressMatch = pathname.match(addressRoute);
   if (addressMatch) {
     if (request.method !== "PATCH") return json({ error: "method_not_allowed" }, 405);
@@ -431,5 +455,6 @@ export const config: Config = {
     "/api/sponsor-portal/:tenantId/:transitionSponsorId/respond",
     "/api/sponsor-portal/:tenantId/:sponsorId/logo",
     "/api/sponsor-portal/:tenantId/:sponsorId/address",
+    "/api/sponsor-portal/:tenantId/:sponsorId/contact",
   ],
 };

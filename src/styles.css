@@ -1349,6 +1349,9 @@ td small { margin-top: 3px; color: var(--ink-3); }
 .sponsor-address__street, .sponsor-address form > p, .sponsor-address form > button { grid-column: 1 / -1; }
 .sponsor-address__note { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.65; }
 .sponsor-address form > button { justify-self: start; }
+.sponsor-contact { margin-bottom: 24px; }
+.sponsor-contact form { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.sponsor-contact .sponsor-address__note { overflow-wrap: anywhere; }
 @media (max-width: 540px) {
   .sponsor-space-nav button { padding: 12px 8px; font-size: 14px; }
   .sponsor-address form { grid-template-columns: 1fr; }

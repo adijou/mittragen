@@ -25,10 +25,12 @@ Nur Rollen mit `sponsors:write` dürfen den Zugangsbereich aufrufen und Einladun
 ## Im Space
 
 - **Dokumente:** Freigegebene und bestätigte Sponsoringverträge können als PDF heruntergeladen werden. Ausstehende Vertragsbestätigungen und vorhandene Überführungsvorschläge bleiben erreichbar.
-- **Adresse:** Strasse/Hausnummer, Postleitzahl und Ort können geändert werden. Andere Felder, insbesondere Kontoadresse, Firmenname, Paket, Betrag und Status, sind über diesen Endpunkt nicht änderbar. Bei einer zwischenzeitlich geänderten Adresse wird ein veralteter Speicherversuch abgewiesen.
+- **Meine Angaben:** Firmen-/Sponsorname, Name der Kontaktperson, Kontakt-E-Mail und Telefon lassen sich im Formular „Name und Kontakt“ pflegen. Strasse/Hausnummer, Postleitzahl und Ort bleiben im separaten Adressformular erreichbar. Optionale Kontaktdaten können geleert werden. Parallele Änderungen werden erkannt und veraltete Speicherversuche abgewiesen.
+
+Die Kontakt-E-Mail dient der Kommunikation mit der Organisation. Die bestätigte Login-Adresse und bestehende Sponsorzugänge bleiben unverändert; eine neue Kontaktadresse erteilt keiner anderen Person Zugriff. Die Login-Adresse ist direkt beim E-Mail-Feld erklärt. Änderungen sind ausschliesslich für den eigenen Sponsor möglich; Paket, Betrag, Status, Rollen und Vertragsfelder sind nicht über diesen Endpunkt änderbar.
 - **Logo:** Die vorhandene Verwaltung für PNG/JPEG bis 2 MB ist im eigenen Bereich erreichbar.
 
-Adressänderungen werden unmittelbar in den Sponsor-Stammdaten der Organisation gespeichert und mit Vorher-/Nachherwerten protokolliert. Bereits freigegebene oder unterzeichnete Vertrags-Snapshots bleiben unverändert. Eine allgemeine Dateiablage und Rechnungsdokumente sind kein Bestandteil dieses Ausbaus.
+Adress- und Kontaktänderungen werden unmittelbar in den Sponsor-Stammdaten der Organisation gespeichert und mit Vorher-/Nachherwerten protokolliert. Bereits freigegebene oder unterzeichnete Vertrags-Snapshots bleiben unverändert. Eine allgemeine Dateiablage und Rechnungsdokumente sind kein Bestandteil dieses Ausbaus.
 
 ## Zugriff und Migration
 
@@ -38,7 +40,7 @@ Die Migration `20260914100000_sponsor_self_service_access` ergänzt eine SELECT-
 
 Die Zuordnung erfolgt beim verifizierten Login: gleicher Unterzeichner-Empfänger, bestätigte Unterzeichnung, noch nicht beanspruchter Zugang. Das Ende der Einmallink-Gültigkeit verhindert eine erneute Unterzeichnung, beendet aber nicht die Möglichkeit, als verifizierte unterzeichnende Person den Space zu aktivieren. Wiederholte Logins erstellen keine zusätzlichen Zugänge. Eine abweichende Kontaktperson erhält dadurch nicht automatisch Zugriff.
 
-Adressänderungen prüfen zusätzlich zur Anmeldung die Kombination aus Organisation, Sponsor und Kontoinhaber. Die Datenbank erzwingt weiterhin die Mandantentrennung. Der Signaturlink selbst ist kein dauerhaftes Login.
+Adress- und Kontaktänderungen prüfen zusätzlich zur Anmeldung die Kombination aus Organisation, Sponsor und Kontoinhaber. Die Datenbank erzwingt weiterhin die Mandantentrennung. Der Signaturlink selbst ist kein dauerhaftes Login.
 
 ## Prüfung
 
@@ -46,6 +48,8 @@ Adressänderungen prüfen zusätzlich zur Anmeldung die Kombination aus Organisa
 
 Die direkten Einladungen werden zusätzlich für fehlende Adminrechte, fremde Organisationen, Sponsoren ohne Vertrag, Altverträge ohne Unterzeichnungsanfrage, E-Mail-Abweichungen, Versandfehler, Ablauf, Wiederholung und verspätete Versandantworten geprüft. Der Versandtest verwendet einen simulierten Mailanbieter und verlangt dessen Versand-ID; es werden keine echten Einladungen versendet.
 
-Prüfstand 15. September 2026: 185 Tests und der Produktions-Build erfolgreich. Der Mailversand über Resend und die Freischaltung des Logins wurden vom Auftraggeber bestätigt. Ergänzt wurden Tests für fehlende serverseitige Profildaten, wirklich unbestätigte E-Mails, fremde Identitäten, Identity-Ausfälle und die automatische Zuordnung ohne Organisationsrolle. Ein zusätzlicher Test ruft den tatsächlichen API-Handler für Zugangszuordnung und Space-Abruf auf, sodass auch die vorgelagerte Bestätigungsprüfung abgedeckt ist. Die produktive Abnahme des Sponsor-Space nach dieser Korrektur steht noch aus. Dieser Einladungsablauf setzt aktivierte Kontoerstellung und E-Mail-Bestätigung voraus.
+Prüfstand 15. September 2026: 191 Tests und der Produktions-Build erfolgreich. Der Mailversand über Resend und die Freischaltung des Logins wurden vom Auftraggeber bestätigt. Ergänzt wurden Tests für fehlende serverseitige Profildaten, wirklich unbestätigte E-Mails, fremde Identitäten, Identity-Ausfälle und die automatische Zuordnung ohne Organisationsrolle. Ein zusätzlicher Test ruft den tatsächlichen API-Handler für Zugangszuordnung und Space-Abruf auf, sodass auch die vorgelagerte Bestätigungsprüfung abgedeckt ist. Der Sponsor-Space wurde mit dem betroffenen Konto produktiv geprüft: Dokumente, Adresse und Logo laden; der allgemeine Arbeitsbereich leitet in den Sponsor-Space weiter. Dieser Einladungsablauf setzt aktivierte Kontoerstellung und E-Mail-Bestätigung voraus.
+
+Die zusätzliche Kontaktpflege ist mit realen Migrationen und RLS geprüft: Speichern und Leeren optionaler Felder, fremde Sponsoren, parallele Änderungen, Audit-Nachweis sowie unveränderte Verträge, Einladungen und Zugangsrechte. Der Handler-Test prüft zudem die Netlify-Routenregistrierung, die Herkunft der Anfrage und die Eingabeprüfung.
 
 `npm run build` prüft Frontend und Serverfunktionen mit TypeScript und erzeugt den Produktions-Build. Vor der produktiven Abnahme ist zusätzlich der echte Identity-E-Mail-Rückweg zu prüfen; die lokalen Datenbanktests versenden keine E-Mails.

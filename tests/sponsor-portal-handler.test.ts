@@ -26,7 +26,7 @@ const hooks = registerHooks({
     return nextLoad(url, context);
   },
 });
-const { default: handler } = await import("../netlify/functions/sponsor-portal.mts");
+const { default: handler, config } = await import("../netlify/functions/sponsor-portal.mts");
 hooks.deregister();
 
 const context = { requestId: "test-request", cookies: { get: (name: string) => name === "nf_jwt" ? "caller-token" : undefined } };
@@ -58,4 +58,21 @@ test("the route still rejects truly unconfirmed profiles for claim and space loa
     assert.equal(result.status, 422);
     assert.equal((await result.json()).error, "verified_email_required");
   }
+});
+
+test("contact route enforces origin, input validation and sponsor ownership", async (t) => {
+  assert.ok(config.path.includes("/api/sponsor-portal/:tenantId/:sponsorId/contact"), "Netlify must register the contact endpoint");
+  t.mock.method(globalThis, "fetch", async () => Response.json({ id: "sponsor-account", email: "sponsor@example.invalid", confirmed_at: "2026-09-15T06:00:00Z" }));
+  const url = "https://mittragen.example.invalid/api/sponsor-portal/11111111-1111-4111-8111-111111111111/22222222-2222-4222-8222-222222222222/contact";
+  const contact = { legal_name: "Test Sponsor", contact_name: null, contact_email: "contact@example.invalid", phone: null };
+  for (const [origin, payload, status, error] of [
+    ["https://other.example.invalid", { ...contact, original: contact }, 403, "invalid_request_origin"],
+    ["https://mittragen.example.invalid", { ...contact, original: contact, roles: ["admin"] }, 422, "contact_fields_only"],
+    ["https://mittragen.example.invalid", { ...contact, original: contact }, 403, "sponsor_access_denied"],
+  ] as const) {
+    const result = await handler(new Request(url, { method: "PATCH", headers: { Origin: origin }, body: JSON.stringify(payload) }), context as never);
+    assert.equal(result.status, status);
+    assert.equal((await result.json()).error, error);
+  }
+  assert.equal((await handler(new Request(url), context as never)).status, 405);
 });
