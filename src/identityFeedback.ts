@@ -55,6 +55,11 @@ export function emailConfirmationRequired(reason: unknown) {
 export function identityErrorMessage(reason: unknown, context: IdentityCallbackKind | "login" | "signup" | "initialization" = "login") {
   const message = reason instanceof Error ? reason.message.toLowerCase() : "";
   const status = reason && typeof reason === "object" && "status" in reason ? reason.status : undefined;
+  if (message === "verified_email_required") return "Bitte bestätigen Sie zuerst Ihre E-Mail-Adresse über den Link in Ihrer Bestätigungsmail.";
+  if (message === "authentication_required") return "Ihre Sitzung ist abgelaufen. Bitte melden Sie sich erneut an.";
+  if (message === "access_check_failed" || message === "identity_verification_unavailable") {
+    return "Sie sind angemeldet. Ihr Zugang konnte gerade nicht geprüft werden. Bitte versuchen Sie es erneut.";
+  }
   if (status === 429 || /rate limit|too many requests/.test(message)) {
     return "Es gab zu viele Versuche. Bitte warten Sie einen Moment und versuchen Sie es erneut.";
   }
@@ -102,8 +107,12 @@ export function createIdentityInitializer(dependencies: {
 export async function confirmedAccessDestination(preferSponsor: boolean, fetcher: typeof fetch = fetch): Promise<"sponsor" | "workspace"> {
   const response = await fetcher("/api/sponsor-portal/claim", {
     method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+    signal: AbortSignal.timeout(12000),
   });
-  if (!response.ok) throw new Error("access_check_failed");
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({})) as { error?: string };
+    throw new Error(body.error ?? "access_check_failed");
+  }
   const access = await response.json() as { claimed?: number; hasAccess?: boolean; hasWorkspace?: boolean };
   return preferSponsor || shouldOpenSponsorSpace(access) ? "sponsor" : "workspace";
 }

@@ -137,6 +137,18 @@ test("the success screen resolves the sponsor in a new tab and exposes failures 
   await assert.rejects(confirmedAccessDestination(false, async () => Response.json({ error: "unavailable" }, { status: 503 })));
 });
 
+test("a failed sponsor claim never turns into organization onboarding and keeps the precise failure", async () => {
+  for (const error of ["verified_email_required", "identity_verification_unavailable", "authentication_required"]) {
+    for (const preferSponsor of [true, false]) {
+      await assert.rejects(confirmedAccessDestination(preferSponsor, async () => Response.json({ error }, { status: 422 })),
+        (reason: Error) => reason.message === error);
+    }
+  }
+  const retryMessage = identityErrorMessage(new Error("identity_verification_unavailable"));
+  assert.match(retryMessage, /angemeldet/);
+  assert.doesNotMatch(retryMessage, /bestätigen Sie zuerst/);
+});
+
 test("the German confirmation email uses Identity's canonical URL twice and an absolute email-compatible logo", async () => {
   const template = await readFile(new URL("../public/emails/confirmation.html", import.meta.url), "utf8");
   const target = "{{ .ConfirmationURL }}";

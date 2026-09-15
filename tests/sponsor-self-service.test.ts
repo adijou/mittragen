@@ -8,6 +8,7 @@ import { claimContractSpaces, parseSponsorAddress, updateSponsorAddress } from "
 import type { DatabaseClient } from "../netlify/functions/_shared/database.ts";
 import { clearSponsorEntry, prepareSponsorAccess, readSponsorEntry, shouldOpenSponsorSpace } from "../src/sponsorAccess.ts";
 import { claimSponsorInvitations, loadSponsorAccess, prepareSponsorAccessInvitation, recordSponsorAccessDelivery } from "../netlify/functions/_shared/sponsor-access-invitations.ts";
+import { verifySponsorIdentity } from "../netlify/functions/_shared/sponsor-identity.ts";
 
 const original = { street: "Alte Gasse 1", postal_code: "3178", city: "Bösingen" };
 const newAddress = { street: "Neue Gasse 12", postal_code: "3186", city: "Düdingen" };
@@ -176,7 +177,12 @@ test("self-service runs against PostgreSQL with real migrations and a role subje
       assert.equal(await session(recipient, null, (client) => claimSponsorInvitations(client, { ...recipient, confirmedAt: undefined })), 0);
       const wrong = { ...recipient, email: "wrong@example.invalid", id: "wrong-account" };
       assert.equal(await session(wrong, null, (client) => claimSponsorInvitations(client, wrong)), 0);
-      assert.equal(await session(recipient, null, (client) => claimSponsorInvitations(client, recipient)), 1);
+      const recovered = await verifySponsorIdentity({ ...recipient, confirmedAt: undefined }, "test-user-token",
+        "https://identity.example.invalid", async () => Response.json({
+          id: recipient.id, email: recipient.email, confirmed_at: recipient.confirmedAt,
+        }));
+      assert.ok(recovered.user);
+      assert.equal(await session(recipient, null, (client) => claimSponsorInvitations(client, recovered.user!)), 1);
       assert.equal(await session(recipient, null, (client) => claimSponsorInvitations(client, recipient)), 0);
       const access = await session(administrator, tenantA, (client) => loadSponsorAccess(client, tenantA, bareSponsor, administrator.id));
       assert.equal(access.state, "ready");

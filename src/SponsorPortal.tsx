@@ -64,6 +64,7 @@ export function SponsorPortal({ onHome, onLogin }: { onHome: () => void; onLogin
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [section, setSection] = useState<"documents" | "address" | "logo">("documents");
+  const [loadAttempt, setLoadAttempt] = useState(0);
 
   const load = async (currentUser: User) => {
     await api<{ claimed: number }>("/api/sponsor-portal/claim", { method: "POST", body: "{}" });
@@ -76,6 +77,8 @@ export function SponsorPortal({ onHome, onLogin }: { onHome: () => void; onLogin
 
   useEffect(() => {
     let active = true;
+    setLoading(true);
+    setError("");
     const initialize = async () => {
       try {
         await refreshSession();
@@ -86,7 +89,9 @@ export function SponsorPortal({ onHome, onLogin }: { onHome: () => void; onLogin
       } catch (reason) {
         if (active) setError(reason instanceof Error && reason.message === "verified_email_required"
           ? "Bitte bestätigen Sie zuerst Ihre E-Mail-Adresse über den zugesandten Link."
-          : "Ihr Space konnte nicht geladen werden. Bitte versuchen Sie es erneut.");
+          : reason instanceof Error && reason.message === "identity_verification_unavailable"
+            ? "Ihr Anmeldestatus konnte gerade nicht geprüft werden. Bitte versuchen Sie es erneut."
+            : "Ihr Space konnte nicht geladen werden. Bitte versuchen Sie es erneut.");
       } finally {
         if (active) setLoading(false);
       }
@@ -94,7 +99,7 @@ export function SponsorPortal({ onHome, onLogin }: { onHome: () => void; onLogin
     void initialize();
     const unsubscribe = onAuthChange((_event, currentUser) => setUser(currentUser));
     return () => { active = false; unsubscribe(); };
-  }, []);
+  }, [loadAttempt]);
 
   const space = useMemo(
     () => spaces.find((item) => `${item.tenantId}:${item.sponsor.id}` === selectedSpaceKey) ?? spaces[0] ?? null,
@@ -213,13 +218,13 @@ export function SponsorPortal({ onHome, onLogin }: { onHome: () => void; onLogin
   };
 
   if (loading) return <div className="sponsor-portal"><main className="sponsor-portal__state">Sponsorbereich wird geladen …</main></div>;
-  if (!user) return <div className="sponsor-portal"><header><button onClick={onHome} className="access-brand-button"><Brand/></button><button className="access-link" onClick={onHome}>Zur Website</button></header><main className="sponsor-portal__welcome"><p className="eyebrow">Persönlicher Sponsorbereich</p><h1>Willkommen in Ihrem Space.</h1><p>Hier finden Sie Ihre Vertragsdokumente und verwalten Ihre Adresse und Ihr Logo. Melden Sie sich mit der E-Mail-Adresse an, mit der Sie den Vertrag bestätigt oder die Einladung erhalten haben.</p><div className="sponsor-space-entry-actions"><button className="access-primary" onClick={() => goToLogin()}>Anmelden</button><button className="access-secondary" onClick={() => goToLogin("signup")}>Konto erstellen</button></div></main></div>;
+  if (!user) return <div className="sponsor-portal"><header><button onClick={onHome} className="access-brand-button"><Brand/></button><button className="access-link" onClick={onHome}>Zur Website</button></header><main className="sponsor-portal__welcome"><p className="eyebrow">Persönlicher Sponsorbereich</p><h1>Willkommen in Ihrem Space.</h1><p>Hier finden Sie Ihre Vertragsdokumente und verwalten Ihre Adresse und Ihr Logo. Melden Sie sich mit der E-Mail-Adresse an, mit der Sie den Vertrag bestätigt oder die Einladung erhalten haben.</p><div className="sponsor-space-entry-actions"><button className="access-primary" onClick={() => goToLogin()}>Anmelden</button><button className="access-secondary" onClick={() => goToLogin("signup")}>Sponsor-Zugang einrichten</button></div></main></div>;
 
   return <div className="sponsor-portal">
     <header><button onClick={onHome} className="access-brand-button"><Brand/></button><div><span>{user.email}</span><button className="access-link" onClick={() => void logout().then(() => setUser(null))}>Abmelden</button></div></header>
     <main>
       {error && <p className="form-error" role="alert">{error}</p>}{message && <p className="form-success" role="status">{message}</p>}
-      {!space ? <section className="sponsor-portal__welcome"><p className="eyebrow">Noch kein Zugang</p><h1>Noch kein Sponsoring zugeordnet.</h1><p>Verwenden Sie die Empfängeradresse Ihrer Einladung oder die E-Mail-Adresse, mit der Sie Ihren Vertrag bestätigt haben. Bestätigen Sie auch Ihre Konto-E-Mail. Falls Ihre Einladung abgelaufen ist, bitten Sie die Organisation um eine neue Einladung.</p><button className="access-secondary" onClick={() => void logout().then(() => { setSpaces([]); setUser(null); goToLogin(); })}>Mit anderem Konto anmelden</button></section> : <>
+      {!space && error ? <section className="sponsor-portal__welcome"><h1>Ihr Space konnte gerade nicht geöffnet werden.</h1><button className="access-primary" onClick={() => setLoadAttempt((value) => value + 1)}>Zugang erneut prüfen</button><button className="access-secondary" onClick={() => void logout().then(() => { setSpaces([]); setUser(null); goToLogin(); })}>Erneut anmelden</button></section> : !space ? <section className="sponsor-portal__welcome"><p className="eyebrow">Noch kein Zugang</p><h1>Noch kein Sponsoring zugeordnet.</h1><p>Verwenden Sie die Empfängeradresse Ihrer Einladung oder die E-Mail-Adresse, mit der Sie Ihren Vertrag bestätigt haben. Falls Ihre Einladung abgelaufen ist, bitten Sie die Organisation um eine neue Einladung.</p><button className="access-secondary" onClick={() => void logout().then(() => { setSpaces([]); setUser(null); goToLogin(); })}>Mit anderem Konto anmelden</button></section> : <>
         <section className="sponsor-portal__hero"><div><p className="eyebrow">{space.sponsor.tenant_name}</p><h1>Guten Tag {space.sponsor.legal_name}</h1><p>{"Ihre Dokumente, Ihre Adresse und Ihr Auftritt."}</p></div>{spaces.length > 1 && <select aria-label="Sponsoring auswählen" disabled={busy !== ""} value={selectedSpaceKey} onChange={(event) => setSelectedSpaceKey(event.target.value)}>{spaces.map((item) => <option value={`${item.tenantId}:${item.sponsor.id}`} key={`${item.tenantId}:${item.sponsor.id}`}>{item.sponsor.tenant_name} · {item.sponsor.legal_name}</option>)}</select>}</section>
         <nav className="sponsor-space-nav" aria-label="Bereiche im Sponsor-Space">
           {([['documents', 'Dokumente'], ['address', 'Adresse'], ['logo', 'Logo']] as const).map(([value, label]) => <button key={value} type="button" aria-pressed={section === value} disabled={busy !== ""} onClick={() => { setSection(value); setError(""); setMessage(""); }}>{label}</button>)}

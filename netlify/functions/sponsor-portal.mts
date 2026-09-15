@@ -1,12 +1,13 @@
 import { getStore } from "@netlify/blobs";
 import type { Config, Context } from "@netlify/functions";
-import { AuthError, verifyRequestOrigin, type User } from "@netlify/identity";
+import { AuthError, getIdentityConfig, verifyRequestOrigin, type User } from "@netlify/identity";
 import { isResponse, json, requireUser } from "./_shared/auth.ts";
 import { isUuid, withSession, type DatabaseClient } from "./_shared/database.ts";
 import { validateLogoUpload } from "./_shared/logo-upload.ts";
 import { parseSponsorDecision } from "./_shared/sponsor-portal-input.ts";
 import { claimContractSpaces, parseSponsorAddress, updateSponsorAddress } from "./_shared/sponsor-self-service.ts";
 import { claimSponsorInvitations } from "./_shared/sponsor-access-invitations.ts";
+import { verifySponsorIdentity } from "./_shared/sponsor-identity.ts";
 
 type AccessRow = { tenant_id: string; sponsor_id: string };
 
@@ -313,7 +314,11 @@ export default async (request: Request, context: Context) => {
     const invalidOrigin = verifyMutation(request);
     if (invalidOrigin) return invalidOrigin;
     try {
-      const result = await claimInvitations(user);
+      const accessToken = context.cookies.get("nf_jwt")
+        ?? request.headers.get("authorization")?.match(/^Bearer\s+(\S+)$/i)?.[1];
+      const verified = await verifySponsorIdentity(user, accessToken, getIdentityConfig()?.url);
+      if (verified.error) return json({ error: verified.error, requestId: context.requestId }, verified.status);
+      const result = await claimInvitations(verified.user);
       return "error" in result ? json({ error: result.error }, 422) : json(result);
     } catch (error) {
       console.error("sponsor_portal_claim_failed", { requestId: context.requestId, userId: user.id, error });

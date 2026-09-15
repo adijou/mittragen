@@ -6,6 +6,10 @@ Bei einem neuen Konto erfolgt die E-Mail-Bestätigung über Netlify Identity. Er
 
 Der dauerhafte Einstieg ist `/sponsor`. Nach einem normalen Login werden vorhandene Sponsorzugänge ebenfalls erkannt. Nach einer E-Mail-Bestätigung erscheint **E-Mail-Adresse erfolgreich bestätigt** mit **Weiter zu meinem Space**. Die Zuordnung wird auch dann erkannt, wenn der Bestätigungslink in einem neuen Tab ohne den ursprünglichen Formularzustand geöffnet wurde.
 
+Sponsorinnen und Sponsoren benötigen einen geschützten Login für ihren Space, aber keine eigene Organisation und keine Verwaltungsrolle. Der Einstieg heisst **Sponsor-Zugang einrichten**. Nach Login oder Passwort-Wiederherstellung sowie beim direkten Aufruf von `/workspace` werden reine Sponsorzugänge nach `/sponsor` geführt. Eine fehlgeschlagene Zugangsprüfung zeigt einen erneuten Prüfversuch und öffnet keine Organisationserfassung. Konten mit einer zusätzlichen Organisationsrolle behalten ihren bisherigen Workspace-Einstieg, sofern kein Sponsor-Einstieg gewählt wurde.
+
+Netlify Identity kann serverseitig ein verkürztes, geprüftes JWT-Benutzerobjekt ohne `confirmedAt` liefern. In diesem Fall liest der Claim-Endpunkt das Identity-Profil über `/user` mit dem eigenen Sitzungstoken des angemeldeten Kontos. Benutzer-ID und E-Mail müssen übereinstimmen, und das Profil muss `confirmed_at` enthalten. Ein Operator-Token und vom Benutzer änderbare Metadaten werden dafür nicht verwendet. Eine nicht erreichbare Identity-Prüfung wird getrennt von einer tatsächlich unbestätigten E-Mail behandelt.
+
 ## Bestehenden Sponsor aus der Administration einladen
 
 1. Im Workspace **Sponsoren** öffnen und beim gewünschten Sponsor **Zugang einrichten** wählen. Derselbe Bereich steht im Bearbeitungsformular unter den Stammdaten bereit.
@@ -42,6 +46,6 @@ Adressänderungen prüfen zusätzlich zur Anmeldung die Kombination aus Organisa
 
 Die direkten Einladungen werden zusätzlich für fehlende Adminrechte, fremde Organisationen, Sponsoren ohne Vertrag, Altverträge ohne Unterzeichnungsanfrage, E-Mail-Abweichungen, Versandfehler, Ablauf, Wiederholung und verspätete Versandantworten geprüft. Der Versandtest verwendet einen simulierten Mailanbieter und verlangt dessen Versand-ID; es werden keine echten Einladungen versendet.
 
-Prüfstand 14. September 2026: 172 Tests und der Produktions-Build erfolgreich, einschliesslich der deutschen E-Mail-Bestätigung und der einmaligen Token-Verarbeitung. Die öffentlichen Identity-Einstellungen von `mittragen.ch` bestätigen `disable_signup: false` und `autoconfirm: false`: Kontoerstellung ist aktiviert und die E-Mail muss bestätigt werden. Dieser Einladungsablauf setzt aktivierte Kontoerstellung voraus. Ein vollständiger Browser-/E-Mail-Durchlauf steht noch aus; die Erweiterung ist lokal vorbereitet und noch nicht veröffentlicht.
+Prüfstand 15. September 2026: 183 Tests und der Produktions-Build erfolgreich. Der Mailversand über Resend und die Freischaltung des Logins wurden vom Auftraggeber bestätigt. Ergänzt wurden Tests für fehlende serverseitige Profildaten, wirklich unbestätigte E-Mails, fremde Identitäten, Identity-Ausfälle und die automatische Zuordnung ohne Organisationsrolle. Die produktive Abnahme des Sponsor-Space nach dieser Korrektur steht noch aus. Dieser Einladungsablauf setzt aktivierte Kontoerstellung und E-Mail-Bestätigung voraus.
 
 `npm run build` prüft Frontend und Serverfunktionen mit TypeScript und erzeugt den Produktions-Build. Vor der produktiven Abnahme ist zusätzlich der echte Identity-E-Mail-Rückweg zu prüfen; die lokalen Datenbanktests versenden keine E-Mails.
