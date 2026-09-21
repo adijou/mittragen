@@ -133,6 +133,7 @@ test("legacy contracts can be created directly from a sponsor and package select
     ok: true,
     value: {
       mode: "direct",
+      skipExisting: false,
       sponsorId,
       packageVersionId,
       annualValueCents: 250_000,

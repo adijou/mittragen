@@ -350,9 +350,9 @@ export async function createContractPdf(data: ContractPdfData): Promise<Uint8Arr
 
   const drawConfirmation = () => {
     const isAdminLegacy = data.confirmationMode === "admin_legacy";
-    const name = `${data.signingAuthorityName ?? data.sponsor.contactName ?? "Sponsor"} · ${data.signingAuthorityRole ?? "vertretungsberechtigte Person"}`;
+    const name = `${data.signingAuthorityName ?? (isAdminLegacy ? "Unterzeichnende Person unbekannt" : data.sponsor.contactName ?? "Sponsor")} · ${data.signingAuthorityRole ?? "vertretungsberechtigte Person"}`;
     const detail = isAdminLegacy
-      ? `Ursprünglicher Vertragsabschluss: ${swissDate(data.confirmedAt)}`
+      ? `Ursprünglicher Vertragsabschluss: ${data.confirmedAt ? swissDate(data.confirmedAt) : "Abschlussdatum unbekannt"}`
       : `${data.confirmedEmail ?? "-"} · ${swissDate(data.confirmedAt)}`;
     const recorded = isAdminLegacy
       ? `Administrativ erfasst: ${data.confirmedEmail ?? "-"} · ${swissDate(data.confirmationRecordedAt)}`
@@ -506,9 +506,9 @@ export async function createContractPdf(data: ContractPdfData): Promise<Uint8Arr
 
   section("8", "Bestätigung");
   drawText(data.confirmationMode === "admin_legacy"
-    ? "mittragen.ch protokolliert diesen bestehenden Abschluss als Altbestand mit ursprünglichem Abschlussdatum, Admin-Identität, Nachweis und Dokument-Fingerabdruck."
+    ? "mittragen.ch protokolliert diesen bestehenden Abschluss als Altbestand mit den verfügbaren historischen Angaben, Admin-Identität, Nachweis und Dokument-Fingerabdruck."
     : "Mit der ausdrücklichen Bestätigung erklären beide Parteien ihr Einverständnis mit dem dokumentierten Vertragsinhalt. mittragen.ch protokolliert Identität, E-Mail-Adresse, Zeitpunkt, Vertragsversion und Dokument-Fingerabdruck.", { after: 7 });
-  if (data.status === "confirmed" && data.confirmedAt) {
+  if (data.status === "confirmed" && (data.confirmedAt || data.confirmationMode === "admin_legacy")) {
     drawConfirmation();
   } else {
     drawText(data.status === "draft"
@@ -518,7 +518,7 @@ export async function createContractPdf(data: ContractPdfData): Promise<Uint8Arr
     });
   }
 
-  if (data.terms.placeOfJurisdiction && !(data.status === "confirmed" && data.confirmedAt)) {
+  if (data.terms.placeOfJurisdiction && !(data.status === "confirmed" && (data.confirmedAt || data.confirmationMode === "admin_legacy"))) {
     y -= 7;
     drawText(`Vereinbarter Gerichtsstand: ${data.terms.placeOfJurisdiction}.`, { size: 8.3, color: MUTED });
   }

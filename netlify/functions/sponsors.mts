@@ -106,7 +106,18 @@ export default async (request: Request, context: Context) => {
                sponsor.source_organization, sponsor.status, sponsor.proposal_package,
                sponsor.assigned_package_version_id, version.name AS assigned_package_name,
                sponsor.annual_value_cents, sponsor.notes, sponsor.created_at::text, sponsor.updated_at::text,
-               (sponsor.logo_blob_key IS NOT NULL) AS logo_available, sponsor.logo_updated_at::text
+               (sponsor.logo_blob_key IS NOT NULL) AS logo_available, sponsor.logo_updated_at::text,
+               COALESCE((SELECT jsonb_agg(jsonb_build_object(
+                 'contract_id', contract.id, 'contract_number', contract.contract_number,
+                 'package_id', contract_version.package_id,
+                 'package_name', COALESCE(contract.package_snapshot->>'name', contract_version.name),
+                 'annual_value_cents', (contract.package_snapshot->>'priceCents')::integer
+               ) ORDER BY contract.created_at, contract.id)
+                 FROM sponsorship_contracts contract
+                 JOIN sponsorship_package_versions contract_version
+                   ON contract_version.id = contract.package_version_id AND contract_version.tenant_id = contract.tenant_id
+                 WHERE contract.tenant_id = sponsor.tenant_id AND contract.sponsor_id = sponsor.id
+                   AND contract.status = 'confirmed'), '[]'::jsonb) AS package_assignments
         FROM sponsors sponsor
         LEFT JOIN sponsorship_package_versions version
           ON version.id = sponsor.assigned_package_version_id AND version.tenant_id = sponsor.tenant_id

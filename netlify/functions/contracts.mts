@@ -164,7 +164,7 @@ type SnapshotSource = {
     payment_plan: string; payment_terms: string | null; valid_from: string | null; valid_until: string | null;
 };
 
-async function buildSnapshots(client: DatabaseClient, tenantId: string, selection: ContractCreateInput, allowArchivedDirect = false) {
+async function buildSnapshots(client: DatabaseClient, tenantId: string, selection: ContractCreateInput, allowArchivedDirect = false, allowInternalDraft = false) {
   const sourceResult = selection.mode === "transition"
     ? await client.query<SnapshotSource>(`
       SELECT proposal.sponsor_id, proposal.proposed_package_version_id AS package_version_id,
@@ -190,10 +190,10 @@ async function buildSnapshots(client: DatabaseClient, tenantId: string, selectio
       JOIN sponsorship_package_versions version ON version.tenant_id = sponsor.tenant_id
       JOIN sponsorship_packages package ON package.id = version.package_id AND package.tenant_id = version.tenant_id
       WHERE sponsor.tenant_id = $1 AND sponsor.id = $2 AND version.id = $3
-        AND version.status = 'published'
+        AND (version.status = 'published' OR ($6::boolean AND version.status = 'draft' AND version.visibility = 'private'))
         AND ((sponsor.status <> 'inactive' AND package.status = 'active') OR $5::boolean)
       LIMIT 1
-    `, [tenantId, selection.sponsorId, selection.packageVersionId, selection.annualValueCents, allowArchivedDirect]);
+    `, [tenantId, selection.sponsorId, selection.packageVersionId, selection.annualValueCents, allowArchivedDirect, allowInternalDraft]);
   const source = sourceResult.rows[0];
   if (!source) return null;
   const settings = await getSettings(client, tenantId);
@@ -311,7 +311,16 @@ async function listContracts(client: DatabaseClient, tenantId: string) {
       AND (version.valid_until IS NULL OR version.valid_until >= CURRENT_DATE)
     ORDER BY version.price_cents, lower(version.name), version.version_number DESC
   `, [tenantId]);
-  return { contracts: contracts.rows, eligible: eligible.rows, sponsors: sponsors.rows, catalog: catalog.rows };
+  const internalDrafts = await client.query<{ id: string; name: string; price_cents: number; duration_months: number; version_number: number }>(`
+    SELECT version.id, version.name, version.price_cents, version.duration_months, version.version_number
+    FROM sponsorship_package_versions version
+    JOIN sponsorship_packages package ON package.id = version.package_id AND package.tenant_id = version.tenant_id
+    WHERE version.tenant_id = $1 AND version.status = 'draft' AND version.visibility = 'private' AND package.status = 'active'
+      AND EXISTS (SELECT 1 FROM sponsorship_rights right_item WHERE right_item.tenant_id = version.tenant_id AND right_item.package_version_id = version.id)
+    ORDER BY lower(version.name), version.version_number DESC
+  `, [tenantId]);
+  return { contracts: contracts.rows, eligible: eligible.rows, sponsors: sponsors.rows, catalog: catalog.rows,
+    legacyCatalog: [...catalog.rows, ...internalDrafts.rows] };
 }
 
 async function releaseReservationIfUnused(client: DatabaseClient, tenantId: string, sponsorId: string, packageVersionId: string) {
@@ -430,13 +439,29 @@ export default async (request: Request, context: Context) => {
       const result = await withSession(user.id, tenantId, async (client) => {
         const role = await membershipRole(client, tenantId, user.id);
         if (!role || !hasPermission(role, "packages:write")) return { state: "denied" as const };
-        const snapshots = await buildSnapshots(client, tenantId, parsed.value);
+        // Serialize imports for this sponsor so retries cannot create duplicates.
+        if (parsed.value.skipExisting) await client.query("SELECT id FROM sponsors WHERE tenant_id = $1 AND id = $2 FOR UPDATE", [tenantId, parsed.value.sponsorId]);
+        const snapshots = await buildSnapshots(client, tenantId, parsed.value, false, true);
         if (!snapshots) return { state: "selection_not_found" as const };
         if (!snapshots.settingsComplete) return { state: "settings_incomplete" as const };
+        if (!snapshots.package.rights.length) return { state: "selection_not_found" as const };
+        if (parsed.value.skipExisting) {
+          const duplicate = await client.query<{ id: string; status: string; price: number }>(`
+            SELECT contract.id, contract.status, (contract.package_snapshot->>'priceCents')::integer AS price
+            FROM sponsorship_contracts contract
+            JOIN sponsorship_package_versions existing ON existing.id = contract.package_version_id AND existing.tenant_id = contract.tenant_id
+            JOIN sponsorship_package_versions selected ON selected.package_id = existing.package_id AND selected.tenant_id = existing.tenant_id
+            WHERE contract.tenant_id = $1 AND contract.sponsor_id = $2 AND selected.id = $3 AND contract.status <> 'void'
+          `, [tenantId, snapshots.sponsorId, snapshots.packageVersionId]);
+          if (duplicate.rows.length) {
+            if (duplicate.rows.length !== 1 || duplicate.rows[0].status !== "confirmed" || duplicate.rows[0].price !== snapshots.package.priceCents) return { state: "duplicate_conflict" as const };
+            return { state: "existing" as const, detail: await contractDetail(client, tenantId, duplicate.rows[0].id) };
+          }
+        }
         const clock = await client.query<{ current_date: string }>(`
           SELECT (CURRENT_TIMESTAMP AT TIME ZONE 'Europe/Zurich')::date::text AS current_date
         `);
-        if (parsed.value.confirmedOn > clock.rows[0].current_date) return { state: "future_date" as const };
+        if (parsed.value.confirmedOn && parsed.value.confirmedOn > clock.rows[0].current_date) return { state: "future_date" as const };
         if (!await ensureDirectReservation(client, tenantId, snapshots.sponsorId, snapshots.packageVersionId, user.id)) {
           return { state: "reservation_held" as const };
         }
@@ -499,7 +524,8 @@ export default async (request: Request, context: Context) => {
       if (result.state === "settings_incomplete") return json({ error: "contract_settings_incomplete" }, 409);
       if (result.state === "reservation_held") return json({ error: "package_reservation_held" }, 409);
       if (result.state === "future_date") return json({ error: "legacy_confirmation_date_in_future" }, 422);
-      return json({ detail: result.detail }, 201);
+      if (result.state === "duplicate_conflict") return json({ error: "legacy_duplicate_conflict" }, 409);
+      return json({ detail: result.detail, skipped: result.state === "existing" }, result.state === "existing" ? 200 : 201);
     } catch (error) {
       const message = error instanceof Error ? error.message : "";
       if (message.includes("package_capacity_exceeded")) return json({ error: "package_capacity_exceeded" }, 409);
@@ -1036,7 +1062,7 @@ export default async (request: Request, context: Context) => {
         if (!current.rows[0]) return { state: "not_found" as const };
         if (current.rows[0].status === "confirmed") return { state: "already_confirmed" as const };
         if (current.rows[0].status !== "released") return { state: "not_released" as const };
-        if (parsed.value.confirmedOn > current.rows[0].current_date) return { state: "future_date" as const };
+        if (parsed.value.confirmedOn && parsed.value.confirmedOn > current.rows[0].current_date) return { state: "future_date" as const };
 
         const revoked = await client.query<{ id: string }>(`
           UPDATE contract_signing_requests

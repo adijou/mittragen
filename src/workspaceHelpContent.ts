@@ -73,6 +73,12 @@ export const workspaceHelpTopics: HelpTopic[] = [
         keywords: "Bild Upload Firmenlogo Sponsorlogo",
       },
       {
+        id: "sponsor-package-export", question: "Wie erhalte ich eine Liste aller Sponsoren mit ihren Paketen?",
+        answer: "Unter «Sponsoren» öffnet «Paketübersicht» die Zuordnungen aus bestätigten Verträgen einschliesslich Altbestand. Jede Paketspalte zeigt den vereinbarten Jahreswert. CHF 0 bedeutet kostenlos; ein Strich bedeutet keine Zuordnung.",
+        steps: ["Wählen Sie die richtige Organisation und öffnen Sie «Sponsoren».", "Öffnen Sie «Paketübersicht» für die Bildschirmansicht.", "Mit «Alle Sponsoren exportieren» laden Sie eine Excel-kompatible CSV-Datei mit allen Sponsoren und Paketspalten herunter, unabhängig von Such- und Logo-Filtern."],
+        note: "Entwürfe und aufgehobene Verträge sind nicht enthalten. Mehrere bestätigte Verträge desselben Pakets werden pro Sponsor addiert. Die Übersicht ist kein Zahlungsnachweis.",
+      },
+      {
         id: "find-sponsor", question: "Wie finde ich einen Sponsor oder ändere seinen Status?",
         answer: "Suche und Logo-Filter lassen sich kombinieren.",
         steps: ["Suchen Sie unter «Sponsoren» nach Firma, Kontakt oder Ort.", "Falls kein Treffer erscheint, prüfen Sie auch den eingestellten Logo-Status.", "Öffnen Sie zum Ändern des Status «Bearbeiten», wählen Sie den gewünschten Status und speichern Sie die Änderung."],
@@ -165,6 +171,13 @@ export const workspaceHelpTopics: HelpTopic[] = [
     id: "contracts", title: "Verträge", section: "contracts", sectionLabel: "Verträge",
     articles: [
       {
+        id: "legacy-list", question: "Wie übernehme ich mehrere bestehende Verträge aus einer Liste?",
+        answer: "Unter «Verträge» können Sie «Mehrere Altverträge aus einer Liste übernehmen» öffnen. Die Übernahme ordnet ausschliesslich bereits vorhandene Sponsoren und Pakete zu und versendet keine E-Mails.",
+        steps: ["Bereiten Sie eine CSV- oder Excel-Datei mit einer Zuordnung pro Zeile vor: Sponsor, Paket, Jahreswert CHF, Abschlussdatum, Unterzeichnende Person, Nachweis.", "Verwenden Sie eindeutige bestehende Sponsor- und Paketnamen sowie Abschlussdaten im Format JJJJ-MM-TT. Fehlende Daten oder unterzeichnende Personen bleiben leer und werden als unbekannt dokumentiert.", "Prüfen Sie die Vorschau, die Jahreswerte und die Nachweise. Interne Paketentwürfe können für Altbestand verwendet werden.", "Bestätigen Sie die geprüften Angaben und wählen Sie «Geprüfte Altverträge übernehmen». Identische vorhandene Zuordnungen werden übersprungen. Bei einem abweichenden bestehenden Vertrag stoppt die Übernahme zur Prüfung."],
+        note: "Dieser Weg dokumentiert bestehende Abschlüsse. Er ersetzt weder einen neuen Vertragsabschluss noch eine fehlende Zustimmung. Auch bei der Einzelerfassung lassen sich unbekannte Abschlussdaten und unterzeichnende Personen ausdrücklich kennzeichnen.",
+      },
+
+      {
         id: "contract-create", question: "Wie erstelle ich einen Vertrag aus Sponsor und Paket?",
         answer: "Der Sponsor muss erfasst und eine passende Paketversion veröffentlicht sein.",
         steps: ["Öffnen Sie «Verträge» und wählen Sie unter «Sponsor und Paket verbinden» den Sponsor und das Sponsoringpaket.", "Prüfen Sie den vorgeschlagenen Jahreswert, passen Sie ihn bei Bedarf an und wählen Sie «Entwurf erstellen».", "Ergänzen Sie Dokumenttitel und besondere Vereinbarungen. Speichern Sie den Entwurf und prüfen Sie ihn über «PDF öffnen».", "Vervollständigen Sie offene Organisationsangaben. Bestätigen Sie die Prüfung und wählen Sie «Unveränderlich freigeben»."],
@@ -179,7 +192,7 @@ export const workspaceHelpTopics: HelpTopic[] = [
       {
         id: "legacy-contract", question: "Wie übernehme ich einen bestehenden Papier- oder Altvertrag?",
         answer: "Ein bereits abgeschlossener Vertrag kann als Altbestand dokumentiert werden, ohne eine neue Bestätigungsmail auszulösen.",
-        steps: ["Öffnen Sie unter «Verträge» den Bereich «Altvertrag für einen Sponsor erfassen».", "Wählen Sie Sponsor, veröffentlichtes Paket und Jahreswert. Ergänzen Sie ursprüngliches Abschlussdatum, unterzeichnende Person und Nachweis beziehungsweise Bemerkung.", "Gleichen Sie die Angaben mit dem vorhandenen Vertrag ab, setzen Sie die Bestätigung und klicken Sie auf «Altvertrag direkt übernehmen».", "Richten Sie einen benötigten Sponsor-Space separat unter «Sponsoren» → «Zugang einrichten» ein."],
+        steps: ["Öffnen Sie unter «Verträge» den Bereich «Altvertrag für einen Sponsor erfassen».", "Wählen Sie Sponsor, Paket und Jahreswert. Für Altbestand sind auch interne Paketentwürfe möglich. Ergänzen Sie Abschlussdatum und unterzeichnende Person oder kennzeichnen Sie fehlende Angaben als unbekannt. Halten Sie den Nachweis fest.", "Gleichen Sie die Angaben mit dem vorhandenen Vertrag ab, setzen Sie die Bestätigung und klicken Sie auf «Altvertrag direkt übernehmen».", "Richten Sie einen benötigten Sponsor-Space separat unter «Sponsoren» → «Zugang einrichten» ein."],
         note: "Diese Erfassung dokumentiert einen vorhandenen Abschluss. Sie ersetzt keine fehlende Zustimmung und lädt keine gescannte Vertragsdatei hoch.",
         keywords: "Altbestand importieren Papiervertrag",
       },

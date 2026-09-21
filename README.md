@@ -41,6 +41,8 @@ Die produktive Anwendung umfasst:
 - serverseitige Rollenprüfung und erzwungene Row-Level Security für alle mandanteneigenen Tabellen
 - geschützte Functions für Mandantenliste, Mandantenerstellung und Workspace
 - produktive Sponsoren-Stammdaten mit Suche, Erfassung und Bearbeitung
+- Paketmatrix und Excel-kompatibler CSV-Export aller Sponsoren mit bestätigten Paket-Jahreswerten
+- Altvertragsübernahme aus CSV/XLSX mit Vorschau, Dublettenprüfung und ausdrücklich unbekannten historischen Angaben; interne Paketentwürfe bleiben unveröffentlicht
 - Kontakt-, Adress-, Paket-, Status- und Jahreswertdaten mit serverseitiger Validierung
 - Audit-Ereignisse für neue und geänderte Sponsoren
 - responsive Darstellung und zugängliche Basisinteraktionen
