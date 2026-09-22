@@ -474,7 +474,10 @@ export default async (request: Request, context: Context) => {
         `, [tenantId, year]);
         const contractNumber = `MT-${year}-${String(counter.rows[0].last_value).padStart(4, "0")}`;
         const title = "Sponsoringvertrag";
-        const specialAgreements = "Keine besonderen Vereinbarungen.";
+        const specialAgreements = "Administrative Übernahme der Paketzuordnung aus dem Altbestand. Historischer Vertragsbeginn und Vertragsablauf sind nicht dokumentiert. Die Laufzeit der Paketvorlage belegt diese Daten nicht; für weitere individuelle Vereinbarungen bleibt der ursprüngliche Vertrag massgeblich.";
+        // Catalog availability dates are not evidence of an individual legacy contract term.
+        snapshots.package.validFrom = null;
+        snapshots.package.validUntil = null;
         const hash = contractSnapshotHash({
           contractNumber, versionNumber: 1, title, specialAgreements,
           organization: snapshots.organization, sponsor: snapshots.sponsor, package: snapshots.package,
