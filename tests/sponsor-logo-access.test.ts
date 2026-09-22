@@ -5,6 +5,7 @@ import { registerHooks } from "node:module";
 import test from "node:test";
 import { PGlite } from "@electric-sql/pglite";
 import { pgcrypto } from "@electric-sql/pglite/contrib/pgcrypto";
+import ExcelJS from "exceljs";
 import type { DatabaseClient } from "../netlify/functions/_shared/database.ts";
 
 // Run the real route and SQL with RLS. Replace only Identity and blob storage,
@@ -112,6 +113,28 @@ test("admin and sponsor share logo storage while permissions and RLS protect eve
       const directory = await adminHandler(new Request(`https://mittragen.example.invalid/api/sponsors/${tenant}`), { params: { tenantId: tenant } } as never);
       const row = (await directory.json()).sponsors[0];
       assert.equal(row.logo_available, true); assert.ok(row.logo_updated_at); assert.equal("logo_blob_key" in row, false);
+    });
+
+    await t.test("list exports require club read access and never include another tenant's sponsors", async () => {
+      const download = (format: string, targetTenant = tenant) => adminHandler(new Request(`https://mittragen.example.invalid/api/sponsors/${targetTenant}?format=${format}`), { params: { tenantId: targetTenant } } as never);
+      for (const format of ["xlsx", "pdf", "csv"]) {
+        setTestUser(null); assert.equal((await download(format)).status, 401);
+        setTestUser(user("sponsor")); assert.equal((await download(format)).status, 403);
+        setTestUser(user("owner")); assert.equal((await download(format, otherTenant)).status, 403);
+        setTestUser(user("viewer"));
+        const response = await download(format);
+        assert.equal(response.status, 200);
+        assert.equal(response.headers.get("Cache-Control"), "private, no-store");
+        if (format === "xlsx") {
+          const workbook = new ExcelJS.Workbook();
+          await workbook.xlsx.load(Buffer.from(await response.arrayBuffer()));
+          assert.equal(workbook.worksheets[0].getCell("A6").value, "Sponsor A");
+          assert.equal(workbook.worksheets[0].getCell("A7").value, "Gesamttotal");
+        } else if (format === "csv") {
+          const text = await response.text(); assert.ok(text.includes("Sponsor A")); assert.ok(!text.includes("Sponsor B"));
+        }
+      }
+      assert.equal((await download("unknown")).status, 422);
     });
 
     await t.test("sponsor replacement updates the shared logo, removes the old blob and logs the actor", async () => {

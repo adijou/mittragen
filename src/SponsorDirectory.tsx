@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { SponsorAccessPanel } from "./SponsorAccessPanel";
 import { SponsorLogoPanel, SponsorLogoPreview, type SponsorLogoState } from "./SponsorLogoPanel";
-import { packageOverview, sponsorPackageCsv, type SponsorPackageAssignment } from "./sponsorPackageOverview";
+import { packageOverview, type SponsorPackageAssignment } from "./sponsorPackageOverview";
 
 type Sponsor = {
   id: string;
@@ -168,14 +168,6 @@ export function SponsorDirectory({ tenantId, canWrite, onChanged }: {
     setFormOpen(true);
   };
 
-  const exportSponsors = () => {
-    const url = URL.createObjectURL(new Blob([sponsorPackageCsv(sponsors)], { type: "text/csv;charset=utf-8" }));
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `sponsoren-pakete-${new Date().toISOString().slice(0, 10)}.csv`;
-    link.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-  };
   const overview = useMemo(() => packageOverview(visibleSponsors), [visibleSponsors]);
 
   const openEdit = (sponsor: Sponsor) => {
@@ -236,8 +228,9 @@ export function SponsorDirectory({ tenantId, canWrite, onChanged }: {
   return <section className="sponsor-directory">
     <header className="sponsor-directory__heading">
       <div><p className="eyebrow">Stammdaten</p><h1>Sponsoren</h1><p>Firmen- und Kontaktdaten zentral pflegen. Paket und Jahreswert werden beim Vertrag festgelegt.</p></div>
-      <div className="sponsor-row-actions"><button className="access-secondary" onClick={() => setShowPackages(!showPackages)} aria-pressed={showPackages}>Paketübersicht</button><button className="access-secondary" disabled={loading || !!error || sponsors.length === 0} onClick={exportSponsors}>Alle Sponsoren exportieren</button>{canWrite && <button className="access-primary" onClick={openCreate}>Sponsor erfassen</button>}</div>
+      <div className="sponsor-row-actions"><button className="access-secondary" onClick={() => setShowPackages(!showPackages)} aria-pressed={showPackages}>Paketübersicht</button>{canWrite && <button className="access-primary" onClick={openCreate}>Sponsor erfassen</button>}</div>
     </header>
+    <div className="sponsor-export-bar"><div><strong>Sponsorenliste herunterladen</strong><small>Alle Sponsoren mit Paketen und Jahresbeträgen, unabhängig von den Filtern.</small></div><div className="sponsor-export-links">{([{ format: "xlsx", label: "Excel herunterladen" }, { format: "pdf", label: "PDF herunterladen" }, { format: "csv", label: "CSV" }] as const).map(({ format, label }) => <a key={format} className="access-secondary" href={`/api/sponsors/${tenantId}?format=${format}`} download>{label}</a>)}</div></div>
     <div className="sponsor-toolbar">
       <label><span>Suche</span><input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Firma, Kontakt oder Ort"/></label>
       <label><span>Logo-Status</span><select value={logoFilter} onChange={(event) => setLogoFilter(event.target.value)}><option value="all">Alle Sponsoren</option><option value="missing">Ohne Logo</option><option value="present">Mit Logo</option></select></label>

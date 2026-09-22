@@ -8,6 +8,9 @@ import { loadSponsorAccess, parseSponsorAccessInvitation, prepareSponsorAccessIn
 import { absoluteSiteUrl, contractEmailConfig } from "./_shared/contract-delivery.ts";
 import { sendSponsorSpaceInvitationEmail } from "./_shared/resend-contract-email.ts";
 import { handleSponsorLogo } from "./_shared/sponsor-logo.ts";
+import { loadOrganizationPdfBrand } from "./_shared/organization-pdf-brand.ts";
+import { sponsorListExportResponse } from "./_shared/sponsor-list-export.ts";
+import type { SponsorPackageAssignment } from "../../src/sponsorPackageOverview.ts";
 
 type SponsorRow = SponsorInput & {
   id: string;
@@ -97,44 +100,61 @@ export default async (request: Request, context: Context) => {
   }
 
   if (request.method === "GET") {
-    const result = await withSession(user.id, tenantId, async (client) => {
-      const role = await membershipRole(client, tenantId, user.id);
-      if (!role || !hasPermission(role, "sponsors:read")) return null;
-      const sponsors = await client.query<SponsorRow & { assigned_package_name: string | null }>(`
-        SELECT sponsor.id, sponsor.tenant_id, sponsor.legal_name, sponsor.contact_name, sponsor.contact_email,
-               sponsor.phone, sponsor.street, sponsor.postal_code, sponsor.city, sponsor.website,
-               sponsor.source_organization, sponsor.status, sponsor.proposal_package,
-               sponsor.assigned_package_version_id, version.name AS assigned_package_name,
-               sponsor.annual_value_cents, sponsor.notes, sponsor.created_at::text, sponsor.updated_at::text,
-               (sponsor.logo_blob_key IS NOT NULL) AS logo_available, sponsor.logo_updated_at::text,
-               COALESCE((SELECT jsonb_agg(jsonb_build_object(
-                 'contract_id', contract.id, 'contract_number', contract.contract_number,
-                 'package_id', contract_version.package_id,
-                 'package_name', COALESCE(contract.package_snapshot->>'name', contract_version.name),
-                 'annual_value_cents', (contract.package_snapshot->>'priceCents')::integer
-               ) ORDER BY contract.created_at, contract.id)
-                 FROM sponsorship_contracts contract
-                 JOIN sponsorship_package_versions contract_version
-                   ON contract_version.id = contract.package_version_id AND contract_version.tenant_id = contract.tenant_id
-                 WHERE contract.tenant_id = sponsor.tenant_id AND contract.sponsor_id = sponsor.id
-                   AND contract.status = 'confirmed'), '[]'::jsonb) AS package_assignments
-        FROM sponsors sponsor
-        LEFT JOIN sponsorship_package_versions version
-          ON version.id = sponsor.assigned_package_version_id AND version.tenant_id = sponsor.tenant_id
-        WHERE sponsor.tenant_id = $1
-        ORDER BY sponsor.legal_name, sponsor.id
-      `, [tenantId]);
-      const packageOptions = await client.query<{ id: string; name: string; price_cents: number }>(`
-        SELECT version.id, version.name, version.price_cents
-        FROM sponsorship_package_versions version
-        JOIN sponsorship_packages package ON package.id = version.package_id AND package.tenant_id = version.tenant_id
-        WHERE version.tenant_id = $1 AND version.status = 'published' AND package.status = 'active'
-        ORDER BY lower(version.name), version.version_number DESC
-      `, [tenantId]);
-      return { sponsors: sponsors.rows, packageOptions: packageOptions.rows };
-    });
-    if (!result) return json({ error: "tenant_access_denied" }, 403);
-    return json(result);
+    const exportFormat = new URL(request.url).searchParams.get("format");
+    if (exportFormat !== null && (!['xlsx', 'pdf', 'csv'].includes(exportFormat) || sponsorId)) return json({ error: "invalid_export_format" }, 422);
+    try {
+      const result = await withSession(user.id, tenantId, async (client) => {
+        const role = await membershipRole(client, tenantId, user.id);
+        if (!role || !hasPermission(role, "sponsors:read")) return null;
+        const sponsors = await client.query<SponsorRow & { assigned_package_name: string | null; package_assignments: SponsorPackageAssignment[] }>(`
+          SELECT sponsor.id, sponsor.tenant_id, sponsor.legal_name, sponsor.contact_name, sponsor.contact_email,
+                 sponsor.phone, sponsor.street, sponsor.postal_code, sponsor.city, sponsor.website,
+                 sponsor.source_organization, sponsor.status, sponsor.proposal_package,
+                 sponsor.assigned_package_version_id, version.name AS assigned_package_name,
+                 sponsor.annual_value_cents, sponsor.notes, sponsor.created_at::text, sponsor.updated_at::text,
+                 (sponsor.logo_blob_key IS NOT NULL) AS logo_available, sponsor.logo_updated_at::text,
+                 COALESCE((SELECT jsonb_agg(jsonb_build_object(
+                   'contract_id', contract.id, 'contract_number', contract.contract_number,
+                   'package_id', contract_version.package_id,
+                   'package_name', COALESCE(contract.package_snapshot->>'name', contract_version.name),
+                   'annual_value_cents', (contract.package_snapshot->>'priceCents')::integer
+                 ) ORDER BY contract.created_at, contract.id)
+                   FROM sponsorship_contracts contract
+                   JOIN sponsorship_package_versions contract_version
+                     ON contract_version.id = contract.package_version_id AND contract_version.tenant_id = contract.tenant_id
+                   WHERE contract.tenant_id = sponsor.tenant_id AND contract.sponsor_id = sponsor.id
+                     AND contract.status = 'confirmed'), '[]'::jsonb) AS package_assignments
+          FROM sponsors sponsor
+          LEFT JOIN sponsorship_package_versions version
+            ON version.id = sponsor.assigned_package_version_id AND version.tenant_id = sponsor.tenant_id
+          WHERE sponsor.tenant_id = $1
+          ORDER BY sponsor.legal_name, sponsor.id
+        `, [tenantId]);
+        if (exportFormat) {
+          const tenant = await client.query<{ name: string }>("SELECT name FROM tenants WHERE id = $1", [tenantId]);
+          if (!tenant.rows[0]) return null;
+          return { sponsors: sponsors.rows, organizationName: tenant.rows[0].name,
+            brand: exportFormat === "pdf" ? await loadOrganizationPdfBrand(client, tenantId, context.requestId) : undefined };
+        }
+        const packageOptions = await client.query<{ id: string; name: string; price_cents: number }>(`
+          SELECT version.id, version.name, version.price_cents
+          FROM sponsorship_package_versions version
+          JOIN sponsorship_packages package ON package.id = version.package_id AND package.tenant_id = version.tenant_id
+          WHERE version.tenant_id = $1 AND version.status = 'published' AND package.status = 'active'
+          ORDER BY lower(version.name), version.version_number DESC
+        `, [tenantId]);
+        return { sponsors: sponsors.rows, packageOptions: packageOptions.rows };
+      });
+      if (!result) return json({ error: "tenant_access_denied" }, 403);
+      if (exportFormat && "organizationName" in result) return await sponsorListExportResponse(exportFormat, {
+        sponsors: result.sponsors, organizationName: result.organizationName!, brand: result.brand,
+        generatedAt: new Date().toISOString(),
+      });
+      return json(result);
+    } catch (error) {
+      console.error("sponsors_load_failed", { requestId: context.requestId, tenantId, error });
+      return json({ error: exportFormat ? "sponsor_export_failed" : "sponsors_load_failed" }, 500);
+    }
   }
 
   if (!['POST', 'PATCH'].includes(request.method)) return json({ error: "method_not_allowed" }, 405);

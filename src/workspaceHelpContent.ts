@@ -75,7 +75,7 @@ export const workspaceHelpTopics: HelpTopic[] = [
       {
         id: "sponsor-package-export", question: "Wie erhalte ich eine Liste aller Sponsoren mit ihren Paketen?",
         answer: "Unter «Sponsoren» öffnet «Paketübersicht» die Zuordnungen aus bestätigten Verträgen einschliesslich Altbestand. Jede Paketspalte zeigt den vereinbarten Jahreswert. CHF 0 bedeutet kostenlos; ein Strich bedeutet keine Zuordnung.",
-        steps: ["Wählen Sie die richtige Organisation und öffnen Sie «Sponsoren».", "Öffnen Sie «Paketübersicht» für die Bildschirmansicht.", "Mit «Alle Sponsoren exportieren» laden Sie eine Excel-kompatible CSV-Datei mit allen Sponsoren und Paketspalten herunter, unabhängig von Such- und Logo-Filtern."],
+        steps: ["Wählen Sie die richtige Organisation und öffnen Sie «Sponsoren».", "Öffnen Sie «Paketübersicht» für die Bildschirmansicht.", "«Excel herunterladen» erstellt eine formatierte XLSX-Datei: Paketübersicht mit Summen, Filtern und fixierten Überschriften sowie ein Blatt mit Kontaktdaten.", "«PDF herunterladen» erstellt eine druckbare Paketliste mit Seitenzahlen und wiederholten Spaltenüberschriften. CSV steht ebenfalls zur Verfügung.", "Alle Downloads enthalten sämtliche Sponsoren der gewählten Organisation, unabhängig von Such- und Logo-Filtern. Fehlende Paketzuordnungen bleiben leer; kostenlose Pakete erscheinen als 0.00."],
         note: "Entwürfe und aufgehobene Verträge sind nicht enthalten. Mehrere bestätigte Verträge desselben Pakets werden pro Sponsor addiert. Die Übersicht ist kein Zahlungsnachweis.",
       },
       {

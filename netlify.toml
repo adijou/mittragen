@@ -5,6 +5,9 @@ publish = "dist"
 [build.environment]
 NODE_VERSION = "22"
 
+[functions."sponsors"]
+included_files = ["assets/fonts/*.ttf", "assets/fonts/LICENSE-DejaVu.txt"]
+
 [[redirects]]
 from = "/*"
 to = "/index.html"

@@ -729,6 +729,10 @@ td small { margin-top: 3px; color: var(--ink-3); }
 .sponsor-status--inactive { background: var(--surface-2); color: var(--ink-3); }
 .sponsor-edit { padding: 6px 0; border: 0; border-bottom: 1px solid currentColor; background: none; color: var(--blue); font-size: 10px; font-weight: 700; cursor: pointer; }
 .sponsor-row-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px 18px; }
+.sponsor-export-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; padding: 18px 20px; margin-bottom: 20px; border: 1px solid var(--line-strong); border-radius: 12px; background: white; }
+.sponsor-export-bar small { display: block; margin-top: 5px; color: var(--muted); line-height: 1.5; }
+.sponsor-export-links { display: flex; flex-wrap: wrap; gap: 8px; }
+.sponsor-export-links a { text-decoration: none; }
 .sponsor-edit:disabled { opacity: .5; cursor: default; }
 .sponsor-access-panel { margin-top: 28px; padding-top: 24px; border-top: 1px solid var(--line); }
 .sponsor-access-panel h3 { margin: 6px 0 12px; font-size: 23px; }
