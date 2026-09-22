@@ -171,8 +171,13 @@ export const workspaceHelpTopics: HelpTopic[] = [
     id: "contracts", title: "Verträge", section: "contracts", sectionLabel: "Verträge",
     articles: [
       {
+        id: "contract-overview", question: "Wie finde und öffne ich einen Vertrag?",
+        answer: "Die Vertragsübersicht zeigt Sponsor, Vertragsnummer, Paket, Jahreswert, Status und Abschlussdatum in einer Tabelle. Standardmässig werden die aktuellen, nicht aufgehobenen Verträge angezeigt.",
+        steps: ["Suchen Sie nach Sponsor, Vertragsnummer oder Paket und grenzen Sie die Liste über «Status» ein.", "Wählen Sie beim gewünschten Vertrag «Details öffnen». Dokumente, Bearbeitung und Nachweise erscheinen in einer eigenen Ansicht.", "Mit «Zurück zur Übersicht» gelangen Sie zur Tabelle zurück. Ihre Suche und der Statusfilter bleiben erhalten.", "Aufgehobene Vertragsstände finden Sie über den Statusfilter «Archivierte Verträge»."],
+      },
+      {
         id: "legacy-list", question: "Wie übernehme ich mehrere bestehende Verträge aus einer Liste?",
-        answer: "Unter «Verträge» können Sie «Mehrere Altverträge aus einer Liste übernehmen» öffnen. Die Übernahme ordnet ausschliesslich bereits vorhandene Sponsoren und Pakete zu und versendet keine E-Mails.",
+        answer: "Unter «Verträge» öffnen Sie über «Listenimport» die Ansicht «Mehrere Altverträge aus einer Liste übernehmen». Die Übernahme ordnet ausschliesslich bereits vorhandene Sponsoren und Pakete zu und versendet keine E-Mails.",
         steps: ["Bereiten Sie eine CSV- oder Excel-Datei mit einer Zuordnung pro Zeile vor: Sponsor, Paket, Jahreswert CHF, Abschlussdatum, Unterzeichnende Person, Nachweis.", "Verwenden Sie eindeutige bestehende Sponsor- und Paketnamen sowie Abschlussdaten im Format JJJJ-MM-TT. Fehlende Daten oder unterzeichnende Personen bleiben leer und werden als unbekannt dokumentiert.", "Prüfen Sie die Vorschau, die Jahreswerte und die Nachweise. Interne Paketentwürfe können für Altbestand verwendet werden.", "Bestätigen Sie die geprüften Angaben und wählen Sie «Geprüfte Altverträge übernehmen». Identische vorhandene Zuordnungen werden übersprungen. Bei einem abweichenden bestehenden Vertrag stoppt die Übernahme zur Prüfung."],
         note: "Dieser Weg dokumentiert bestehende Abschlüsse. Er ersetzt weder einen neuen Vertragsabschluss noch eine fehlende Zustimmung. Auch bei der Einzelerfassung lassen sich unbekannte Abschlussdaten und unterzeichnende Personen ausdrücklich kennzeichnen.",
       },
@@ -180,7 +185,7 @@ export const workspaceHelpTopics: HelpTopic[] = [
       {
         id: "contract-create", question: "Wie erstelle ich einen Vertrag aus Sponsor und Paket?",
         answer: "Der Sponsor muss erfasst und eine passende Paketversion veröffentlicht sein.",
-        steps: ["Öffnen Sie «Verträge» und wählen Sie unter «Sponsor und Paket verbinden» den Sponsor und das Sponsoringpaket.", "Prüfen Sie den vorgeschlagenen Jahreswert, passen Sie ihn bei Bedarf an und wählen Sie «Entwurf erstellen».", "Ergänzen Sie Dokumenttitel und besondere Vereinbarungen. Speichern Sie den Entwurf und prüfen Sie ihn über «PDF öffnen».", "Vervollständigen Sie offene Organisationsangaben. Bestätigen Sie die Prüfung und wählen Sie «Unveränderlich freigeben»."],
+        steps: ["Öffnen Sie «Verträge» → «Neuer Vertrag» und wählen Sie unter «Sponsor und Paket verbinden» den Sponsor und das Sponsoringpaket.", "Prüfen Sie den vorgeschlagenen Jahreswert, passen Sie ihn bei Bedarf an und wählen Sie «Entwurf erstellen».", "Ergänzen Sie Dokumenttitel und besondere Vereinbarungen. Speichern Sie den Entwurf und prüfen Sie ihn über «PDF öffnen».", "Vervollständigen Sie offene Organisationsangaben. Bestätigen Sie die Prüfung und wählen Sie «Unveränderlich freigeben»."],
         note: "Die Freigabe fixiert den Vertragsstand. Der Versand zur Bestätigung erfolgt als eigener Schritt.",
       },
       {
@@ -192,13 +197,13 @@ export const workspaceHelpTopics: HelpTopic[] = [
       {
         id: "legacy-contract", question: "Wie übernehme ich einen bestehenden Papier- oder Altvertrag?",
         answer: "Ein bereits abgeschlossener Vertrag kann als Altbestand dokumentiert werden, ohne eine neue Bestätigungsmail auszulösen.",
-        steps: ["Öffnen Sie unter «Verträge» den Bereich «Altvertrag für einen Sponsor erfassen».", "Wählen Sie Sponsor, Paket und Jahreswert. Für Altbestand sind auch interne Paketentwürfe möglich. Ergänzen Sie Abschlussdatum und unterzeichnende Person oder kennzeichnen Sie fehlende Angaben als unbekannt. Halten Sie den Nachweis fest.", "Gleichen Sie die Angaben mit dem vorhandenen Vertrag ab, setzen Sie die Bestätigung und klicken Sie auf «Altvertrag direkt übernehmen».", "Richten Sie einen benötigten Sponsor-Space separat unter «Sponsoren» → «Zugang einrichten» ein."],
+        steps: ["Wählen Sie unter «Verträge» die Aktion «Altvertrag erfassen».", "Wählen Sie Sponsor, Paket und Jahreswert. Für Altbestand sind auch interne Paketentwürfe möglich. Ergänzen Sie Abschlussdatum und unterzeichnende Person oder kennzeichnen Sie fehlende Angaben als unbekannt. Halten Sie den Nachweis fest.", "Gleichen Sie die Angaben mit dem vorhandenen Vertrag ab, setzen Sie die Bestätigung und klicken Sie auf «Altvertrag direkt übernehmen».", "Richten Sie einen benötigten Sponsor-Space separat unter «Sponsoren» → «Zugang einrichten» ein."],
         note: "Diese Erfassung dokumentiert einen vorhandenen Abschluss. Sie ersetzt keine fehlende Zustimmung und lädt keine gescannte Vertragsdatei hoch.",
         keywords: "Altbestand importieren Papiervertrag",
       },
       {
         id: "contract-copy", question: "Wo finde ich die Vertragskopie und den Nachweis der Bestätigung?",
-        answer: "Öffnen Sie den gewünschten Vertrag im Vertragscenter. Dort finden Sie PDF, Status, Bestätigungsangaben und Ereignisprotokoll.",
+        answer: "Wählen Sie in der Vertragstabelle beim gewünschten Vertrag «Details öffnen». Dort finden Sie PDF, Status, Bestätigungsangaben und Ereignisprotokoll.",
         steps: ["Klicken Sie auf «PDF öffnen», um das Dokument anzusehen oder herunterzuladen.", "Prüfen Sie unter dem Bestätigungsnachweis die unterzeichnende Person und den Zeitpunkt.", "Bei bestätigten Verträgen mit digitaler Unterzeichnungsanfrage können Sie unter «Zugang und Vertragskopie» eine «PDF-Kopie senden» oder den «Zugang einrichten»."],
         note: "Bei einem übernommenen Altvertrag fehlt dieser digitale Folgebereich gegebenenfalls. Den Space-Zugang richten Sie dann direkt beim Sponsor ein.",
       },

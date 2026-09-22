@@ -1,8 +1,9 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { LegacyContractImport } from "./LegacyContractImport";
 import { annualValueForPackage } from "./sponsorPackagePricing";
 
 type ContractStatus = "draft" | "released" | "confirmed" | "void";
+type ContractView = "list" | "new" | "legacy" | "import" | "detail";
 type ContractItem = {
   id: string; contract_number: string; version_number: number; title: string; sponsor_name: string;
   parent_contract_id: string | null; sponsor_id: string; package_version_id: string;
@@ -68,7 +69,7 @@ const errorLabels: Record<string, string> = {
   contract_locked: "Dieser Vertragsstand kann nicht direkt bearbeitet werden. Erstellen Sie stattdessen einen Korrekturentwurf.",
   contract_already_void: "Dieser Vertrag ist bereits aufgehoben.",
 };
-const formatChf = (cents: number) => new Intl.NumberFormat("de-CH", { style: "currency", currency: "CHF", maximumFractionDigits: 0 }).format(cents / 100);
+const formatChf = (cents: number) => new Intl.NumberFormat("de-CH", { style: "currency", currency: "CHF", minimumFractionDigits: 0, maximumFractionDigits: 2 }).format(cents / 100);
 
 async function api<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(path, { ...options, headers: { "Content-Type": "application/json", ...options?.headers } });
@@ -83,6 +84,12 @@ const emptySettings: Settings = {
 };
 
 export function ContractManagement({ tenantId, canWrite, canManage, onOpenOrganization }: { tenantId: string; canWrite: boolean; canManage: boolean; onOpenOrganization: () => void }) {
+  const [view, setView] = useState<ContractView>("list");
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<ContractStatus | "active" | "all">("active");
+  const [importBusy, setImportBusy] = useState(false);
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const detailRequest = useRef(0);
   const [contracts, setContracts] = useState<ContractItem[]>([]);
   const [eligible, setEligible] = useState<Eligible[]>([]);
   const [sponsors, setSponsors] = useState<SponsorOption[]>([]);
@@ -121,12 +128,14 @@ export function ContractManagement({ tenantId, canWrite, canManage, onOpenOrgani
   const [legacyEvidenceNote, setLegacyEvidenceNote] = useState("");
   const [legacyAcknowledged, setLegacyAcknowledged] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [listLoadFailed, setListLoadFailed] = useState(false);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
 
   const applyDetail = (next: ContractDetail) => {
     setDetail(next);
+    setView("detail");
     setTitle(next.contract.title);
     setSpecialAgreements(next.contract.special_agreements);
     setDraftSponsorId(next.contract.sponsor_id);
@@ -164,13 +173,20 @@ export function ContractManagement({ tenantId, canWrite, canManage, onOpenOrgani
     setLegacyCreateSponsorId(nextLegacySponsorId);
     setLegacyCreatePackageVersionId(selectedLegacyPackage?.id ?? "");
     if (!selectedLegacyPackage || selectedLegacyPackage.id !== legacyCreatePackageVersionId) setLegacyCreateAnnualValue(selectedLegacyPackage ? String(selectedLegacyPackage.price_cents / 100) : "");
-    const id = preferredId === null
-      ? result.contracts.find((contract) => contract.status !== "void")?.id ?? result.contracts[0]?.id
-      : preferredId ?? detail?.contract.id ?? result.contracts.find((contract) => contract.status !== "void")?.id ?? result.contracts[0]?.id;
-    if (id) {
-      const loaded = await api<{ detail: ContractDetail }>(`/api/contracts/${tenantId}/${id}`);
+    if (preferredId) {
+      const loaded = await api<{ detail: ContractDetail }>(`/api/contracts/${tenantId}/${preferredId}`);
       applyDetail(loaded.detail);
-    } else setDetail(null);
+    } else if (preferredId === null) {
+      setDetail(null);
+      setView("list");
+    }
+  };
+
+  const loadOverview = async () => {
+    setLoading(true); setListLoadFailed(false); setError("");
+    try { await load(); }
+    catch { setListLoadFailed(true); setError("Die Verträge konnten nicht geladen werden."); }
+    finally { setLoading(false); }
   };
 
   useEffect(() => {
@@ -179,8 +195,23 @@ export function ContractManagement({ tenantId, canWrite, canManage, onOpenOrgani
     setLegacyDateUnknown(false); setLegacySignerUnknown(false);
     setLegacyCreateError("");
     setLegacyCreateSignerName(""); setLegacyCreateSignerRole(""); setLegacyCreateConfirmedOn(""); setLegacyCreateEvidenceNote(""); setLegacyCreateAcknowledged(false);
-    void load().catch(() => setError("Die Verträge konnten nicht geladen werden.")).finally(() => setLoading(false));
+    void loadOverview();
   }, [tenantId]);
+
+  useEffect(() => {
+    headingRef.current?.focus({ preventScroll: true });
+    headingRef.current?.closest(".contract-management")?.scrollIntoView({ block: "start" });
+  }, [view, detail?.contract.id]);
+
+  const openView = (next: ContractView) => {
+    if (importBusy || (busy !== "" && busy !== "load")) return;
+    detailRequest.current += 1;
+    setBusy("");
+    setError("");
+    setMessage("");
+    setLegacyCreateError("");
+    setView(next);
+  };
 
   const selectPackage = (id: string) => {
     setPackageVersionId(id);
@@ -267,10 +298,14 @@ export function ContractManagement({ tenantId, canWrite, canManage, onOpenOrgani
   };
 
   const selectContract = async (id: string) => {
-    setBusy("load"); setError("");
-    try { applyDetail((await api<{ detail: ContractDetail }>(`/api/contracts/${tenantId}/${id}`)).detail); }
-    catch { setError("Der Vertrag konnte nicht geladen werden."); }
-    finally { setBusy(""); }
+    const request = ++detailRequest.current;
+    setView("detail"); setDetail(null); setBusy("load"); setError(""); setMessage("");
+    try {
+      const result = await api<{ detail: ContractDetail }>(`/api/contracts/${tenantId}/${id}`);
+      if (request === detailRequest.current) applyDetail(result.detail);
+    } catch {
+      if (request === detailRequest.current) setError("Der Vertrag konnte nicht geladen werden. Bitte zurück zur Übersicht wechseln und erneut öffnen.");
+    } finally { if (request === detailRequest.current) setBusy(""); }
   };
 
   const saveDraft = async (event: FormEvent) => {
@@ -414,14 +449,54 @@ export function ContractManagement({ tenantId, canWrite, canManage, onOpenOrgani
     } finally { setBusy(""); }
   };
 
-  const activeContracts = contracts.filter((contract) => contract.status !== "void");
-  const archivedContracts = contracts.filter((contract) => contract.status === "void");
+  const searchTerm = search.trim().toLocaleLowerCase("de-CH");
+  const visibleContracts = contracts.filter((contract) => {
+    const matchesStatus = statusFilter === "all" || (statusFilter === "active" ? contract.status !== "void" : contract.status === statusFilter);
+    return matchesStatus && (!searchTerm || [contract.sponsor_name, contract.contract_number, contract.package_name].some((value) => value.toLocaleLowerCase("de-CH").includes(searchTerm)));
+  });
+  const viewTitles: Record<ContractView, string> = { list: "Verträge", new: "Neuer Vertrag", legacy: "Altvertrag erfassen", import: "Altverträge importieren", detail: "Vertragsdetails" };
 
   return <section className="contract-management">
-    <header><div><p className="eyebrow">Vertragscenter</p><h1>Verträge nachvollziehbar abschliessen</h1><p>Hier werden Sponsor, publiziertes Paket und der verhandelte Jahreswert zusammengeführt. Die Überführung bleibt ein separater Weg für bestehende Sponsorings.</p></div>{canManage && <button className="access-secondary" onClick={onOpenOrganization}>Organisationsangaben</button>}</header>
+    {view !== "list" && <button type="button" className="contract-back" disabled={importBusy || (busy !== "" && busy !== "load")} onClick={() => openView("list")}><span aria-hidden="true">←</span> Zurück zur Übersicht</button>}
+    <header><div><p className="eyebrow">Vertragscenter</p><h1 ref={headingRef} tabIndex={-1}>{viewTitles[view]}</h1><p>{view === "list" ? "Alle Verträge im Überblick. Öffnen Sie einen Eintrag für Dokumente, Bearbeitung und Nachweise." : view === "detail" ? "Vertragsstand, Dokumente und alle zugehörigen Aktionen." : "Erfassen Sie den Vertrag und prüfen Sie anschliessend die Details."}</p></div>{canManage && <button className="access-secondary" disabled={importBusy || busy !== ""} onClick={onOpenOrganization}>Organisationsangaben</button>}</header>
     {error && <p className="form-error" role="alert">{error}</p>}{message && <p className="form-success" role="status">{message}</p>}
-    {!settings.complete && <div className="contract-warning"><strong>Organisationsangaben noch unvollständig</strong><p>Entwürfe sind möglich. Vor der Freigabe müssen Rechtsträger, Adresse, Vertretung und Kontakt zentral erfasst sein.</p>{canManage && <button onClick={onOpenOrganization}>In Organisation vervollständigen</button>}</div>}
-    {!loading && canWrite && <form className="contract-create" onSubmit={createDirectContract}>
+    {!loading && !listLoadFailed && !settings.complete && <div className="contract-warning"><strong>Organisationsangaben noch unvollständig</strong><p>Entwürfe sind möglich. Vor der Freigabe müssen Rechtsträger, Adresse, Vertretung und Kontakt zentral erfasst sein.</p>{canManage && <button onClick={onOpenOrganization}>In Organisation vervollständigen</button>}</div>}
+    {!loading && listLoadFailed && <button type="button" className="access-secondary" onClick={() => void loadOverview()}>Erneut laden</button>}
+    {loading && <div className="transition-empty" role="status">Verträge werden geladen …</div>}
+    {!loading && !listLoadFailed && view === "list" && <>
+      {canWrite && <div className="contract-list-actions">
+        <button type="button" className="access-primary" disabled={busy !== ""} onClick={() => openView("new")}>Neuer Vertrag</button>
+        <button type="button" className="access-secondary" disabled={busy !== ""} onClick={() => openView("legacy")}>Altvertrag erfassen</button>
+        <button type="button" className="access-secondary" disabled={busy !== ""} onClick={() => openView("import")}>Listenimport</button>
+      </div>}
+      <section className="contract-overview" aria-label="Vertragsübersicht">
+        <div className="contract-toolbar">
+          <label><span>Verträge suchen</span><input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Sponsor, Vertragsnummer oder Paket"/></label>
+          <label><span>Status</span><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as typeof statusFilter)}>
+            <option value="active">Aktuelle Verträge</option><option value="all">Alle Verträge</option><option value="draft">Entwürfe</option><option value="released">Zur Bestätigung</option><option value="confirmed">Bestätigt</option><option value="void">Archivierte Verträge</option>
+          </select></label>
+          <p role="status">{visibleContracts.length} von {contracts.length} Verträgen</p>
+        </div>
+        <div className="contract-table-wrap" role="region" aria-label="Verträge, horizontal scrollbar" tabIndex={0}>
+          <table className="contract-table">
+            <caption className="sr-only">Verträge mit Sponsor, Paket, Jahreswert, Status und Abschlussdatum</caption>
+            <thead><tr><th scope="col">Sponsor</th><th scope="col">Vertrag</th><th scope="col">Paket</th><th scope="col" className="contract-table__amount">Jahreswert</th><th scope="col">Status</th><th scope="col">Abschlussdatum</th><th scope="col"><span className="sr-only">Aktion</span></th></tr></thead>
+            <tbody>{visibleContracts.map((contract) => <tr key={contract.id}>
+              <th scope="row">{contract.sponsor_name}</th>
+              <td><strong>{contract.contract_number}</strong><small>Version {contract.version_number}</small></td>
+              <td>{contract.package_name}{contract.confirmation_mode === "admin_legacy" ? <small>Altbestand</small> : contract.source === "public_checkout" ? <small>Online-Direktabschluss</small> : null}</td>
+              <td className="contract-table__amount">{formatChf(contract.package_snapshot.priceCents)}</td>
+              <td><span className={`contract-status contract-status--${contract.status}`}>{statusLabels[contract.status]}</span></td>
+              <td className="contract-table__date">{contract.confirmed_at ? new Intl.DateTimeFormat("de-CH", { dateStyle: "medium" }).format(new Date(contract.confirmed_at)) : contract.confirmation_mode === "admin_legacy" ? "Unbekannt" : "–"}</td>
+              <td><button type="button" className="contract-open" disabled={busy !== ""} aria-label={`Details öffnen: ${contract.contract_number}, ${contract.sponsor_name}`} onClick={() => void selectContract(contract.id)}>Details öffnen <span aria-hidden="true">→</span></button></td>
+            </tr>)}</tbody>
+          </table>
+        </div>
+        {visibleContracts.length === 0 && <div className="contract-list-empty"><h2>{contracts.length === 0 ? "Noch keine Verträge" : "Keine passenden Verträge"}</h2><p>{contracts.length === 0 ? canWrite ? "Erstellen Sie einen neuen Vertrag oder erfassen Sie einen bestehenden Altvertrag." : "Für diesen Verein wurden noch keine Verträge erfasst." : "Ändern Sie die Suche oder den Statusfilter."}</p>{contracts.length > 0 && <button type="button" className="access-secondary" onClick={() => { setSearch(""); setStatusFilter("all"); }}>Alle Verträge anzeigen</button>}</div>}
+      </section>
+      {eligible.length > 0 && <details className="contract-transitions"><summary>Bestätigte Überführungen ohne Vertrag ({eligible.length})</summary>{eligible.map((item) => <article className="eligible-contract" key={item.transition_sponsor_id}><div><strong>{item.sponsor_name}</strong><span>{item.package_name} · {formatChf(item.proposed_value_cents)}</span></div>{canWrite && <button disabled={busy !== ""} onClick={() => void createTransitionContract(item)}>{busy === item.transition_sponsor_id ? "Wird erstellt …" : "Entwurf erstellen"}</button>}</article>)}</details>}
+    </>}
+    {!loading && canWrite && view === "new" && <form className="contract-create" onSubmit={createDirectContract}>
       <div><p className="eyebrow">Neuer Vertragsentwurf</p><h2>Sponsor und Paket verbinden</h2><p>Der Paketpreis wird vorgeschlagen. Der vereinbarte Jahreswert bleibt frei anpassbar.</p></div>
       <label><span>Sponsor</span><select required value={sponsorId} onChange={(event) => setSponsorId(event.target.value)}><option value="">Sponsor wählen</option>{sponsors.map((sponsor) => <option key={sponsor.id} value={sponsor.id}>{sponsor.legal_name}</option>)}</select></label>
       <label><span>Sponsoringpaket</span><select required value={packageVersionId} onChange={(event) => selectPackage(event.target.value)}><option value="">Paket wählen</option>{catalog.map((option) => <option key={option.id} value={option.id}>{option.name} · {formatChf(option.price_cents)} · {option.duration_months} Monate</option>)}</select></label>
@@ -429,7 +504,7 @@ export function ContractManagement({ tenantId, canWrite, canManage, onOpenOrgani
       <button className="access-primary" disabled={busy === "direct" || !sponsorId || !packageVersionId}>{busy === "direct" ? "Wird erstellt …" : "Entwurf erstellen"}</button>
       {(sponsors.length === 0 || catalog.length === 0) && <p className="contract-create__missing">{sponsors.length === 0 ? "Zuerst einen aktiven Sponsor erfassen. " : ""}{catalog.length === 0 ? "Zuerst ein gültiges Paket publizieren." : ""}</p>}
     </form>}
-    {!loading && canWrite && <section className="contract-legacy contract-legacy--create">
+    {!loading && canWrite && view === "legacy" && <section className="contract-legacy contract-legacy--create">
       <div><p className="eyebrow">Altbestand</p><h2>Altvertrag für einen Sponsor erfassen</h2><p>Einen bereits rechtsgültig abgeschlossenen Vertrag direkt übernehmen. Es wird keine Bestätigungs- oder sonstige E-Mail versendet.</p></div>
       <form onSubmit={createLegacyContract} onChange={() => setLegacyCreateError("")} onInvalid={(event) => {
         const firstInvalid = event.currentTarget.querySelector<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>(":invalid");
@@ -472,13 +547,8 @@ export function ContractManagement({ tenantId, canWrite, canManage, onOpenOrgani
         {(sponsors.length === 0 || legacyCatalog.length === 0) && <p className="contract-create__missing wide">{sponsors.length === 0 ? "Zuerst einen aktiven Sponsor erfassen. " : ""}{legacyCatalog.length === 0 ? "Zuerst ein Paket mit Leistungen erfassen." : ""}</p>}
       </form>
     </section>}
-    {!loading && canWrite && <LegacyContractImport key={tenantId} tenantId={tenantId} sponsors={sponsors} catalog={legacyCatalog} onChanged={() => load()}/>}
-    {loading ? <div className="transition-empty">Verträge werden geladen …</div> : <div className="contract-layout">
-      <aside>
-        <section><p className="eyebrow">Aus Überführung</p>{eligible.length === 0 ? <p className="contract-empty">Keine bestätigte Überführung ohne Vertrag.</p> : eligible.map((item) => <article className="eligible-contract" key={item.transition_sponsor_id}><div><strong>{item.sponsor_name}</strong><span>{item.package_name} · {formatChf(item.proposed_value_cents)}</span></div>{canWrite && <button disabled={busy === item.transition_sponsor_id} onClick={() => void createTransitionContract(item)}>Entwurf erstellen</button>}</article>)}</section>
-        <section><p className="eyebrow">Verträge</p>{activeContracts.length === 0 ? <p className="contract-empty">Noch keine aktiven Verträge.</p> : activeContracts.map((contract) => <button className={`contract-list-item ${detail?.contract.id === contract.id ? "active" : ""}`} key={contract.id} onClick={() => void selectContract(contract.id)}><span><strong>{contract.sponsor_name}</strong><small>{contract.contract_number} · V{contract.version_number} · {contract.package_name}{contract.source === "public_checkout" ? " · Online" : ""}</small></span><i className={`contract-status contract-status--${contract.status}`}>{statusLabels[contract.status]}</i></button>)}{archivedContracts.length > 0 && <details className="contract-archive"><summary>Archivierte Verträge ({archivedContracts.length})</summary>{archivedContracts.map((contract) => <button className={`contract-list-item ${detail?.contract.id === contract.id ? "active" : ""}`} key={contract.id} onClick={() => void selectContract(contract.id)}><span><strong>{contract.sponsor_name}</strong><small>{contract.contract_number} · V{contract.version_number} · {contract.package_name}</small></span><i className="contract-status contract-status--void">Aufgehoben</i></button>)}</details>}</section>
-      </aside>
-      <main>{detail ? <>
+    {!loading && canWrite && view === "import" && <LegacyContractImport key={tenantId} tenantId={tenantId} sponsors={sponsors} catalog={legacyCatalog} onChanged={() => load()} onBusyChange={setImportBusy}/>}
+    {!loading && view === "detail" && <section className="contract-detail-page" aria-label="Vertragsdetails" aria-busy={busy === "load"}>{detail ? <>
         <header className="contract-detail-header"><div><span className={`contract-status contract-status--${detail.contract.status}`}>{statusLabels[detail.contract.status]}</span>{detail.contract.source === "public_checkout" && <span className="contract-source-badge">Online-Direktabschluss</span>}<h2>{detail.contract.contract_number} <small>V{detail.contract.version_number}</small></h2><p>{detail.contract.sponsor_name} · {detail.contract.package_name} · {formatChf(detail.contract.package_snapshot.priceCents)}/Jahr</p>{detail.contract.parent_contract_id && <small className="contract-detail-header__revision">Korrekturversion eines früheren Vertragsstands</small>}</div><a className="access-secondary" href={`/api/contracts/${tenantId}/${detail.contract.id}/pdf`} target="_blank" rel="noreferrer">PDF öffnen</a></header>
         {detail.contract.status === "draft" ? <form className="contract-editor" onSubmit={saveDraft}>
           <div className="contract-editor__selection">
@@ -531,7 +601,6 @@ export function ContractManagement({ tenantId, canWrite, canManage, onOpenOrgani
           <button type="button" className="contract-danger-button" disabled={busy !== "" || !removalReason.trim()} onClick={() => void removeContract()}>{busy === "remove" ? "Wird verarbeitet …" : detail.contract.status === "draft" ? "Entwurf endgültig löschen" : "Vertrag nachvollziehbar aufheben"}</button>
         </section>}
         <section className="contract-events"><p className="eyebrow">Nachweis</p><h3>Ereignisprotokoll</h3>{detail.events.map((event) => <div key={event.id}><span></span><p><strong>{eventLabels[event.event_type] ?? event.event_type}</strong><small>{new Intl.DateTimeFormat("de-CH", { dateStyle: "medium", timeStyle: "short" }).format(new Date(event.created_at))}{event.actor_email ? ` · ${event.actor_email}` : ""}</small></p></div>)}</section>
-      </> : <div className="contract-empty-state"><h2>Vertrag auswählen</h2><p>Erstellen Sie oben einen Entwurf aus Sponsor und Paket oder öffnen Sie einen bestehenden Vertrag.</p></div>}</main>
-    </div>}
+      </> : <div className="contract-empty-state">{busy === "load" ? <p role="status">Vertrag wird geladen …</p> : <p>Die Vertragsdetails sind nicht verfügbar. Öffnen Sie den Vertrag erneut über die Übersicht.</p>}</div>}</section>}
   </section>;
 }

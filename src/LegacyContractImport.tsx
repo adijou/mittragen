@@ -12,7 +12,7 @@ const messages: Record<string, string> = {
   package_reservation_held: 'Offene Reservierung vorhanden.',
   permission_denied: 'Keine Berechtigung für die Übernahme.',
 };
-export function LegacyContractImport({ tenantId, sponsors, catalog, onChanged }: { tenantId: string; sponsors: LegacySponsorOption[]; catalog: LegacyPackageOption[]; onChanged: () => Promise<void> }) {
+export function LegacyContractImport({ tenantId, sponsors, catalog, onChanged, onBusyChange }: { tenantId: string; sponsors: LegacySponsorOption[]; catalog: LegacyPackageOption[]; onChanged: () => Promise<void>; onBusyChange: (busy: boolean) => void }) {
   const [source, setSource] = useState<Record<string, string>[]>([]);
   const [acknowledged, setAcknowledged] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -21,7 +21,7 @@ export function LegacyContractImport({ tenantId, sponsors, catalog, onChanged }:
   const rows = useMemo(() => previewLegacyImport(source, sponsors, catalog), [source, sponsors, catalog]);
   const importRows = async () => {
     if (!acknowledged || rows.some(row => row.errors.length) || busy) return;
-    setBusy(true); setError('');
+    setBusy(true); onBusyChange(true); setError('');
     try {
       for (const row of rows) {
         if (results[row.line] === 'Übernommen' || results[row.line] === 'Bereits vorhanden') continue;
@@ -38,10 +38,10 @@ export function LegacyContractImport({ tenantId, sponsors, catalog, onChanged }:
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Übernahme fehlgeschlagen.'); }
     finally {
       try { await onChanged(); } catch { setError(previous => previous || 'Übersicht konnte nicht aktualisiert werden. Bitte neu laden.'); }
-      setBusy(false);
+      setBusy(false); onBusyChange(false);
     }
   };
-  return <details className="contract-legacy">
+  return <details className="contract-legacy" open>
     <summary>Mehrere Altverträge aus einer Liste übernehmen</summary>
     <p>CSV oder Excel mit einer Zuordnung pro Zeile. Spalten: Sponsor, Paket, Jahreswert CHF, Abschlussdatum (JJJJ-MM-TT), Unterzeichnende Person, Nachweis. Namen müssen eindeutig zu bestehenden Sponsoren und Paketen passen. Interne Paketentwürfe sind möglich. Es werden keine E-Mails versendet.</p>
     <label><span>Altvertragsliste auswählen</span><input type="file" accept=".csv,.xlsx" disabled={busy} onChange={async event => {
