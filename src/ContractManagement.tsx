@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
+import { SortableHeader, useTableSort } from "./SortableHeader";
+import { filterOptions, matchesSearch, sortRows } from "./tableData";
 import { LegacyContractImport } from "./LegacyContractImport";
 import { annualValueForPackage } from "./sponsorPackagePricing";
 
+type ContractSortKey = "sponsor" | "number" | "package" | "amount" | "status" | "date";
 type ContractStatus = "draft" | "released" | "confirmed" | "void";
 type ContractView = "list" | "new" | "legacy" | "import" | "detail";
 type ContractItem = {
@@ -86,6 +89,8 @@ const emptySettings: Settings = {
 export function ContractManagement({ tenantId, canWrite, canManage, onOpenOrganization }: { tenantId: string; canWrite: boolean; canManage: boolean; onOpenOrganization: () => void }) {
   const [view, setView] = useState<ContractView>("list");
   const [search, setSearch] = useState("");
+  const [packageFilter, setPackageFilter] = useState("");
+  const { sort, toggleSort, resetSort } = useTableSort<ContractSortKey>();
   const [statusFilter, setStatusFilter] = useState<ContractStatus | "active" | "all">("active");
   const [importBusy, setImportBusy] = useState(false);
   const headingRef = useRef<HTMLHeadingElement>(null);
@@ -449,10 +454,20 @@ export function ContractManagement({ tenantId, canWrite, canManage, onOpenOrgani
     } finally { setBusy(""); }
   };
 
-  const searchTerm = search.trim().toLocaleLowerCase("de-CH");
-  const visibleContracts = contracts.filter((contract) => {
+  const packages = filterOptions(contracts.map(contract => contract.package_name));
+  const visibleContracts = sortRows(contracts.filter((contract) => {
     const matchesStatus = statusFilter === "all" || (statusFilter === "active" ? contract.status !== "void" : contract.status === statusFilter);
-    return matchesStatus && (!searchTerm || [contract.sponsor_name, contract.contract_number, contract.package_name].some((value) => value.toLocaleLowerCase("de-CH").includes(searchTerm)));
+    return matchesStatus && (!packageFilter || contract.package_name === packageFilter)
+      && matchesSearch(search, contract.sponsor_name, contract.contract_number, contract.package_name);
+  }), sort, (contract, key) => {
+    switch (key) {
+      case "sponsor": return contract.sponsor_name;
+      case "number": return `${contract.contract_number} V${contract.version_number}`;
+      case "package": return contract.package_name;
+      case "amount": return contract.package_snapshot.priceCents;
+      case "status": return statusLabels[contract.status];
+      case "date": return contract.confirmed_at ? Date.parse(contract.confirmed_at) : null;
+    }
   });
   const viewTitles: Record<ContractView, string> = { list: "Verträge", new: "Neuer Vertrag", legacy: "Altvertrag erfassen", import: "Altverträge importieren", detail: "Vertragsdetails" };
 
@@ -475,12 +490,14 @@ export function ContractManagement({ tenantId, canWrite, canManage, onOpenOrgani
           <label><span>Status</span><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as typeof statusFilter)}>
             <option value="active">Aktuelle Verträge</option><option value="all">Alle Verträge</option><option value="draft">Entwürfe</option><option value="released">Zur Bestätigung</option><option value="confirmed">Bestätigt</option><option value="void">Archivierte Verträge</option>
           </select></label>
+          <label><span>Paket</span><select value={packageFilter} onChange={event => setPackageFilter(event.target.value)}><option value="">Alle Pakete</option>{packages.map(name => <option key={name} value={name}>{name}</option>)}</select></label>
+          <button type="button" className="table-reset" onClick={() => { setSearch(""); setStatusFilter("active"); setPackageFilter(""); resetSort(); }}>Zurücksetzen</button>
           <p role="status">{visibleContracts.length} von {contracts.length} Verträgen</p>
         </div>
         <div className="contract-table-wrap" role="region" aria-label="Verträge, horizontal scrollbar" tabIndex={0}>
           <table className="contract-table">
             <caption className="sr-only">Verträge mit Sponsor, Paket, Jahreswert, Status und Abschlussdatum</caption>
-            <thead><tr><th scope="col">Sponsor</th><th scope="col">Vertrag</th><th scope="col">Paket</th><th scope="col" className="contract-table__amount">Jahreswert</th><th scope="col">Status</th><th scope="col">Abschlussdatum</th><th scope="col"><span className="sr-only">Aktion</span></th></tr></thead>
+            <thead><tr>{([['sponsor', 'Sponsor'], ['number', 'Vertrag'], ['package', 'Paket'], ['amount', 'Jahreswert'], ['status', 'Status'], ['date', 'Abschlussdatum']] as const).map(([key, label]) => <SortableHeader key={key} label={label} sortKey={key} sort={sort} onSort={toggleSort} className={key === "amount" ? "contract-table__amount" : undefined}/>)}<th scope="col"><span className="sr-only">Aktion</span></th></tr></thead>
             <tbody>{visibleContracts.map((contract) => <tr key={contract.id}>
               <th scope="row">{contract.sponsor_name}</th>
               <td><strong>{contract.contract_number}</strong><small>Version {contract.version_number}</small></td>
@@ -492,7 +509,7 @@ export function ContractManagement({ tenantId, canWrite, canManage, onOpenOrgani
             </tr>)}</tbody>
           </table>
         </div>
-        {visibleContracts.length === 0 && <div className="contract-list-empty"><h2>{contracts.length === 0 ? "Noch keine Verträge" : "Keine passenden Verträge"}</h2><p>{contracts.length === 0 ? canWrite ? "Erstellen Sie einen neuen Vertrag oder erfassen Sie einen bestehenden Altvertrag." : "Für diesen Verein wurden noch keine Verträge erfasst." : "Ändern Sie die Suche oder den Statusfilter."}</p>{contracts.length > 0 && <button type="button" className="access-secondary" onClick={() => { setSearch(""); setStatusFilter("all"); }}>Alle Verträge anzeigen</button>}</div>}
+        {visibleContracts.length === 0 && <div className="contract-list-empty"><h2>{contracts.length === 0 ? "Noch keine Verträge" : "Keine passenden Verträge"}</h2><p>{contracts.length === 0 ? canWrite ? "Erstellen Sie einen neuen Vertrag oder erfassen Sie einen bestehenden Altvertrag." : "Für diesen Verein wurden noch keine Verträge erfasst." : "Ändern Sie die Suche, den Status- oder Paketfilter."}</p>{contracts.length > 0 && <button type="button" className="access-secondary" onClick={() => { setSearch(""); setStatusFilter("all"); setPackageFilter(""); }}>Alle Verträge anzeigen</button>}</div>}
       </section>
       {eligible.length > 0 && <details className="contract-transitions"><summary>Bestätigte Überführungen ohne Vertrag ({eligible.length})</summary>{eligible.map((item) => <article className="eligible-contract" key={item.transition_sponsor_id}><div><strong>{item.sponsor_name}</strong><span>{item.package_name} · {formatChf(item.proposed_value_cents)}</span></div>{canWrite && <button disabled={busy !== ""} onClick={() => void createTransitionContract(item)}>{busy === item.transition_sponsor_id ? "Wird erstellt …" : "Entwurf erstellen"}</button>}</article>)}</details>}
     </>}

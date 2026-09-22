@@ -1,4 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
+
+import { SortableHeader, useTableSort } from "./SortableHeader";
+import { filterOptions, matchesSearch, sortRows } from "./tableData";
 
 type CampaignStatus = "draft" | "review" | "ready" | "active" | "closed";
 type ProposalStatus = "review" | "ready" | "sent" | "opened" | "question" | "confirmed" | "declined" | "exception";
@@ -107,6 +110,10 @@ export function TransitionManagement({ tenantId, canWrite }: { tenantId: string;
   const [responseDeadline, setResponseDeadline] = useState("");
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
+  const [packageFilter, setPackageFilter] = useState("");
+  const [originFilter, setOriginFilter] = useState("");
+  const { sort, toggleSort, resetSort } = useTableSort<"name" | "origin" | "source" | "proposal" | "amount" | "status">();
+  useEffect(() => { setQuery(""); setStatusFilter(""); setPackageFilter(""); setOriginFilter(""); resetSort(); }, [selectedCampaignId]);
   const [editing, setEditing] = useState<TransitionSponsor | null>(null);
   const [proposalPackage, setProposalPackage] = useState("");
   const [proposalValue, setProposalValue] = useState("");
@@ -298,14 +305,23 @@ export function TransitionManagement({ tenantId, canWrite }: { tenantId: string;
     }
   };
 
-  const visibleSponsors = useMemo(() => {
-    const normalizedQuery = query.trim().toLocaleLowerCase("de-CH");
-    return detail?.sponsors.filter((sponsor) => {
-      const matchesQuery = !normalizedQuery || [sponsor.legal_name, sponsor.contact_email, sponsor.source_organization, sponsor.source_package, sponsor.proposed_package]
-        .some((value) => value?.toLocaleLowerCase("de-CH").includes(normalizedQuery));
-      return matchesQuery && (!statusFilter || sponsor.status === statusFilter);
-    }) ?? [];
-  }, [detail, query, statusFilter]);
+  const packageFilters = filterOptions(detail?.sponsors.map(sponsor => sponsor.proposed_package) ?? []);
+  const origins = filterOptions(detail?.sponsors.map(sponsor => sponsor.source_organization) ?? []);
+  const visibleSponsors = sortRows((detail?.sponsors ?? []).filter(sponsor =>
+    (!statusFilter || sponsor.status === statusFilter)
+    && (!packageFilter || sponsor.proposed_package === packageFilter)
+    && (!originFilter || sponsor.source_organization === originFilter)
+    && matchesSearch(query, sponsor.legal_name, sponsor.contact_email, sponsor.source_organization, sponsor.source_package, sponsor.proposed_package)
+  ), sort, (sponsor, key) => {
+    switch (key) {
+      case "name": return sponsor.legal_name;
+      case "origin": return sponsor.source_organization;
+      case "source": return sponsor.source_package;
+      case "proposal": return sponsor.proposed_package;
+      case "amount": return sponsor.proposed_value_cents;
+      case "status": return proposalStatusLabels[sponsor.status];
+    }
+  });
 
   const delta = detail && Number(detail.summary.source_value_cents)
     ? ((Number(detail.summary.proposed_value_cents) - Number(detail.summary.source_value_cents)) / Number(detail.summary.source_value_cents)) * 100
@@ -368,8 +384,8 @@ export function TransitionManagement({ tenantId, canWrite }: { tenantId: string;
 
       <section className="transition-section">
         <div className="transition-section__heading"><div><p className="eyebrow">Schritt 2</p><h2>Vorschläge und Ausnahmen</h2><p>Persönliche Abweichungen prüfen und intern freigeben.</p></div><span>{visibleSponsors.length} von {detail.sponsors.length}</span></div>
-        <div className="transition-toolbar"><label><span>Suche</span><input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Sponsor, Herkunft oder Paket"/></label><label><span>Status</span><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="">Alle Status</option>{Object.entries(proposalStatusLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label></div>
-        <div className="transition-table-wrap"><table><thead><tr><th>Sponsor</th><th>Herkunft</th><th>Bisher</th><th>Vorschlag</th><th>Zielwert</th><th>Status</th><th></th></tr></thead><tbody>{visibleSponsors.map((sponsor) => <tr key={sponsor.id}><td><strong>{sponsor.legal_name}</strong><small>{sponsor.contact_email || "Kein E-Mail-Kontakt"}</small></td><td>{sponsor.source_organization || "–"}</td><td><strong>{sponsor.source_package}</strong><small>{formatChf(sponsor.source_value_cents)}</small></td><td>{sponsor.proposed_package}</td><td>{formatChf(sponsor.proposed_value_cents)}</td><td><span className={`proposal-status proposal-status--${sponsor.status}`}>{proposalStatusLabels[sponsor.status]}</span></td><td>{canWrite && <button onClick={() => openSponsor(sponsor)}>Bearbeiten</button>}</td></tr>)}</tbody></table></div>
+        <div className="transition-toolbar"><label><span>Suche</span><input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Sponsor, Herkunft oder Paket"/></label><label><span>Status</span><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="">Alle Status</option>{Object.entries(proposalStatusLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label><label><span>Vorgeschlagenes Paket</span><select value={packageFilter} onChange={event => setPackageFilter(event.target.value)}><option value="">Alle Pakete</option>{packageFilters.map(name => <option key={name}>{name}</option>)}</select></label><label><span>Herkunft</span><select value={originFilter} onChange={event => setOriginFilter(event.target.value)}><option value="">Alle Herkünfte</option>{origins.map(name => <option key={name}>{name}</option>)}</select></label><button type="button" className="table-reset" onClick={() => { setQuery(""); setStatusFilter(""); setPackageFilter(""); setOriginFilter(""); resetSort(); }}>Zurücksetzen</button></div>
+        <div className="transition-table-wrap"><table><thead><tr>{([['name', 'Sponsor'], ['origin', 'Herkunft'], ['source', 'Bisher'], ['proposal', 'Vorschlag'], ['amount', 'Zielwert'], ['status', 'Status']] as const).map(([key, label]) => <SortableHeader key={key} label={label} sortKey={key} sort={sort} onSort={toggleSort}/>)}<th scope="col"><span className="visually-hidden">Aktion</span></th></tr></thead><tbody>{visibleSponsors.map((sponsor) => <tr key={sponsor.id}><td><strong>{sponsor.legal_name}</strong><small>{sponsor.contact_email || "Kein E-Mail-Kontakt"}</small></td><td>{sponsor.source_organization || "–"}</td><td><strong>{sponsor.source_package}</strong><small>{formatChf(sponsor.source_value_cents)}</small></td><td>{sponsor.proposed_package}</td><td>{formatChf(sponsor.proposed_value_cents)}</td><td><span className={`proposal-status proposal-status--${sponsor.status}`}>{proposalStatusLabels[sponsor.status]}</span></td><td>{canWrite && <button onClick={() => openSponsor(sponsor)}>Bearbeiten</button>}</td></tr>)}{visibleSponsors.length === 0 && <tr><td colSpan={7}>Keine Sponsoren für die gewählten Filter.</td></tr>}</tbody></table></div>
         {detail.campaign.status === "ready" && <div className="transition-ready"><strong>Interne Prüfung abgeschlossen.</strong><p>Der Versand erstellt persönliche, 14 Tage gültige Sponsorzugänge. Es wird erst nach Ihrer Bestätigung versendet.</p><button className="access-primary" disabled={busy === "dispatch"} onClick={() => void dispatchCampaign()}>{busy === "dispatch" ? "Wird versandt …" : `${detail.summary.ready_count} Einladungen versenden`}</button></div>}
       </section>
     </>}

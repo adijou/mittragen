@@ -32,7 +32,10 @@ test("new sponsors are activated without exposing workflow statuses", async () =
   assert.match(source, /status: "active"/);
   assert.match(source, /\{editing && <label><span>Status<\/span>/);
   assert.match(source, /Object\.entries\(operationalStatusLabels\)/);
-  assert.doesNotMatch(source, /Object\.entries\(statusLabels\).*<option/);
+  // Workflow statuses may be read-only list filters, but must not be assignable in the editor.
+  const editorStart = source.indexOf("{formOpen &&");
+  assert.ok(editorStart >= 0);
+  assert.doesNotMatch(source.slice(editorStart), /Object\.entries\(statusLabels\).*<option/);
   assert.match(input, /else if \(mode === "create"\) \{\s*value\.status = "active";/);
 });
 

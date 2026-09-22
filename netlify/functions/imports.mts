@@ -74,7 +74,7 @@ async function batchDetail(client: DatabaseClient, tenantId: string, batchId: st
     FROM sponsor_import_rows
     WHERE tenant_id = $1 AND batch_id = $2
     ORDER BY row_number
-    LIMIT 50
+    LIMIT 1000
   `, [tenantId, batchId]);
   const packageValues = await client.query<{ value: string }>(`
     SELECT DISTINCT mapped_data->>'proposal_package' AS value
@@ -82,7 +82,7 @@ async function batchDetail(client: DatabaseClient, tenantId: string, batchId: st
     WHERE tenant_id = $1 AND batch_id = $2
       AND NULLIF(btrim(mapped_data->>'proposal_package'), '') IS NOT NULL
     ORDER BY value
-    LIMIT 100
+    LIMIT 1000
   `, [tenantId, batchId]);
   return { batch: batch.rows[0], rows: rows.rows, packageValues: packageValues.rows.map((item) => item.value) };
 }

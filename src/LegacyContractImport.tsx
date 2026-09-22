@@ -1,4 +1,6 @@
 import { useMemo, useState } from 'react';
+import { SortableHeader, useTableSort } from './SortableHeader';
+import { filterOptions, matchesSearch, sortRows } from './tableData';
 import { parseSpreadsheetFile } from './importSpreadsheet';
 import { previewLegacyImport, type LegacySponsorOption, type LegacyPackageOption } from './legacyImport';
 
@@ -18,7 +20,27 @@ export function LegacyContractImport({ tenantId, sponsors, catalog, onChanged, o
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [results, setResults] = useState<Record<number, string>>({});
+  const [search, setSearch] = useState('');
+  const [packageFilter, setPackageFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
+  const { sort, toggleSort, resetSort } = useTableSort<'line' | 'sponsor' | 'package' | 'amount' | 'date' | 'signer' | 'evidence' | 'status'>('line');
   const rows = useMemo(() => previewLegacyImport(source, sponsors, catalog), [source, sponsors, catalog]);
+  const packages = filterOptions(rows.map(row => row.packageName));
+  const rowStatus = (row: typeof rows[number]) => row.errors.length ? 'invalid' : results[row.line] ? 'done' : 'valid';
+  const visibleRows = sortRows(rows.filter(row => (!packageFilter || row.packageName === packageFilter)
+    && (!statusFilter || rowStatus(row) === statusFilter)
+    && matchesSearch(search, row.sponsor, row.packageName, row.signer, row.evidence, row.errors.join(' '), results[row.line])), sort, (row, key) => {
+    switch (key) {
+      case 'line': return row.line;
+      case 'sponsor': return row.sponsor;
+      case 'package': return row.packageName;
+      case 'amount': return row.amount;
+      case 'date': return row.date ? Date.parse(row.date) : null;
+      case 'signer': return row.signer;
+      case 'evidence': return row.evidence;
+      case 'status': return row.errors.join(', ') || results[row.line] || 'Bereit zur Prüfung';
+    }
+  });
   const importRows = async () => {
     if (!acknowledged || rows.some(row => row.errors.length) || busy) return;
     setBusy(true); onBusyChange(true); setError('');
@@ -46,7 +68,7 @@ export function LegacyContractImport({ tenantId, sponsors, catalog, onChanged, o
     <p>CSV oder Excel mit einer Zuordnung pro Zeile. Spalten: Sponsor, Paket, Jahreswert CHF, Abschlussdatum (JJJJ-MM-TT), Unterzeichnende Person, Nachweis. Namen müssen eindeutig zu bestehenden Sponsoren und Paketen passen. Interne Paketentwürfe sind möglich. Es werden keine E-Mails versendet.</p>
     <label><span>Altvertragsliste auswählen</span><input type="file" accept=".csv,.xlsx" disabled={busy} onChange={async event => {
       const file = event.target.files?.[0]; if (!file) return;
-      setError(''); setResults({}); setSource([]); setAcknowledged(false);
+      setError(''); setResults({}); setSource([]); setAcknowledged(false); setSearch(''); setPackageFilter(''); setStatusFilter(''); resetSort();
       try {
         const sheets = await parseSpreadsheetFile(file);
         const sheet = sheets[0];
@@ -57,7 +79,15 @@ export function LegacyContractImport({ tenantId, sponsors, catalog, onChanged, o
     {error && <p role="alert" className="form-error">{error}</p>}
     {rows.length > 0 && <>
       <p><strong>{rows.length} Zuordnungen · {money(rows.filter(row => !row.errors.length).reduce((sum, row) => sum + row.amount, 0))} pro Jahr</strong></p>
-      <div className="sponsor-table-wrap"><table className="sponsor-table"><thead><tr><th>Zeile</th><th>Sponsor</th><th>Paket</th><th>CHF/Jahr</th><th>Abschlussdatum</th><th>Unterzeichnende Person</th><th>Nachweis</th><th>Status</th></tr></thead><tbody>{rows.map(row => <tr key={row.line}><td>{row.line}</td><td>{row.sponsor}</td><td>{row.packageName}</td><td>{Number.isFinite(row.amount) ? money(row.amount) : '–'}</td><td>{row.date || 'Unbekannt'}</td><td>{row.signer || 'Unbekannt'}</td><td>{row.evidence}</td><td>{row.errors.join(', ') || results[row.line] || 'Bereit zur Prüfung'}</td></tr>)}</tbody></table></div>
+      <div className="table-filters">
+        <label><span>Importzeilen suchen</span><input type="search" value={search} onChange={event => setSearch(event.target.value)} placeholder="Sponsor, Paket oder Nachweis"/></label>
+        <label><span>Paket</span><select value={packageFilter} onChange={event => setPackageFilter(event.target.value)}><option value="">Alle Pakete</option>{packages.map(name => <option key={name}>{name}</option>)}</select></label>
+        <label><span>Prüfung</span><select value={statusFilter} onChange={event => setStatusFilter(event.target.value)}><option value="">Alle Zeilen</option><option value="invalid">Mit Fehlern</option><option value="valid">Bereit zur Prüfung</option><option value="done">Übernommen / vorhanden</option></select></label>
+        <button type="button" className="table-reset" onClick={() => { setSearch(''); setPackageFilter(''); setStatusFilter(''); resetSort(); }}>Zurücksetzen</button>
+        <span role="status">{visibleRows.length} von {rows.length} Zeilen</span>
+      </div>
+      <p className="table-filter-note">Filter und Sortierung ändern nur die Vorschau. Die Übernahme umfasst weiterhin alle geprüften Zeilen der Datei.</p>
+      <div className="sponsor-table-wrap"><table className="sponsor-table"><thead><tr>{([['line', 'Zeile'], ['sponsor', 'Sponsor'], ['package', 'Paket'], ['amount', 'CHF/Jahr'], ['date', 'Abschlussdatum'], ['signer', 'Unterzeichnende Person'], ['evidence', 'Nachweis'], ['status', 'Status']] as const).map(([key, label]) => <SortableHeader key={key} label={label} sortKey={key} sort={sort} onSort={toggleSort}/>)}</tr></thead><tbody>{visibleRows.map(row => <tr key={row.line}><td>{row.line}</td><td>{row.sponsor}</td><td>{row.packageName}</td><td>{Number.isFinite(row.amount) ? money(row.amount) : '–'}</td><td>{row.date || 'Unbekannt'}</td><td>{row.signer || 'Unbekannt'}</td><td>{row.evidence}</td><td>{row.errors.join(', ') || results[row.line] || 'Bereit zur Prüfung'}</td></tr>)}{visibleRows.length === 0 && <tr><td colSpan={8}>Keine Zeilen für die gewählten Filter.</td></tr>}</tbody></table></div>
       <label className="contract-release-check"><input type="checkbox" disabled={busy} checked={acknowledged} onChange={event => setAcknowledged(event.target.checked)}/><span>Ich bestätige den vorhandenen Altbestand und die geprüften Zuordnungen. Fehlende Abschlussdaten und unterzeichnende Personen werden ausdrücklich als unbekannt dokumentiert. Vorhandene identische Zuordnungen werden übersprungen; abweichende Verträge werden nicht überschrieben.</span></label>
       <button className="access-primary" disabled={busy || !acknowledged || rows.some(row => row.errors.length)} onClick={() => void importRows()}>{busy ? 'Altverträge werden übernommen …' : 'Geprüfte Altverträge übernehmen'}</button>
       {Object.keys(results).length > 0 && <p role="status">{Object.keys(results).length} von {rows.length} Zuordnungen übernommen oder bereits vorhanden.</p>}

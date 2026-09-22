@@ -1,4 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
+import { SortableHeader, useTableSort } from "./SortableHeader";
+import { filterOptions, matchesSearch, sortRows } from "./tableData";
 import type { ParsedCsv } from "./importCsv";
 import { parseSpreadsheetFile, type ParsedSheet } from "./importSpreadsheet";
 
@@ -123,6 +125,13 @@ export function ImportManagement({ tenantId, tenantName, demoSponsorCount, canDe
   const [cleanupConfirmation, setCleanupConfirmation] = useState("");
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const [search, setSearch] = useState("");
+  const [packageFilter, setPackageFilter] = useState("");
+  const [statusFilter, setStatusFilter] = useState("");
+  const [visibleCount, setVisibleCount] = useState(50);
+  const { sort, toggleSort, resetSort } = useTableSort<"line" | "name" | "contact" | "package" | "amount" | "status">("line");
+  useEffect(() => { setSearch(""); setPackageFilter(""); setStatusFilter(""); resetSort(); }, [detail?.batch.id]);
+  useEffect(() => { setVisibleCount(50); }, [detail?.batch.id, search, packageFilter, statusFilter, sort.key, sort.direction]);
 
   const loadBatches = async () => {
     const result = await request<{ batches: ImportBatch[]; packageOptions: PackageOption[] }>(`/api/imports/${tenantId}`);
@@ -311,7 +320,25 @@ export function ImportManagement({ tenantId, tenantName, demoSponsorCount, canDe
     setFileData(sheet);
   };
 
-  const preview = useMemo(() => detail?.rows.slice(0, 12) ?? [], [detail]);
+  const rowName = (row: ImportRow) => String(row.mapped_data.legal_name ?? row.raw_data[detail?.batch.source_columns[0] ?? ""] ?? "");
+  const rowContact = (row: ImportRow) => String(row.mapped_data.contact_email ?? row.mapped_data.contact_name ?? "");
+  const rowPackage = (row: ImportRow) => String(row.mapped_data.proposal_package ?? "");
+  const rowStatus = (row: ImportRow) => row.validation_errors.length ? "invalid" : row.status;
+  const rowStatusLabels = { pending: "Noch nicht geprüft", valid: "Gültig", invalid: "Mit Fehlern", imported: "Übernommen" };
+  const packages = filterOptions((detail?.rows ?? []).map(rowPackage));
+  const filteredRows = sortRows((detail?.rows ?? []).filter(row => (!packageFilter || rowPackage(row) === packageFilter)
+    && (!statusFilter || rowStatus(row) === statusFilter)
+    && matchesSearch(search, rowName(row), rowContact(row), rowPackage(row), ...Object.values(row.raw_data), ...row.validation_errors.map(code => errorLabels[code] ?? code))), sort, (row, key) => {
+    switch (key) {
+      case "line": return row.row_number;
+      case "name": return rowName(row);
+      case "contact": return rowContact(row);
+      case "package": return rowPackage(row);
+      case "amount": return typeof row.mapped_data.annual_value_cents === "number" ? row.mapped_data.annual_value_cents : null;
+      case "status": return rowStatusLabels[rowStatus(row)];
+    }
+  });
+  const preview = filteredRows.slice(0, visibleCount);
   const assignedPackageCount = detail?.packageValues.filter((value) => packageMapping[value]).length ?? 0;
 
   return <section className="data-import">
@@ -362,7 +389,16 @@ export function ImportManagement({ tenantId, tenantName, demoSponsorCount, canDe
         {detail.batch.status !== "imported" && <button className="access-primary" disabled={busy || mappingDirty || packageMappingDirty || !detail.batch.package_mapping_complete || detail.batch.error_count > 0 || detail.batch.valid_count !== detail.batch.row_count} onClick={() => void commitImport()}>{busy ? "Wird übernommen …" : `${detail.batch.valid_count} Sponsoren übernehmen`}</button>}
       </div>}
 
-      <div className="import-preview"><table><thead><tr><th>Zeile</th><th>Firmenname</th><th>Kontakt</th><th>Paket</th><th>Jahreswert</th><th>Prüfung</th></tr></thead><tbody>{preview.map((row) => <tr key={row.row_number}><td>{row.row_number}</td><td><strong>{String(row.mapped_data.legal_name ?? row.raw_data[detail.batch.source_columns[0]] ?? "–")}</strong></td><td>{String(row.mapped_data.contact_email ?? row.mapped_data.contact_name ?? "–")}</td><td>{String(row.mapped_data.proposal_package ?? "–")}</td><td>{typeof row.mapped_data.annual_value_cents === "number" ? new Intl.NumberFormat("de-CH", { style: "currency", currency: "CHF" }).format(row.mapped_data.annual_value_cents / 100) : "–"}</td><td>{row.validation_errors.length ? <span className="import-row-error">{row.validation_errors.map((code) => errorLabels[code] ?? code).join(", ")}</span> : row.status === "pending" ? <span className="import-row-pending">Noch nicht geprüft</span> : <span className="import-row-valid">✓ Gültig</span>}</td></tr>)}</tbody></table>{detail.batch.row_count > preview.length && <p>Vorschau der ersten {preview.length} von {detail.batch.row_count} Zeilen.</p>}</div>
+      <div className="table-filters">
+        <label><span>Importzeilen suchen</span><input type="search" value={search} onChange={event => setSearch(event.target.value)} placeholder="Firma, Kontakt oder Paket"/></label>
+        <label><span>Paket</span><select value={packageFilter} onChange={event => setPackageFilter(event.target.value)}><option value="">Alle Pakete</option>{packages.map(name => <option key={name}>{name}</option>)}</select></label>
+        <label><span>Prüfung</span><select value={statusFilter} onChange={event => setStatusFilter(event.target.value)}><option value="">Alle Zeilen</option>{Object.entries(rowStatusLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+        <button type="button" className="table-reset" onClick={() => { setSearch(""); setPackageFilter(""); setStatusFilter(""); resetSort(); }}>Zurücksetzen</button>
+        <span role="status">{filteredRows.length} von {detail.batch.row_count} Zeilen</span>
+      </div>
+      <p className="table-filter-note">Filter und Sortierung ändern nur die Vorschau. Die Übernahme umfasst weiterhin alle geprüften Zeilen der Datei.</p>
+      <div className="import-preview"><table><thead><tr>{([['line', 'Zeile'], ['name', 'Firmenname'], ['contact', 'Kontakt'], ['package', 'Paket'], ['amount', 'Jahreswert'], ['status', 'Prüfung']] as const).map(([key, label]) => <SortableHeader key={key} label={label} sortKey={key} sort={sort} onSort={toggleSort}/>)}</tr></thead><tbody>{preview.map((row) => <tr key={row.row_number}><td>{row.row_number}</td><td><strong>{String(row.mapped_data.legal_name ?? row.raw_data[detail.batch.source_columns[0]] ?? "–")}</strong></td><td>{String(row.mapped_data.contact_email ?? row.mapped_data.contact_name ?? "–")}</td><td>{String(row.mapped_data.proposal_package ?? "–")}</td><td>{typeof row.mapped_data.annual_value_cents === "number" ? new Intl.NumberFormat("de-CH", { style: "currency", currency: "CHF" }).format(row.mapped_data.annual_value_cents / 100) : "–"}</td><td>{row.validation_errors.length ? <span className="import-row-error">{row.validation_errors.map((code) => errorLabels[code] ?? code).join(", ")}</span> : row.status === "pending" ? <span className="import-row-pending">Noch nicht geprüft</span> : <span className="import-row-valid">✓ {rowStatusLabels[row.status]}</span>}</td></tr>)}{preview.length === 0 && <tr><td colSpan={6}>Keine Zeilen für die gewählten Filter.</td></tr>}</tbody></table></div>
+      {filteredRows.length > preview.length && <div className="table-pagination"><span>{preview.length} von {filteredRows.length} Treffern angezeigt</span><button type="button" className="access-secondary" onClick={() => setVisibleCount(count => count + 50)}>Weitere 50 anzeigen</button></div>}
     </section>}
   </section>;
 }
