@@ -1,5 +1,5 @@
 import type { CallbackResult, User } from "@netlify/identity";
-import { shouldOpenSponsorSpace } from "./sponsorAccess.ts";
+import { accountDestination, claimAccountAreas, type AccessDestination } from "./accountAreas.ts";
 import type { SponsorTarget } from "../shared/sponsor-space-link.ts";
 
 export type IdentityCallbackKind = "confirmation" | "invite" | "recovery" | "oauth" | "email_change" | "error";
@@ -58,10 +58,11 @@ export function identityErrorMessage(reason: unknown, context: IdentityCallbackK
   const status = reason && typeof reason === "object" && "status" in reason ? reason.status : undefined;
   if (message === "sponsor_account_changed") return "Das angemeldete Konto hat gewechselt. Bitte melden Sie sich mit der Empfängeradresse des Links an.";
   if (message === "sponsor_link_access_denied" || message === "sponsor_recipient_mismatch") return "Dieser Sponsor-Link kann mit dem angemeldeten Konto nicht geöffnet werden. Bitte melden Sie sich mit der Empfängeradresse an.";
+  if (message === "workspace_link_access_denied") return "Für diese Organisation besteht mit dem angemeldeten Konto kein Verwaltungszugang. Wählen Sie einen Ihrer Bereiche.";
   if (message === "invalid_sponsor_link") return "Dieser Sponsor-Link ist unvollständig oder ungültig. Bitte verwenden Sie den vollständigen Link aus Ihrer Einladung.";
   if (message === "verified_email_required") return "Bitte bestätigen Sie zuerst Ihre E-Mail-Adresse über den Link in Ihrer Bestätigungsmail.";
   if (message === "authentication_required") return "Ihre Sitzung ist abgelaufen. Bitte melden Sie sich erneut an.";
-  if (message === "access_check_failed" || message === "identity_verification_unavailable") {
+  if (message === "account_areas_failed" || message === "access_check_failed" || message === "identity_verification_unavailable") {
     return "Sie sind angemeldet. Ihr Zugang konnte gerade nicht geprüft werden. Bitte versuchen Sie es erneut.";
   }
   if (status === 429 || /rate limit|too many requests/.test(message)) {
@@ -119,16 +120,10 @@ export function createIdentityInitializer(dependencies: {
 }
 
 export async function confirmedAccessDestination(preferSponsor: boolean, fetcher: typeof fetch = fetch,
-  context: { accountId?: string; email?: string; target?: SponsorTarget } = {}): Promise<"sponsor" | "workspace"> {
-  const response = await fetcher("/api/sponsor-portal/claim", {
-    method: "POST", headers: { "Content-Type": "application/json", ...(context.accountId ? { "X-Sponsor-Account": context.accountId } : {}) },
-    body: JSON.stringify({ target: context.target, expectedEmail: context.email }),
-    signal: AbortSignal.timeout(12000),
-  });
-  if (!response.ok) {
-    const body = await response.json().catch(() => ({})) as { error?: string };
-    throw new Error(body.error ?? "access_check_failed");
-  }
-  const access = await response.json() as { claimed?: number; hasAccess?: boolean; hasWorkspace?: boolean };
-  return preferSponsor || shouldOpenSponsorSpace(access) ? "sponsor" : "workspace";
+  context: { accountId?: string; email?: string; target?: SponsorTarget } = {}): Promise<AccessDestination> {
+  // Personal links always retain their exact target, including when the same
+  // account also administers an organization. No role is inferred from email.
+  const directSponsor = preferSponsor || Boolean(context.target);
+  const areas = await claimAccountAreas(context.accountId, fetcher, context, directSponsor);
+  return directSponsor ? "sponsor" : accountDestination(areas);
 }

@@ -26,11 +26,14 @@ import { ContractManagement } from "./ContractManagement";
 import { SponsoringDossier } from "./SponsoringDossier";
 import { EventSponsoringManagement } from "./EventSponsoringManagement";
 import { Brand } from "./ProductBrand";
+import { AccountAreas } from "./AccountAreas";
+import { openAreaPicker } from "./accountAreas";
+import { selectWorkspaceTenant } from "../shared/account-areas";
 import { clearSponsorEntry, readSponsorEntry } from "./sponsorAccess";
 import { IdentityAccountSwitchRequired, confirmedAccessDestination, confirmedEmailCallback, createIdentityInitializer, emailConfirmationRequired, identityCallbackKind, identityErrorMessage, invitedConfirmationCallback, type IdentityCallbackKind } from "./identityFeedback";
 import { EmailConfirmationSuccess } from "./EmailConfirmationSuccess";
 
-type ProductivePage = "login" | "workspace";
+type ProductivePage = "login" | "workspace" | "areas";
 type Availability = "checking" | "ready" | "missing";
 
 type Tenant = {
@@ -202,6 +205,7 @@ function AuthPage({ availability, user, callback, error: sessionError, callbackK
           accountId: account?.id, email: sponsorEntry?.email, target: sponsorEntry?.target,
         });
       if (destination === "sponsor") { onSponsor(); }
+      else if (destination === "areas") openAreaPicker();
       else onWorkspace();
     } catch (reason) {
       setError(identityErrorMessage(reason));
@@ -297,7 +301,7 @@ function AuthPage({ availability, user, callback, error: sessionError, callbackK
   if (confirmedUser) return <EmailConfirmationSuccess accountId={confirmedUser.id} email={confirmedUser.email!} completion={completion} preferSponsor={Boolean(sponsorEntry)} onHome={onHome} onContinue={(destination) => {
     setCallback(null);
     if (destination !== "sponsor") clearSponsorEntry();
-    if (destination === "sponsor") onSponsor(); else onWorkspace();
+    if (destination === "sponsor") onSponsor(); else if (destination === "areas") openAreaPicker(); else onWorkspace();
   }}/>;
 
   return <div className="access-page">
@@ -382,19 +386,20 @@ function WorkspacePage({ user, setUser, onHome, onLogin, onSponsor, onPrototype:
     let active = true;
     const loadAccess = async () => {
       const entry = readSponsorEntry();
-      const destination = await confirmedAccessDestination(Boolean(entry), fetch, { accountId: user.id, email: entry?.email, target: entry?.target });
+      const targetTenant = new URLSearchParams(window.location.search).get("tenant");
+      if (targetTenant === null || entry) {
+        const destination = await confirmedAccessDestination(Boolean(entry), fetch, { accountId: user.id, email: entry?.email, target: entry?.target });
+        if (!active) return;
+        if (destination === "sponsor") { onSponsor(); return; }
+        if (destination === "areas") { openAreaPicker(); return; }
+      }
+      await api("/api/team/claim", { method: "POST", headers: { "X-Sponsor-Account": user.id } });
+      const result = await api<{ tenants: Tenant[] }>("/api/tenants", { headers: { "X-Sponsor-Account": user.id } });
       if (!active) return;
-      if (destination === "sponsor") { onSponsor(); return; }
-      await api("/api/team/claim", { method: "POST" });
-      const result = await api<{ tenants: Tenant[] }>("/api/tenants");
-      if (!active) return;
+      const selected = selectWorkspaceTenant(result.tenants, targetTenant,
+        localStorage.getItem(`${activeTenantStorageKey}:${user.id}`));
       setTenants(result.tenants);
-      setSelectedTenantId((current) => {
-        const stored = localStorage.getItem(activeTenantStorageKey) ?? "";
-        return result.tenants.some((tenant) => tenant.id === current) ? current
-          : result.tenants.some((tenant) => tenant.id === stored) ? stored
-            : result.tenants[0]?.id ?? "";
-      });
+      setSelectedTenantId(selected);
     };
     void loadAccess().catch(async (reason) => {
       if (!active) return;
@@ -410,12 +415,15 @@ function WorkspacePage({ user, setUser, onHome, onLogin, onSponsor, onPrototype:
   }, [user, accessAttempt]);
 
   useEffect(() => {
-    if (!selectedTenantId) { setWorkspace(null); return; }
+    if (!user || !selectedTenantId) { setWorkspace(null); return; }
     setLoading(true);
     setWorkspace(null);
     setWorkspaceError("");
-    localStorage.setItem(activeTenantStorageKey, selectedTenantId);
-    api<{ workspace: WorkspaceData }>(`/api/workspace/${selectedTenantId}`).then((result) => setWorkspace(result.workspace)).catch(async (reason) => {
+    let active = true;
+    localStorage.setItem(`${activeTenantStorageKey}:${user?.id}`, selectedTenantId);
+    window.history.replaceState({}, "", `/workspace?${new URLSearchParams({ tenant: selectedTenantId })}`);
+    api<{ workspace: WorkspaceData }>(`/api/workspace/${selectedTenantId}`, { headers: { "X-Sponsor-Account": user!.id } }).then((result) => { if (active) setWorkspace(result.workspace); }).catch(async (reason) => {
+      if (!active) return;
       if (reason instanceof Error && reason.message === "authentication_required") {
         await logout().catch(() => null);
         setUser(null);
@@ -423,8 +431,9 @@ function WorkspacePage({ user, setUser, onHome, onLogin, onSponsor, onPrototype:
         return;
       }
       setWorkspaceError(reason instanceof Error ? reason.message : "workspace_load_failed");
-    }).finally(() => setLoading(false));
-  }, [selectedTenantId]);
+    }).finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [selectedTenantId, user?.id]);
 
   const reloadWorkspace = async () => {
     if (!selectedTenantId) return;
@@ -480,7 +489,7 @@ function WorkspacePage({ user, setUser, onHome, onLogin, onSponsor, onPrototype:
   </form>;
 
   if (!user) return <div className="access-page"><header className="access-header"><button onClick={onHome} className="access-brand-button"><Brand/></button></header><main className="access-empty"><h1>Anmeldung erforderlich</h1><p>Der produktive Workspace ist nur für angemeldete Benutzer zugänglich.</p><button className="access-primary" onClick={onLogin}>Zur Anmeldung</button></main></div>;
-  if (tenants.length === 0 && (loading || workspaceError)) return <div className="access-page"><header className="access-header"><button onClick={onHome} className="access-brand-button"><Brand/></button></header><main className="access-empty">{loading ? <p>Zugang wird geprüft …</p> : <><h1>Ihr Zugang konnte gerade nicht geladen werden.</h1><p role="alert">{identityErrorMessage(new Error(workspaceError))}</p><button className="access-primary" onClick={() => setAccessAttempt((value) => value + 1)}>Zugang erneut prüfen</button></>}</main></div>;
+  if (tenants.length === 0 && (loading || workspaceError)) return <div className="access-page"><header className="access-header"><button onClick={onHome} className="access-brand-button"><Brand/></button></header><main className="access-empty">{loading ? <p>Zugang wird geprüft …</p> : <><h1>Ihr Zugang konnte gerade nicht geladen werden.</h1><p role="alert">{identityErrorMessage(new Error(workspaceError))}</p><button className="access-primary" onClick={() => setAccessAttempt((value) => value + 1)}>Zugang erneut prüfen</button><button className="access-secondary" onClick={openAreaPicker}>Meine Bereiche</button></>}</main></div>;
 
   return <div className="workspace-page">
     <aside className="workspace-sidebar">
@@ -499,12 +508,13 @@ function WorkspacePage({ user, setUser, onHome, onLogin, onSponsor, onPrototype:
         <button className={workspaceSection === "settings" ? "active" : ""} onClick={() => setWorkspaceSection("settings")}>Organisation</button>
         <button className={workspaceSection === "help" ? "active" : ""} aria-current={workspaceSection === "help" ? "page" : undefined} onClick={() => setWorkspaceSection("help")}>FAQ & Hilfe</button>
       </nav>
+      <button className="access-secondary workspace-area-switch" onClick={openAreaPicker}>Bereich wechseln</button>
       <button className="workspace-logout" onClick={signOut}>Abmelden</button>
     </aside>
 
     <main className="workspace-main">
       <header className="workspace-topbar">
-        <div><p className="eyebrow">Produktiver Workspace</p><strong>Mandantengetrennte Datenbasis</strong></div>
+        <div><p className="eyebrow">Vereinsverwaltung</p><strong>{workspace ? `${workspace.tenant.name} · ${roleLabels[workspace.membership.role] ?? workspace.membership.role}` : "Organisation verwalten"}</strong></div>
         {tenants.length > 0 && <div className="workspace-tenant-tools">
           <label><span>Organisation</span><select value={selectedTenantId} onChange={(event) => setSelectedTenantId(event.target.value)}>{tenants.map((tenant) => <option value={tenant.id} key={tenant.id}>{tenant.name}</option>)}</select></label>
           <button className="access-secondary" type="button" onClick={() => { setCreateError(""); setCreateOpen(true); }}>Neue Organisation</button>
@@ -553,5 +563,6 @@ export function ProductiveAccess({ page, onLogin, onWorkspace, onSponsor, onProt
   </section></main></div>;
   if (page === "login") return <AuthPage {...session} onHome={goToWebsite} onWorkspace={onWorkspace} onSponsor={onSponsor}/>;
   if (session.availability === "checking") return <div className="access-page"><main className="access-empty">Zugang wird geprüft …</main></div>;
-  return <WorkspacePage user={session.user} setUser={session.setUser} onHome={goToWebsite} onLogin={onLogin} onSponsor={onSponsor} onPrototype={onPrototype}/>;
+  if (page === "areas") return <AccountAreas user={session.user} onLogin={onLogin} onHome={goToWebsite}/>;
+  return <WorkspacePage key={session.user?.id ?? "signed-out"} user={session.user} setUser={session.setUser} onHome={goToWebsite} onLogin={onLogin} onSponsor={onSponsor} onPrototype={onPrototype}/>;
 }

@@ -6,7 +6,7 @@ import { PGlite } from "@electric-sql/pglite";
 import { pgcrypto } from "@electric-sql/pglite/contrib/pgcrypto";
 import { claimContractSpaces, parseSponsorAddress, updateSponsorAddress, parseSponsorContact, updateSponsorContact } from "../netlify/functions/_shared/sponsor-self-service.ts";
 import type { DatabaseClient } from "../netlify/functions/_shared/database.ts";
-import { clearSponsorEntry, prepareSponsorAccess, readSponsorEntry, shouldOpenSponsorSpace } from "../src/sponsorAccess.ts";
+import { clearSponsorEntry, prepareSponsorAccess, readSponsorEntry } from "../src/sponsorAccess.ts";
 import { claimSponsorInvitations, loadSponsorAccess, prepareSponsorAccessInvitation, recordSponsorAccessDelivery } from "../netlify/functions/_shared/sponsor-access-invitations.ts";
 import { verifySponsorIdentity } from "../netlify/functions/_shared/sponsor-identity.ts";
 
@@ -75,13 +75,6 @@ test("sponsor registration hints survive the login handoff and are cleared after
   assert.deepEqual(readSponsorEntry(storage), { mode: "login" });
 });
 
-test("returning sponsors reach their space without changing the default workspace of a dual-role administrator", () => {
-  assert.equal(shouldOpenSponsorSpace({ hasAccess: true, hasWorkspace: false, claimed: 0 }), true);
-  assert.equal(shouldOpenSponsorSpace({ hasAccess: true, hasWorkspace: true, claimed: 0 }), false);
-  assert.equal(shouldOpenSponsorSpace({ hasAccess: true, hasWorkspace: true, claimed: 1 }), true);
-  assert.equal(shouldOpenSponsorSpace({ hasAccess: false, hasWorkspace: true }), false);
-  assert.equal(shouldOpenSponsorSpace({}), false);
-});
 
 test("self-service runs against PostgreSQL with real migrations and a role subject to RLS", async (t) => {
   const db = new PGlite({ extensions: { pgcrypto } });

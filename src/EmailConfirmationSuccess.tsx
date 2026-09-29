@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Brand } from "./ProductBrand";
 import { readSponsorEntry } from "./sponsorAccess";
+import type { AccessDestination } from "./accountAreas";
 import { confirmedAccessDestination } from "./identityFeedback";
 
 export function EmailConfirmationSuccess({ accountId, email, completion = "confirmation", preferSponsor, onHome, onContinue }: {
@@ -9,12 +10,12 @@ export function EmailConfirmationSuccess({ accountId, email, completion = "confi
   completion?: "confirmation" | "invite" | "recovery";
   preferSponsor: boolean;
   onHome: () => void;
-  onContinue: (destination: "sponsor" | "workspace") => void;
+  onContinue: (destination: AccessDestination) => void;
 }) {
-  const [destination, setDestination] = useState<"sponsor" | "workspace" | null>(null);
+  const [destination, setDestination] = useState<AccessDestination | null>(null);
   const [error, setError] = useState("");
   const [attempt, setAttempt] = useState(0);
-  const check = useRef<Promise<"sponsor" | "workspace"> | null>(null);
+  const check = useRef<Promise<AccessDestination> | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -38,7 +39,7 @@ export function EmailConfirmationSuccess({ accountId, email, completion = "confi
         <p role="status">{completion === "confirmation" ? <>Vielen Dank. Ihre E-Mail-Adresse <strong>{email}</strong> ist bestätigt und Sie sind angemeldet.</> : <>Ihr Zugang für <strong>{email}</strong> ist eingerichtet und Sie sind angemeldet.</>}</p>
         {destination && <p>{destination === "sponsor" ? "In Ihrem persönlichen Space finden Sie Ihre Dokumente und können Ihre Adresse und Ihr Logo verwalten." : "Sie können jetzt Ihren persönlichen Zugang öffnen."}</p>}
         {error ? <><p className="form-error" role="alert">{error}</p><button className="access-primary" onClick={() => { check.current = null; setAttempt((value) => value + 1); }}>Zugang erneut prüfen</button></>
-          : <button className="access-primary" disabled={!destination} onClick={() => destination && onContinue(destination)}>{destination === "sponsor" ? "Weiter zu meinem Space" : destination === "workspace" ? "Weiter zu meinem Zugang" : "Zugang wird vorbereitet …"}</button>}
+          : <button className="access-primary" disabled={!destination} onClick={() => destination && onContinue(destination)}>{destination === "sponsor" ? "Weiter zu meinem Space" : destination === "areas" ? "Meine Bereiche öffnen" : destination === "workspace" ? "Weiter zu meinem Zugang" : "Zugang wird vorbereitet …"}</button>}
       </section>
     </main>
   </div>;

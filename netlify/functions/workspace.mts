@@ -26,7 +26,7 @@ type SponsorSummary = {
 export default async (request: Request, context: Context) => {
   if (request.method !== "GET") return json({ error: "method_not_allowed" }, 405);
 
-  const user = await requireUser();
+  const user = await requireUser(request);
   if (isResponse(user)) return user;
 
   const tenantId = context.params.tenantId;

@@ -1,0 +1,23 @@
+.account-areas-page { min-height: 100vh; background: #f4f7fb; color: #0b2142; }
+.account-areas-account { display: flex; align-items: center; gap: 20px; flex-wrap: wrap; }
+.account-areas-account > span { color: #59687c; font-size: .9rem; overflow-wrap: anywhere; }
+.account-areas-main { max-width: 1080px; margin: 0 auto; padding: 64px 28px; }
+.account-areas-heading { max-width: 720px; margin-bottom: 36px; }
+.account-areas-heading h1 { font-size: clamp(2.2rem, 5vw, 3.4rem); margin: 12px 0 16px; letter-spacing: -.04em; }
+.account-areas-heading > p:last-child { color: #59687c; font-size: 1.1rem; line-height: 1.65; }
+.account-areas-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 20px; }
+.account-area-card { display: flex; flex-direction: column; padding: 28px; border: 1px solid #dce4ef; border-radius: 18px; background: #fff; color: inherit; text-decoration: none; transition: border-color .15s, box-shadow .15s; }
+.account-area-card:hover { border-color: #1f6bff; box-shadow: 0 8px 24px #0b21420d; }
+.account-area-card:focus-visible { outline: 3px solid #1f6bff; outline-offset: 4px; }
+.account-area-kind { align-self: flex-start; padding: 6px 10px; border-radius: 20px; background: #eaf1ff; color: #174a9e; font-size: .8rem; font-weight: 700; }
+.account-area-kind--sponsor { background: #e5f4ef; color: #17634e; }
+.account-area-card h2 { margin: 24px 0 8px; font-size: 1.45rem; overflow-wrap: anywhere; }
+.account-area-card p { margin: 0 0 28px; color: #59687c; line-height: 1.5; overflow-wrap: anywhere; }
+.account-area-action { display: flex; justify-content: space-between; gap: 20px; border-top: 1px solid #e8edf4; padding-top: 20px; margin-top: auto; font-weight: 700; }
+.account-areas-note { margin-top: 28px; color: #59687c; line-height: 1.6; }
+.account-areas-state { padding: 28px; border: 1px solid #dce4ef; border-radius: 18px; background: white; }
+.account-areas-state p { line-height: 1.6; }
+.account-areas-state .access-secondary { margin-left: 12px; }
+.workspace-area-switch { margin: 8px 0 20px; }
+.sponsor-portal__header-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+@media (max-width: 600px) { .account-areas-main { padding: 36px 20px; } .account-areas-page .access-header { gap: 16px; flex-wrap: wrap; } .account-area-card { padding: 24px; } .account-areas-state .access-secondary { margin: 12px 0 0; } }

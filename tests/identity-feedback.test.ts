@@ -123,17 +123,21 @@ test("Identity errors use German instructions and do not expose provider message
   }
 });
 
-test("the success screen resolves the sponsor in a new tab and exposes failures for retry", async () => {
-  const response = (access: Record<string, unknown>): typeof fetch => async (url, init) => {
-    assert.equal(url, "/api/sponsor-portal/claim");
-    assert.equal(init?.method, "POST");
-    return Response.json(access);
-  };
-  assert.equal(await confirmedAccessDestination(false, response({ claimed: 1, hasAccess: true })), "sponsor");
-  assert.equal(await confirmedAccessDestination(false, response({ claimed: 0, hasAccess: true, hasWorkspace: false })), "sponsor");
-  assert.equal(await confirmedAccessDestination(false, response({ claimed: 0, hasAccess: true, hasWorkspace: true })), "workspace");
-  assert.equal(await confirmedAccessDestination(true, response({ claimed: 0, hasAccess: true, hasWorkspace: true })), "sponsor");
-  assert.equal(await confirmedAccessDestination(false, response({ hasAccess: false, hasWorkspace: true })), "workspace");
+test("login chooses areas for multiple roles while personal links keep their sponsor destination", async () => {
+  const workspace = { kind: "workspace", tenantId: "a", tenantName: "Verein A", role: "owner" };
+  const sponsor = { kind: "sponsor", tenantId: "b", tenantName: "Verein B", sponsorId: "s", sponsorName: "Sponsor" };
+  const response = (areas: unknown[]): typeof fetch => async (url) => Response.json(
+    url === "/api/account/areas" ? { accountId: "user", areas } : { claimed: 1 });
+  for (const [areas, expected] of [[[], "workspace"], [[workspace], "workspace"], [[sponsor], "sponsor"],
+    [[workspace, sponsor], "areas"], [[workspace, { ...workspace, tenantId: "c" }], "areas"],
+    [[sponsor, { ...sponsor, sponsorId: "other" }], "areas"]] as const) {
+    assert.equal(await confirmedAccessDestination(false, response([...areas]), { accountId: "user" }), expected);
+  }
+  let calls = 0;
+  assert.equal(await confirmedAccessDestination(true, async (url) => {
+    calls++; assert.equal(url, "/api/sponsor-portal/claim"); return Response.json({ claimed: 0 });
+  }), "sponsor");
+  assert.equal(calls, 1, "direct links must not be replaced by a generic area chooser");
   await assert.rejects(confirmedAccessDestination(false, async () => Response.json({ error: "unavailable" }, { status: 503 })));
 });
 

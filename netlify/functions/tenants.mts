@@ -34,7 +34,7 @@ const demoSponsors = [
 ] as const;
 
 export default async (request: Request, _context: Context) => {
-  const user = await requireUser();
+  const user = await requireUser(request);
   if (isResponse(user)) return user;
 
   const tenantIdFromPath = _context.params.tenantId;

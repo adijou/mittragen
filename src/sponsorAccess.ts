@@ -3,10 +3,6 @@ type SponsorEntry = { email?: string; name?: string; target?: SponsorTarget; mod
 const entryKey = "mittragen-sponsor-entry";
 const targetKey = "mittragen-login-target";
 
-export function shouldOpenSponsorSpace(access: { claimed?: number; hasAccess?: boolean; hasWorkspace?: boolean }) {
-  return Number(access.claimed) > 0 || Boolean(access.hasAccess && !access.hasWorkspace);
-}
-
 // UI hints only. Authorization always comes from the verified Identity account.
 export function prepareSponsorAccess(entry: SponsorEntry, storage: Storage = sessionStorage) {
   storage.setItem(targetKey, "sponsor");
