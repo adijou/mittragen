@@ -17,6 +17,8 @@ const hooks = registerHooks({
       export const setTestUser = value => { user = value; };
       export const getUser = async () => user;
       export const refreshSession = async () => {};
+      export const getIdentityConfig = () => { throw new Error("unexpected Identity invitation during logo operation"); };
+      export const admin = { listUsers: async () => { throw new Error("unexpected Identity lookup during logo operation"); } };
       export class AuthError extends Error {}
       export const verifyRequestOrigin = request => {
         if (request.headers.get("origin") !== new URL(request.url).origin) throw new AuthError("invalid origin");

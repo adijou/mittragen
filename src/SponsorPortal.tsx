@@ -166,7 +166,7 @@ export function SponsorPortal({ onHome, onLogin }: { onHome: () => void; onLogin
     setLogoInputKey((current) => current + 1);
   }, [selectedSpaceKey, space?.proposal?.id]);
 
-  const goToLogin = (mode: "login" | "signup" = "login") => { prepareSponsorAccess({ ...entry, mode, target }); onLogin(); };
+  const goToLogin = () => { prepareSponsorAccess({ ...entry, mode: "login", target }); onLogin(); };
 
   const respond = async (decision: "accept" | "alternative" | "advice" | "decline") => {
     if (!space?.proposal) return;
@@ -266,7 +266,7 @@ export function SponsorPortal({ onHome, onLogin }: { onHome: () => void; onLogin
   };
 
   if (loading) return <div className="sponsor-portal"><main className="sponsor-portal__state">Sponsorbereich wird geladen …</main></div>;
-  if (!user) return <div className="sponsor-portal"><header><button onClick={onHome} className="access-brand-button"><Brand/></button><button className="access-link" onClick={onHome}>Zur Website</button></header><main className="sponsor-portal__welcome"><p className="eyebrow">Persönlicher Sponsorbereich</p><h1>Willkommen in Ihrem Space.</h1><p>Hier finden Sie Ihre Vertragsdokumente und verwalten Ihre Kontaktdaten, Adresse und Ihr Logo. Melden Sie sich mit der E-Mail-Adresse an, mit der Sie den Vertrag bestätigt oder die Einladung erhalten haben.</p><div className="sponsor-space-entry-actions"><button className="access-primary" onClick={() => goToLogin()}>Anmelden</button><button className="access-secondary" onClick={() => goToLogin("signup")}>Sponsor-Zugang einrichten</button></div></main></div>;
+  if (!user) return <div className="sponsor-portal"><header><button onClick={onHome} className="access-brand-button"><Brand/></button><button className="access-link" onClick={onHome}>Zur Website</button></header><main className="sponsor-portal__welcome"><p className="eyebrow">Persönlicher Sponsorbereich</p><h1>Willkommen in Ihrem Space.</h1><p>Hier finden Sie Ihre Vertragsdokumente und verwalten Ihre Kontaktdaten, Adresse und Ihr Logo. Melden Sie sich mit der E-Mail-Adresse an, mit der Sie den Vertrag bestätigt oder die Einladung erhalten haben.</p><p><strong>Nur mit Einladung:</strong> Aktivieren Sie Ihren Zugang zuerst über Ihre Einladungsmail. Fehlt diese, bitten Sie die Organisation um eine Einladung zum Sponsor-Space.</p><div className="sponsor-space-entry-actions"><button className="access-primary" onClick={() => goToLogin()}>Anmelden</button></div></main></div>;
 
   if (accountChoice) return <div className="sponsor-portal"><header><button onClick={onHome} className="access-brand-button"><Brand/></button></header><main className="sponsor-portal__welcome">
     <p className="eyebrow">Sponsor-Space öffnen</p><h1>Mit welchem Konto möchten Sie fortfahren?</h1>

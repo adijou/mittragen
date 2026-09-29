@@ -5,6 +5,7 @@ import { hasPermission, isResponse, json, requireUser, type MembershipRole } fro
 import { isUuid, withSession, type DatabaseClient } from "./_shared/database.ts";
 import { parseCampaignInput, parseCampaignStatusInput, parseMappingInput, parseTransitionSponsorInput } from "./_shared/transition-input.ts";
 import { SponsorInvitationDeliveryError, sendSponsorInvitationEmail } from "./_shared/resend-sponsor-invitation.ts";
+import { sendIdentityInvitation } from "./_shared/identity-invitations.ts";
 
 type CampaignRow = {
   id: string;
@@ -471,6 +472,7 @@ export default async (request: Request, context: Context) => {
       let failed = 0;
       for (const invitation of prepared.invitations) {
         try {
+          await sendIdentityInvitation(invitation.email);
           const resendEmailId = await sendSponsorInvitationEmail({
             email: invitation.email,
             sponsorName: invitation.legal_name,

@@ -1140,11 +1140,11 @@ export default async (request: Request, context: Context) => {
       const signing = authorized.detail.signingRequest!;
       let identityUser = await findIdentityUserByEmail(signing.signer_email);
       let delivery: "sent" | "existing_user" = "sent";
-      if (!identityUser) {
+      if (!identityUser || !identityUser.confirmedAt) {
         delivery = await sendIdentityInvitation(signing.signer_email);
         if (delivery === "existing_user") identityUser = await findIdentityUserByEmail(signing.signer_email);
       }
-      if (identityUser) {
+      if (identityUser?.confirmedAt) {
         await withSession(user.id, tenantId, async (client) => {
           await client.query(`INSERT INTO sponsor_portal_access (tenant_id, sponsor_id, identity_user_id, email)
             VALUES ($1,$2,$3,$4)

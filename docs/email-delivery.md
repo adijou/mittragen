@@ -101,3 +101,17 @@ Die bestehende Variable `NETLIFY_IDENTITY_OPERATOR_TOKEN` bleibt unverändert. S
 Für die neue Bestätigungsvorlage nach ihrer Aktivierung zusätzlich mit einer ausdrücklich freigegebenen Testadresse registrieren: deutschen Betreff, Logo und Button prüfen, Link in einem neuen Tab öffnen, die sichtbare Erfolgsmeldung prüfen und über den Weiter-Button den zugeordneten Bereich öffnen. Lokale Tests prüfen die Verarbeitung und Fehlermeldungen ohne echte E-Mails. Die Zustellung und Darstellung in einem Mailprogramm sind damit noch nicht geprüft.
 
 In mittragen.ch bedeutet der Status **Übergeben**, dass Netlify die E-Mail an den Mailanbieter übergeben hat. Den endgültigen Zustellstatus liefert Resend.
+
+
+## 2026-09-29: Zugang nur mit Einladung
+
+Die öffentliche Kontoerstellung wurde aus Login, Sponsor-Space und Vertragsbestätigung entfernt. Alte Sponsor-Einstiege mit einem `signup`-Hinweis führen zur Anmeldung; sie können keine Konten erzeugen. Netlify Identity muss zusätzlich unter **Identity → Registration → Invite only** eingestellt sein. E-Mail-Bestätigung bleibt erforderlich. Die Sperre im Identity-Dienst ist die verbindliche Kontrolle; die Oberfläche allein genügt nicht.
+
+- Team-Einladungen und der Zugangsversand bei bestätigten Verträgen verwenden weiterhin Identity-Einladungen.
+- Direkte Sponsor-Einladungen sowie Einladungen aus Überführungskampagnen bereiten jetzt nach der Berechtigungsprüfung auch das Identity-Konto vor. Neue Konten erhalten eine separate Aktivierungsmail; bestehende bestätigte Konten verwenden ihr Login. Die fachliche Zugangsmail erklärt beide Fälle.
+- Bereits vorhandene, unbestätigte Konten erhalten bei erneuter Einladung einen Wiederherstellungslink statt einer erneuten Registrierung. Ein fehlgeschlagener Versand wird nicht als erfolgreiche Einladung ausgewiesen.
+- Nach einem Online-Vertragsabschluss lädt die Organisation neue Nutzer über **Zugang einladen** im Vertragscenter oder **Zugang einrichten** beim Sponsor ein. Der Vertragsabschluss selbst bleibt ohne Login möglich. Die Bestätigungsseite erklärt den zusätzlichen Einladungsschritt.
+- Nach Annahme einer Einladung erscheint **Konto erfolgreich aktiviert**; nach Speichern des Passworts aus einem Wiederherstellungslink **Passwort erfolgreich gespeichert**. Erst die Schaltfläche auf der Erfolgsseite öffnet den persönlichen Bereich.
+- Bereits ausgestellte Bestätigungs-, Einladungs- und Wiederherstellungslinks werden weiterhin verarbeitet. Benutzerrechte und Sponsorzuordnungen bleiben serverseitig geprüft.
+
+Die freie Registrierung wurde nicht mit einem neuen produktiven Testkonto überprüft. Das gemeldete Konto war bereits vorhanden; die Wiederherstellung wurde vom Nutzer als erfolgreich bestätigt. Daraus lässt sich kein allgemeiner Fehler für jede Neuregistrierung ableiten.

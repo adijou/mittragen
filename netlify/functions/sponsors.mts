@@ -7,6 +7,7 @@ import { parseSponsorInput, type SponsorInput } from "./_shared/sponsor-input.ts
 import { loadSponsorAccess, parseSponsorAccessInvitation, prepareSponsorAccessInvitation, recordSponsorAccessDelivery } from "./_shared/sponsor-access-invitations.ts";
 import { absoluteSiteUrl, contractEmailConfig } from "./_shared/contract-delivery.ts";
 import { sendSponsorSpaceInvitationEmail } from "./_shared/resend-contract-email.ts";
+import { sendIdentityInvitation } from "./_shared/identity-invitations.ts";
 import { handleSponsorLogo } from "./_shared/sponsor-logo.ts";
 import { loadOrganizationPdfBrand } from "./_shared/organization-pdf-brand.ts";
 import { sponsorListExportResponse } from "./_shared/sponsor-list-export.ts";
@@ -78,6 +79,8 @@ export default async (request: Request, context: Context) => {
       if (prepared.state === "not_found") return json({ error: "sponsor_not_found" }, 404);
       if (prepared.state === "busy") return json({ error: "invitation_recently_sent" }, 409);
       try {
+        // Provision the login only after the sponsor invitation was authorized.
+        await sendIdentityInvitation(prepared.invitation.email);
         const emailId = await sendSponsorSpaceInvitationEmail({
           email: prepared.invitation.email,
           sponsorName: prepared.legal_name,

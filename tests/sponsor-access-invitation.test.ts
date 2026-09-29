@@ -18,12 +18,14 @@ const invitation = {
   portalUrl: "https://example.invalid/sponsor", expiresAt: "2026-09-21T12:00:00Z",
 };
 
-test("direct sponsor email explains both account creation and existing login without assuming a signed contract", () => {
+test("direct sponsor email explains invited activation and existing login without assuming a signed contract", () => {
   const email = buildSponsorSpaceInvitationEmail(invitation);
   assert.match(email.html, /Sponsor &lt;Test&gt;/);
   assert.match(email.html, /Verein &amp; Region/);
-  assert.match(email.html, /Konto erstellen/);
-  assert.match(email.text, /Falls bereits ein Konto besteht/);
+  assert.doesNotMatch(email.html, /Konto erstellen/);
+  assert.match(email.html, /nur auf Einladung/);
+  assert.match(email.text, /separaten E-Mail/);
+  assert.match(email.text, /Falls bereits ein aktiviertes Konto besteht/);
   assert.match(email.text, /contact@example.invalid/);
   assert.match(email.text, /keinen neuen Sponsoringvertrag/);
   assert.doesNotMatch(email.text, /Konto wurde.*verbunden/);

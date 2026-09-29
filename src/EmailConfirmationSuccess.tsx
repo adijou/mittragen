@@ -3,9 +3,10 @@ import { Brand } from "./ProductBrand";
 import { readSponsorEntry } from "./sponsorAccess";
 import { confirmedAccessDestination } from "./identityFeedback";
 
-export function EmailConfirmationSuccess({ accountId, email, preferSponsor, onHome, onContinue }: {
+export function EmailConfirmationSuccess({ accountId, email, completion = "confirmation", preferSponsor, onHome, onContinue }: {
   accountId: string;
   email: string;
+  completion?: "confirmation" | "invite" | "recovery";
   preferSponsor: boolean;
   onHome: () => void;
   onContinue: (destination: "sponsor" | "workspace") => void;
@@ -32,9 +33,9 @@ export function EmailConfirmationSuccess({ accountId, email, preferSponsor, onHo
     <main className="email-confirmation-layout">
       <section className="auth-card email-confirmation-card" aria-labelledby="email-confirmation-title">
         <span className="email-confirmation-check" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="m5 12 4 4L19 6"/></svg></span>
-        <p className="eyebrow">Bestätigung erfolgreich</p>
-        <h1 id="email-confirmation-title">E-Mail-Adresse erfolgreich bestätigt.</h1>
-        <p role="status">Vielen Dank. Ihre E-Mail-Adresse <strong>{email}</strong> ist bestätigt und Sie sind angemeldet.</p>
+        <p className="eyebrow">{completion === "confirmation" ? "Bestätigung erfolgreich" : "Zugang bereit"}</p>
+        <h1 id="email-confirmation-title">{completion === "recovery" ? "Passwort erfolgreich gespeichert." : completion === "invite" ? "Konto erfolgreich aktiviert." : "E-Mail-Adresse erfolgreich bestätigt."}</h1>
+        <p role="status">{completion === "confirmation" ? <>Vielen Dank. Ihre E-Mail-Adresse <strong>{email}</strong> ist bestätigt und Sie sind angemeldet.</> : <>Ihr Zugang für <strong>{email}</strong> ist eingerichtet und Sie sind angemeldet.</>}</p>
         {destination && <p>{destination === "sponsor" ? "In Ihrem persönlichen Space finden Sie Ihre Dokumente und können Ihre Adresse und Ihr Logo verwalten." : "Sie können jetzt Ihren persönlichen Zugang öffnen."}</p>}
         {error ? <><p className="form-error" role="alert">{error}</p><button className="access-primary" onClick={() => { check.current = null; setAttempt((value) => value + 1); }}>Zugang erneut prüfen</button></>
           : <button className="access-primary" disabled={!destination} onClick={() => destination && onContinue(destination)}>{destination === "sponsor" ? "Weiter zu meinem Space" : destination === "workspace" ? "Weiter zu meinem Zugang" : "Zugang wird vorbereitet …"}</button>}

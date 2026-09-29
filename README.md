@@ -16,6 +16,7 @@ Die produktive Anwendung umfasst:
 - Owner-Einstellungen für einen veränderbaren Anzeigenamen bei stabilem technischem Kurzname
 - Teamverwaltung mit Einladungsversand über Netlify Identity
 - Gebrandete Identity-Einladung unter `/emails/invitation.html` (in Netlify als Einladungsvorlage hinterlegen)
+- Zugang nur mit Einladung; Aktivierung und Wiederherstellung mit sichtbarer Erfolgsmeldung
 - Deutsche Bestätigungsmail mit Bildmarke unter `/emails/confirmation.html` (in Netlify separat aktivieren) und sichtbare Erfolgsmeldung nach E-Mail-Bestätigung
 - Produktive Excel-/CSV-Datenübernahme mit Blattwahl, persistierten Importläufen, Feldzuordnung, Vorprüfung und atomarem Sponsorimport
 - explizite Zuordnung importierter Paketbezeichnungen zu veröffentlichten Paketversionen mit Preisübernahme
