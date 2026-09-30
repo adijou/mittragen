@@ -1,0 +1,66 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { feeCents, splitReceipt, parseChf, closedMonth, swissToday } from "../shared/billing.ts";
+import { billingConfig, billingReadiness, newBillingTerms } from "../netlify/functions/_shared/billing-config.ts";
+import { contractInstallments } from "../netlify/functions/_shared/billing-sources.ts";
+import type { ContractPdfData } from "../netlify/functions/_shared/contract-pdf.ts";
+import { pingenSamplePrice } from "../netlify/functions/_shared/pingen.ts";
+
+test("250 basis points are added on top and rounded only to cents",()=>{
+  assert.equal(feeCents(100_000),2_500);assert.equal(feeCents(15_000),375);
+  assert.equal(feeCents(19),0);assert.equal(feeCents(20),1);assert.equal(feeCents(100_000,0),0);
+  for(const value of [-1,0.01,NaN,Infinity,100_000_001])assert.throws(()=>feeCents(value));
+  assert.throws(()=>feeCents(100,999));
+  assert.equal(parseChf("1.05"),105);assert.equal(parseChf("0,01"),1);
+  for(const value of ["1e3","-1","1.005","1'000.00","Infinity",""])assert.equal(parseChf(value),null);
+});
+test("arbitrary partial receipts preserve the full club share without taking the fee twice",()=>{
+  for(const base of [20,99,13333,100000]){
+    const fee=feeCents(base);const total=base+fee;
+    let paid=0,club=0,platform=0;
+    while(paid<total){const amount=Math.min(137,total-paid);const share=splitReceipt(base,fee,paid,amount);paid+=amount;club+=share.clubCents;platform+=share.platformCents;}
+    assert.equal(club,base);assert.equal(platform,fee);assert.equal(club+platform,total);
+  }
+  assert.deepEqual(splitReceipt(100000,2500,0,51250),{clubCents:50000,platformCents:1250});
+  assert.throws(()=>splitReceipt(100000,2500,100000,2501));
+});
+test("billing activation needs an explicit switch and an identified operator; sending stays closed",()=>{
+  assert.equal(billingConfig(()=>undefined).enabled,false);
+  assert.equal(newBillingTerms(name=>name==="BILLING_ENABLED"?"true":undefined),undefined);
+  const env=(name:string)=>({BILLING_ENABLED:"true",BILLING_OPERATOR_NAME:"Test Inkasso"}[name]);
+  assert.equal(newBillingTerms(env)?.feeBasisPoints,250);
+  assert.match(newBillingTerms(env)!.collectionNotice,/Test Inkasso/);
+  assert.equal(billingReadiness(env).postalSendingEnabled,false);
+  assert.equal(billingReadiness(env).invoiceIssuingEnabled,false);
+  assert.equal(billingReadiness(env).interestBasisPoints,0);
+});
+test("Zurich month boundary and closed-month validation use Swiss dates",()=>{
+  assert.equal(swissToday(new Date("2026-09-30T22:05:00Z")),"2026-10-01");
+  assert.equal(closedMonth("2026-09","2026-10-01"),true);
+  assert.equal(closedMonth("2026-10","2026-10-01"),false);
+  assert.equal(closedMonth("2026-13","2027-01-01"),false);
+});
+test("contract schedules split the annual contribution, including odd cents and partial years",()=>{
+  const item={priceCents:10001,paymentPlan:"quarterly",validFrom:"2026-07-01",validUntil:"2027-09-30",durationMonths:15} as ContractPdfData["package"];
+  const rates=contractInstallments(item);
+  assert.equal(rates.length,5);assert.equal(rates.reduce((sum,row)=>sum+row.contributionCents,0),12501);
+  assert.deepEqual(rates[0],{start:"2026-07-01",end:"2026-09-30",contributionCents:2500});
+  assert.equal(contractInstallments({...item,paymentPlan:"custom"}).length,0);
+  assert.equal(contractInstallments({...item,validFrom:null}).length,0);
+  assert.equal(contractInstallments({...item,validUntil:"2029-01-01"}).length,0);
+});
+test("Pingen pricing defaults to sandbox and never uploads, creates, sends or exposes credentials",async()=>{
+  const calls:Array<{url:string;init:RequestInit}>=[];
+  const env=(name:string)=>({PINGEN_CLIENT_ID:"client-fixture",PINGEN_CLIENT_SECRET:"secret-fixture",PINGEN_ORGANISATION_ID:"organisation-fixture"}[name]);
+  const fetcher=(async(url:string,init:RequestInit)=>{calls.push({url,init});return calls.length===1?Response.json({access_token:"token-fixture"}):Response.json({data:{attributes:{currency:"CHF",price:1.37}}});}) as typeof fetch;
+  const quote=await pingenSamplePrice(env,fetcher);
+  assert.equal(quote.price,1.37);assert.equal(quote.environment,"staging");assert.equal(calls.length,2);
+  assert.equal(calls[0].url,"https://api-staging.pingen.com/auth/access-tokens");
+  assert.match(calls[1].url,/\/price-calculator$/);assert.equal(calls[1].init.redirect,"error");
+  const payload=JSON.parse(String(calls[1].init.body));
+  assert.deepEqual(payload.data.attributes,{country:"CH",paper_types:["normal","qr"],print_mode:"simplex",print_spectrum:"grayscale",delivery_product:"cheap"});
+  assert.doesNotMatch(JSON.stringify(quote),/secret-fixture|token-fixture|client-fixture/);
+  await assert.rejects(pingenSamplePrice(()=>undefined,fetcher),/pingen_not_configured/);
+  assert.equal(calls.length,2);
+  await assert.rejects(pingenSamplePrice(env,(async()=>Response.json({secret:"never return"},{status:401})) as typeof fetch),/pingen_auth_failed/);
+});

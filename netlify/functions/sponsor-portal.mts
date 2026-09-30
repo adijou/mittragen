@@ -113,13 +113,14 @@ async function loadSpace(client: DatabaseClient, tenantId: string, sponsorId: st
   `, [tenantId, versions.rows.map((version) => version.id)]);
   const contracts = await client.query<{
     id: string; contract_number: string; title: string; status: "released" | "confirmed";
-    package_name: string; price_cents: string; snapshot_hash: string;
+    package_name: string; price_cents: string; fee_basis_points: number; snapshot_hash: string;
     released_at: string | null; confirmed_at: string | null; signer_name: string | null;
     signer_role: string | null; can_confirm: boolean;
   }>(`
     SELECT contract.id, contract.contract_number, contract.title, contract.status,
            contract.package_snapshot->>'name' AS package_name,
            contract.package_snapshot->>'priceCents' AS price_cents,
+           COALESCE((contract.package_snapshot->'billing'->>'feeBasisPoints')::integer,0) AS fee_basis_points,
            contract.snapshot_hash, contract.released_at::text, contract.confirmed_at::text,
            signing.signer_name, signing.signer_role,
            (signing.id IS NULL OR (signing.delivery_mode = 'account' AND lower(signing.signer_email) = app_current_user_email())) AS can_confirm

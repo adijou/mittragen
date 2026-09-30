@@ -1,3 +1,4 @@
+import { feeCents } from "../../shared/billing.ts";
 import type { Config, Context } from "@netlify/functions";
 import { AuthError, verifyRequestOrigin } from "@netlify/identity";
 import { hasPermission, isResponse, json, requireUser, type MembershipRole } from "./_shared/auth.ts";
@@ -9,7 +10,7 @@ import { getOrganizationProfile, mapOrganizationProfile } from "./_shared/organi
 
 type SettingsRow = { public_key: string; headline: string; season_label: string | null; introduction: string; terms_text: string; is_published: boolean; updated_at: string };
 type EventRow = { id: string; team_name: string; opponent: string; competition: string | null; venue: string | null; starts_at: string; time_tbd: boolean; price_cents: number; fn_supplement_cents: number; status: "draft" | "published" | "cancelled"; created_at: string; home_coach: string | null; opponent_coach: string | null; referee_name: string | null; match_info_url: string | null; speaker_note: string | null };
-type BookingRow = { id: string; event_id: string; reference: string; sponsor_id: string | null; sponsor_name: string; address: string; postal_code: string; city: string; contact_name: string; contact_email: string; contact_phone: string | null; referred_by_member: string | null; include_fn_mention: boolean; payment_mode: "invoice" | "cash"; amount_cents: number; submitted_at: string };
+type BookingRow = { id: string; event_id: string; reference: string; sponsor_id: string | null; sponsor_name: string; address: string; postal_code: string; city: string; contact_name: string; contact_email: string; contact_phone: string | null; referred_by_member: string | null; include_fn_mention: boolean; payment_mode: "invoice" | "cash"; amount_cents: number; fee_basis_points: number; submitted_at: string };
 type AllocationRow = { id: string; event_id: string; sponsor_id: string; sponsor_name: string; package_version_id: string; package_name: string; sponsorship_right_id: string; right_name: string; season_key: string; note: string | null; allocated_at: string };
 type EntitlementRow = { sponsor_id: string; sponsor_name: string; package_version_id: string; package_name: string; right_id: string; right_name: string; allowance: number; used_count: string };
 
@@ -54,7 +55,7 @@ async function getSettings(client: DatabaseClient, tenantId: string) {
 async function listEvents(client: DatabaseClient, tenantId: string) {
   const [events, bookings, allocations] = await Promise.all([
     client.query<EventRow>(`SELECT id, team_name, opponent, competition, venue, starts_at::text, time_tbd, price_cents, fn_supplement_cents, status, created_at::text, home_coach, opponent_coach, referee_name, match_info_url, speaker_note FROM sponsorship_events WHERE tenant_id = $1 ORDER BY starts_at, lower(team_name), lower(opponent)`, [tenantId]),
-    client.query<BookingRow>(`SELECT id, event_id, reference, sponsor_id, sponsor_name, address, postal_code, city, contact_name, contact_email, contact_phone, referred_by_member, include_fn_mention, payment_mode, amount_cents, submitted_at::text FROM event_sponsorship_bookings WHERE tenant_id = $1 AND status = 'submitted' ORDER BY submitted_at, id`, [tenantId]),
+    client.query<BookingRow>(`SELECT id, event_id, reference, sponsor_id, sponsor_name, address, postal_code, city, contact_name, contact_email, contact_phone, referred_by_member, include_fn_mention, payment_mode, amount_cents, fee_basis_points, submitted_at::text FROM event_sponsorship_bookings WHERE tenant_id = $1 AND status = 'submitted' ORDER BY submitted_at, id`, [tenantId]),
     client.query<AllocationRow>(`SELECT allocation.id, allocation.event_id, allocation.sponsor_id, sponsor.legal_name AS sponsor_name, allocation.package_version_id, version.name AS package_name, allocation.sponsorship_right_id, right_item.name AS right_name, allocation.season_key, allocation.note, allocation.allocated_at::text
       FROM event_package_allocations allocation
       JOIN sponsors sponsor ON sponsor.id = allocation.sponsor_id AND sponsor.tenant_id = allocation.tenant_id
@@ -69,7 +70,7 @@ async function listEvents(client: DatabaseClient, tenantId: string) {
     homeCoach: event.home_coach, opponentCoach: event.opponent_coach, refereeName: event.referee_name,
     matchInfoUrl: event.match_info_url, speakerNote: event.speaker_note,
     sponsors: [
-      ...bookings.rows.filter((item) => item.event_id === event.id).map((item) => ({ id: item.id, kind: "direct" as const, reference: item.reference, sponsorId: item.sponsor_id, sponsorName: item.sponsor_name, address: item.address, postalCode: item.postal_code, city: item.city, contactName: item.contact_name, contactEmail: item.contact_email, contactPhone: item.contact_phone, referredByMember: item.referred_by_member, includeFnMention: item.include_fn_mention, paymentMode: item.payment_mode, amountCents: item.amount_cents, assignedAt: item.submitted_at })),
+      ...bookings.rows.filter((item) => item.event_id === event.id).map((item) => ({ id: item.id, kind: "direct" as const, reference: item.reference, sponsorId: item.sponsor_id, sponsorName: item.sponsor_name, address: item.address, postalCode: item.postal_code, city: item.city, contactName: item.contact_name, contactEmail: item.contact_email, contactPhone: item.contact_phone, referredByMember: item.referred_by_member, includeFnMention: item.include_fn_mention, paymentMode: item.payment_mode, amountCents: item.amount_cents, platformFeeCents: feeCents(item.amount_cents, item.fee_basis_points), assignedAt: item.submitted_at })),
       ...allocations.rows.filter((item) => item.event_id === event.id).map((item) => ({ id: item.id, kind: "package" as const, sponsorId: item.sponsor_id, sponsorName: item.sponsor_name, packageVersionId: item.package_version_id, packageName: item.package_name, rightId: item.sponsorship_right_id, rightName: item.right_name, seasonKey: item.season_key, note: item.note, assignedAt: item.allocated_at })),
     ].sort((left, right) => left.assignedAt.localeCompare(right.assignedAt)),
   }));

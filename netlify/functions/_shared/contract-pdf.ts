@@ -1,6 +1,7 @@
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFImage, type PDFPage } from "pdf-lib";
 import type { OrganizationPdfBrand } from "./organization-pdf-brand.ts";
 import { drawPlatformCredit } from "./pdf-platform-brand.ts";
+import { feeCents, type BillingTerms } from "../../../shared/billing.ts";
 
 type ContractRight = {
   name: string;
@@ -47,6 +48,7 @@ export type ContractPdfData = {
     name: string;
     description: string | null;
     priceCents: number;
+    billing?: BillingTerms;
     durationMonths: number;
     paymentPlan: string;
     paymentTerms: string | null;
@@ -456,6 +458,12 @@ export async function createContractPdf(data: ContractPdfData): Promise<Uint8Arr
     ["Laufzeit", `${data.package.durationMonths} Monate`],
     ["Zahlungsplan", paymentLabels[data.package.paymentPlan] ?? "individuell"],
   ]);
+
+  if (data.package.billing?.feeBasisPoints) {
+    const fee = feeCents(data.package.priceCents, data.package.billing.feeBasisPoints);
+    drawText(`Zusätzliche Plattformgebühr (2.5 %): ${formatChf(fee)} pro Jahr. Gesamtbetrag inklusive Plattformgebühr: ${formatChf(data.package.priceCents + fee)} pro Jahr. Bei Ratenzahlung wird die Gebühr je Rate auf einen Rappen gerundet.`, { after: 6 });
+    drawText(data.package.billing.collectionNotice, { after: 6 });
+  }
 
   section("2", "Vereinbarte Leistungen");
   if (data.package.description) drawText(data.package.description, { color: MUTED, after: 6 });

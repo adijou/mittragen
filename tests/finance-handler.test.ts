@@ -1,0 +1,162 @@
+import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
+import { readFile,readdir,writeFile } from "node:fs/promises";
+import { registerHooks } from "node:module";
+import test from "node:test";
+import { PGlite } from "@electric-sql/pglite";
+import { pgcrypto } from "@electric-sql/pglite/contrib/pgcrypto";
+import { PDFDocument } from "pdf-lib";
+import type { DatabaseClient } from "../netlify/functions/_shared/database.ts";
+
+const hooks=registerHooks({load(url,context,nextLoad){
+  if(url.includes("/node_modules/@netlify/identity/"))return{shortCircuit:true,format:"module",source:`
+    export class AuthError extends Error {};
+    let user; export const setTestUser=value=>{user=value};
+    export const getUser=async()=>user;export const refreshSession=async()=>{};
+    export const verifyRequestOrigin=request=>{if(request.headers.get('origin')!==new URL(request.url).origin)throw new Error('origin')};`};
+  if(url.endsWith("/netlify/functions/_shared/database.ts"))return{shortCircuit:true,format:"module",source:`
+    let session;export const setTestSession=value=>{session=value};export const withSession=(...args)=>session(...args);
+    export const isUuid=value=>typeof value==='string'&&/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);`};
+  return nextLoad(url,context);
+}});
+const {default:handler}=await import("../netlify/functions/finance.mts");
+const {default:bookHandler}=await import("../netlify/functions/event-sponsoring-public.mts");
+const {setTestSession}=await import("../netlify/functions/_shared/database.ts") as never as {setTestSession:(fn:unknown)=>void};
+const {setTestUser}=await import("@netlify/identity") as never as {setTestUser:(user:unknown)=>void};
+hooks.deregister();
+
+test("finance routes enforce real PostgreSQL isolation, money allocation and retry safety",async(t)=>{
+  const db=new PGlite({extensions:{pgcrypto}});await db.waitReady;
+  try{
+    const migrations=new URL("../netlify/database/migrations/",import.meta.url);
+    for(const directory of (await readdir(migrations)).sort())await db.exec(await readFile(new URL(`${directory}/migration.sql`,migrations),"utf8"));
+    await db.exec("CREATE ROLE finance_test NOLOGIN; GRANT USAGE ON SCHEMA public TO finance_test; GRANT ALL ON ALL TABLES IN SCHEMA public TO finance_test; GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO finance_test;");
+    const session=async<T>(id:string,tenant:string|null,operation:(client:DatabaseClient)=>Promise<T>,email?:string)=>db.transaction(async tx=>{
+      await tx.exec("SET LOCAL ROLE finance_test");
+      await tx.query("SELECT set_config('app.user_id',$1,true),set_config('app.tenant_id',$2,true),set_config('app.user_email',$3,true)",[id,tenant??"",email??""]);
+      return operation({query:async<Row>(sql:string,values?:unknown[])=>{const result=await tx.query<Row>(sql,values);return{rows:result.rows,rowCount:result.affectedRows??result.rows.length};},release(){}});
+    });setTestSession(session);
+    Object.assign(globalThis,{Netlify:{env:{get:(name:string)=>name==="BILLING_OPERATOR_USER_IDS"?"operator":undefined}}});
+    const tenantA=randomUUID(),tenantB=randomUUID(),eventA=randomUUID(),eventB=randomUUID();
+    const bookingA=randomUUID(),bookingB=randomUUID(),legacy=randomUUID(),cash=randomUUID();
+    await db.query("INSERT INTO tenants(id,slug,name) VALUES ($1,'billing-a','Verein A'),($2,'billing-b','Verein B')",[tenantA,tenantB]);
+    await db.query("INSERT INTO tenant_memberships(tenant_id,identity_user_id,role) VALUES ($1,'operator','owner'),($1,'club-owner','owner'),($1,'reader','viewer'),($2,'operator','owner')",[tenantA,tenantB]);
+    for(const [tenant,event] of [[tenantA,eventA],[tenantB,eventB]])await db.query("INSERT INTO sponsorship_events(id,tenant_id,team_name,opponent,starts_at,price_cents,status,created_by) VALUES ($1,$2,'FC Beispiel','FC Gast','2026-10-01',100000,'published','fixture')",[event,tenant]);
+    for(const [id,tenant,event,bp,mode,ref] of [[bookingA,tenantA,eventA,250,"invoice","AAAAAAAA"],[bookingB,tenantB,eventB,250,"invoice","BBBBBBBB"],[legacy,tenantA,eventA,0,"invoice","CCCCCCCC"],[cash,tenantA,eventA,0,"cash","DDDDDDDD"]])await db.query(`INSERT INTO event_sponsorship_bookings
+      (id,tenant_id,event_id,reference,sponsor_name,address,postal_code,city,contact_name,contact_email,payment_mode,amount_cents,fee_basis_points)
+      VALUES ($1,$2,$3,$4,'Muster Sponsor AG','Hauptstrasse 1','3186','Düdingen','Max Muster','test@example.invalid',$5,100000,$6)`,[id,tenant,event,`MB-2026-${ref}`,mode,bp]);
+    let user="operator";setTestUser({id:user,email:"operator@example.invalid"});
+    const request=(tenant:string,path="",body?:object,extra:Record<string,string>={})=>new Request(`https://test.invalid/api/finance/${tenant}${path}`,{method:body?"POST":"GET",headers:{Origin:"https://test.invalid","X-Sponsor-Account":user,...extra},body:body?JSON.stringify(body):undefined});
+    const call=async(tenant:string,path="",body?:object,status=200)=>{const result=await handler(request(tenant,path,body),{requestId:"finance-test"} as never);const data=await result.json();assert.equal(result.status,status,JSON.stringify(data));return data;};
+    let invoiceId="",invoiceB="",receiptId="",payoutId="";
+    await t.test("no session, wrong account and non-member requests cannot read or write",async()=>{
+      setTestUser(null);await call(tenantA,"",undefined,401);setTestUser({id:"stranger"});user="stranger";await call(tenantA,"",undefined,403);
+      user="operator";setTestUser({id:user});const result=await handler(request(tenantA,"",undefined,{"X-Sponsor-Account":"another-account"}),{requestId:"test"} as never);assert.equal(result.status,409);
+      const origin=await handler(request(tenantA,"/invoices",{sourceKey:`event:${bookingA}`},{Origin:"https://evil.invalid"}),{requestId:"test"} as never);assert.equal(origin.status,403);
+    });
+    await t.test("only invoice-mode bookings are listed and existing contributions retain zero surcharge",async()=>{
+      const data=await call(tenantA);assert.equal(data.sources.length,2);
+      assert.equal(data.sources.find((row:{sourceId:string})=>row.sourceId===legacy).platformFeeCents,0);
+      assert.equal(data.sources.find((row:{sourceId:string})=>row.sourceId===bookingA).platformFeeCents,2500);
+      assert.equal(data.readiness.postalSendingEnabled,false);
+      await call(tenantA,"/invoices",{sourceKey:`event:${bookingB}`},409);
+    });
+    await t.test("repeated draft creation is idempotent and ignores client supplied amounts",async()=>{
+      const first=await call(tenantA,"/invoices",{sourceKey:`event:${bookingA}`,contributionCents:1},201);invoiceId=first.invoice.id;
+      assert.equal(first.invoice.contribution_cents,100000);assert.equal(first.invoice.platform_fee_cents,2500);
+      assert.equal((await call(tenantA,"/invoices",{sourceKey:`event:${bookingA}`},201)).invoice.id,invoiceId);
+      invoiceB=(await call(tenantB,"/invoices",{sourceKey:`event:${bookingB}`},201)).invoice.id;
+    });
+    await t.test("club owners cannot attest central bank movements; viewers cannot create drafts",async()=>{
+      user="club-owner";setTestUser({id:user});await call(tenantA,`/invoices/${invoiceId}/receipts`,{},403);
+      user="reader";setTestUser({id:user});await call(tenantA,"/invoices",{sourceKey:`event:${legacy}`},403);
+      user="operator";setTestUser({id:user});
+    });
+    const partial={idempotencyKey:randomUUID(),amountCents:51250,receivedOn:"2026-08-31",bankReference:"BANK-IN-001",bankEvidenceConfirmed:true};
+    await t.test("partial receipt is split, replay is harmless, conflicting replay and overpayment rejected",async()=>{
+      receiptId=(await call(tenantA,`/invoices/${invoiceId}/receipts`,partial,201)).id;
+      assert.equal((await call(tenantA,`/invoices/${invoiceId}/receipts`,partial,201)).id,receiptId);
+      await call(tenantA,`/invoices/${invoiceId}/receipts`,{...partial,amountCents:5},409);
+      await call(tenantA,`/invoices/${invoiceId}/receipts`,{...partial,idempotencyKey:randomUUID(),bankReference:"OVER",amountCents:51251},409);
+      const data=await call(tenantA);assert.equal(data.receipts.length,1);assert.equal(data.receipts[0].club_cents,50000);assert.equal(data.receipts[0].platform_cents,1250);
+    });
+    await t.test("one bank transaction cannot credit two clubs",async()=>{
+      await call(tenantB,`/invoices/${invoiceB}/receipts`,{...partial,idempotencyKey:randomUUID()},409);
+      assert.equal((await call(tenantB)).receipts.length,0);
+    });
+    await t.test("monthly batch reserves only actual club receipts and cannot duplicate its allocation",async()=>{
+      payoutId=(await call(tenantA,"/payouts",{month:"2026-08"},201)).id;
+      assert.equal((await call(tenantA,"/payouts",{month:"2026-08"},201)).id,payoutId);
+      const data=await call(tenantA);assert.equal(Number(data.payouts[0].amount_cents),50000);assert.equal(data.receipts[0].payout_id,payoutId);
+      await call(tenantA,"/payouts",{month:"2026-07"},409);
+      await call(tenantA,"/payouts",{month:"2200-01"},422);
+      await call(tenantA,`/receipts/${receiptId}/reverse`,{reason:"Already in payout"},409);
+    });
+    await t.test("payout recording requires bank evidence and is repeat-safe",async()=>{
+      await call(tenantA,`/payouts/${payoutId}/paid`,{paidOn:"2026-09-02",bankReference:"OUT-1"},422);
+      const body={paidOn:"2026-09-02",bankReference:"OUT-1",bankEvidenceConfirmed:true};
+      await call(tenantA,`/payouts/${payoutId}/paid`,{...body,paidOn:"2026-08-30"},422);
+      await call(tenantA,`/payouts/${payoutId}/paid`,body);await call(tenantA,`/payouts/${payoutId}/paid`,body);
+      await call(tenantA,`/payouts/${payoutId}/paid`,{...body,bankReference:"OUT-2"},409);
+      await call(tenantA,`/payouts/${payoutId}/discard`,{reason:"Cannot undo real payout"},409);
+    });
+    await t.test("a wrong unassigned receipt can be reversed without deleting evidence",async()=>{
+      const body={...partial,idempotencyKey:randomUUID(),bankReference:"BANK-IN-002",receivedOn:"2026-09-01"};
+      const id=(await call(tenantA,`/invoices/${invoiceId}/receipts`,body,201)).id;
+      await call(tenantA,`/receipts/${id}/reverse`,{reason:"Betrag falsch zugeordnet"});
+      const data=await call(tenantA);assert.equal(data.receipts.length,2);assert.equal(Number(data.invoices[0].received_cents),51250);
+      assert.ok(data.receipts.find((row:{id:string})=>row.id===id).reversed_at);
+    });
+    await t.test("database RLS and PDF access cannot cross the tenant boundary",async()=>{
+      const rows=await session("operator",tenantB,client=>client.query("SELECT id FROM billing_invoices WHERE id=$1",[invoiceId]));assert.equal(rows.rows.length,0);
+      await call(tenantB,`/invoices/${invoiceId}/pdf`,undefined,404);
+      const result=await handler(request(tenantA,`/invoices/${invoiceId}/pdf`),{requestId:"pdf-test"} as never);assert.equal(result.status,200);
+      const bytes=new Uint8Array(await result.arrayBuffer());const pdf=await PDFDocument.load(bytes);assert.equal(pdf.getPageCount(),1);assert.equal(pdf.getSubject(),"Entwurf - keine Zahlungsaufforderung");
+      if(process.env.BILLING_PDF_FIXTURE)await writeFile(process.env.BILLING_PDF_FIXTURE,bytes);
+    });
+    await t.test("cancellation blocks further collection against an obsolete source",async()=>{
+      await db.query("UPDATE event_sponsorship_bookings SET status='cancelled' WHERE id=$1",[bookingA]);
+      assert.equal((await call(tenantA)).invoices[0].sourceAvailable,false);
+      await call(tenantA,`/invoices/${invoiceId}/receipts`,{...partial,idempotencyKey:randomUUID(),bankReference:"AFTER-CANCEL"},409);
+    });
+    await t.test("an unexecuted payout can be discarded, corrected and rebuilt with an audit trail",async()=>{
+      const entry=await call(tenantB,`/invoices/${invoiceB}/receipts`,{...partial,idempotencyKey:randomUUID(),bankReference:"BANK-B-002"},201);
+      const prepared=await call(tenantB,"/payouts",{month:"2026-08"},201);
+      await call(tenantB,`/payouts/${prepared.id}/discard`,{reason:"Bankeingang muss korrigiert werden"});
+      const data=await call(tenantB);assert.equal(data.payouts.length,0);assert.equal(data.receipts[0].payout_id,null);
+      await call(tenantB,`/receipts/${entry.id}/reverse`,{reason:"Falscher Betrag erfasst"});
+      assert.ok((await db.query("SELECT id FROM audit_events WHERE object_id=$1 AND action='billing.payout_preparation_discarded'",[prepared.id])).rows.length);
+    });
+    await t.test("corrective contract versions cannot bill overlapping periods under a new number",async()=>{
+      const sponsor=randomUUID(),pack=randomUUID(),version=randomUUID(),root=randomUUID(),revision=randomUUID();
+      await db.query("INSERT INTO sponsors(id,tenant_id,legal_name) VALUES($1,$2,'Vertragssponsor')",[sponsor,tenantA]);
+      await db.query("INSERT INTO sponsorship_packages(id,tenant_id,created_by) VALUES($1,$2,'fixture')",[pack,tenantA]);
+      await db.query("INSERT INTO sponsorship_package_versions(id,tenant_id,package_id,version_number,name,price_cents,duration_months,payment_plan,created_by) VALUES($1,$2,$3,1,'Jahrespaket',10001,12,'quarterly','fixture')",[version,tenantA,pack]);
+      const snapshot={name:"Jahrespaket",priceCents:10001,durationMonths:12,paymentPlan:"quarterly",validFrom:"2026-07-01",validUntil:"2027-06-30",rights:[]};
+      const insert=async(id:string,parent:string|null,number:string,data:object)=>db.query(`INSERT INTO sponsorship_contracts
+        (id,tenant_id,parent_contract_id,contract_number,sponsor_id,package_version_id,package_snapshot,sponsor_snapshot,organization_snapshot,status,snapshot_hash,released_at,created_by)
+        VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,'{"legalName":"Vertragssponsor"}'::jsonb,'{"legalName":"Verein A"}'::jsonb,'confirmed',$8,now(),'fixture')`,[id,tenantA,parent,number,sponsor,version,JSON.stringify(data),"a".repeat(64)]);
+      await insert(root,null,"MT-2026-TEST1",snapshot);
+      const created=await call(tenantA,"/invoices",{sourceKey:`contract:${root}:2026-07-01`},201);
+      assert.equal(created.invoice.contribution_cents,2500);assert.equal(created.invoice.platform_fee_cents,0);
+      await db.query("UPDATE sponsorship_contracts SET status='void',voided_at=now(),voided_by='fixture',void_reason='Korrektur' WHERE id=$1",[root]);
+      await insert(revision,root,"MT-2026-TEST2",{...snapshot,paymentPlan:"annual",validFrom:"2026-08-01",validUntil:"2027-07-31"});
+      const rejected=await call(tenantA,"/invoices",{sourceKey:`contract:${root}:2026-08-01`},409);assert.equal(rejected.error,"billing_period_overlap");
+    });
+    await t.test("only a disclosed public price can be booked and retries cannot create duplicate fees",async()=>{
+      const key="a".repeat(36);
+      await db.query("INSERT INTO tenant_event_sponsoring_settings(tenant_id,public_key,is_published) VALUES ($1,$2,true)",[tenantA,key]);
+      await db.query("UPDATE sponsorship_events SET starts_at=now()+interval '1 day' WHERE id=$1",[eventA]);
+      Object.assign(globalThis,{Netlify:{env:{get:(name:string)=>({BILLING_ENABLED:"true",BILLING_OPERATOR_NAME:"Test Inkasso"}[name])}}});
+      const body={eventId:eventA,sponsorName:"Neuer Sponsor",address:"Teststrasse 10",postalCode:"3186",city:"Düdingen",contactName:"Test Person",contactEmail:"test@example.invalid",contactPhone:"",referredByMember:"",includeFnMention:false,paymentMode:"invoice",termsAccepted:true,website:"",startedAt:Date.now()-5000,idempotencyKey:randomUUID(),expectedTotalCents:102500,expectedFeeBasisPoints:250};
+      const post=async(value:object)=>bookHandler(new Request(`https://test.invalid/api/event-sponsoring-public/${key}/book`,{method:"POST",headers:{Origin:"https://test.invalid"},body:JSON.stringify(value)}),{requestId:"booking-test"} as never);
+      assert.equal((await post({...body,expectedTotalCents:100000})).status,409);
+      assert.equal((await post({...body,paymentMode:"cash"})).status,409);
+      const result=await post(body);assert.equal(result.status,201);assert.equal((await result.json()).booking.amountCents,102500);
+      assert.equal((await post(body)).status,201);
+      assert.equal((await post({...body,sponsorName:"Another Sponsor"})).status,409);
+      const rows=await db.query<{fee_basis_points:number;amount_cents:number;collection_notice:string}>("SELECT fee_basis_points,amount_cents,collection_notice FROM event_sponsorship_bookings WHERE checkout_key=$1",[body.idempotencyKey]);
+      assert.equal(rows.rows.length,1);assert.equal(rows.rows[0].fee_basis_points,250);assert.equal(rows.rows[0].amount_cents,100000);assert.match(rows.rows[0].collection_notice,/Test Inkasso/);
+    });
+  }finally{await db.close();}
+});

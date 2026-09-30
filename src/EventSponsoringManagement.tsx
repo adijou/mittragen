@@ -16,6 +16,7 @@ type DirectSponsor = {
   includeFnMention: boolean;
   paymentMode: "invoice" | "cash";
   amountCents: number;
+  platformFeeCents: number;
   assignedAt: string;
 };
 
@@ -99,7 +100,7 @@ const emptyEvent = {
 };
 
 const formatChf = (cents: number) => new Intl.NumberFormat("de-CH", {
-  style: "currency", currency: "CHF", maximumFractionDigits: 0,
+  style: "currency", currency: "CHF", minimumFractionDigits: 2, maximumFractionDigits: 2,
 }).format(cents / 100);
 
 const formatDate = (value: string) => new Intl.DateTimeFormat("de-CH", {
@@ -379,7 +380,7 @@ export function EventSponsoringManagement({ tenantId, canWrite, canManage }: {
         return <article className={`event-card event-card--${item.sponsors.length ? "booked" : item.status}`} key={item.id}>
           <div className="event-card__date"><strong>{new Intl.DateTimeFormat("de-CH", { day: "2-digit" }).format(new Date(item.startsAt))}</strong><span>{new Intl.DateTimeFormat("de-CH", { month: "short" }).format(new Date(item.startsAt))}</span></div>
           <div className="event-card__main"><span className="event-card__meta">{item.timeTbd ? `${new Intl.DateTimeFormat("de-CH", { weekday: "short", day: "2-digit", month: "2-digit", year: "numeric" }).format(new Date(item.startsAt))} · Anspielzeit offen` : formatDate(item.startsAt)}{item.venue ? ` · ${item.venue}` : ""}</span><h3>{item.teamName} <i>gegen</i> {item.opponent}</h3><p>{item.competition || "Heimspiel"} · {formatChf(item.priceCents)}{item.fnSupplementCents ? ` + ${formatChf(item.fnSupplementCents)} FN` : ""}</p>
-            {item.sponsors.length === 0 ? <p className="event-card__empty-sponsors">Noch keine Matchballsponsoren zugeordnet.</p> : <div className="event-sponsor-list">{item.sponsors.map((sponsor) => <div className="event-booking" key={`${sponsor.kind}:${sponsor.id}`}><div><strong>{sponsor.sponsorName}</strong><span>{sponsor.kind === "direct" ? `${sponsor.reference} · ${formatChf(sponsor.amountCents)} · ${sponsor.paymentMode === "invoice" ? "Rechnung" : "Barzahlung"}` : `${sponsor.packageName} · Paketleistung · ${sponsor.seasonKey}`}</span>{sponsor.kind === "direct" ? <small>{sponsor.contactName} · {sponsor.contactEmail}{sponsor.contactPhone ? ` · ${sponsor.contactPhone}` : ""}</small> : sponsor.note ? <small>{sponsor.note}</small> : null}</div>{canWrite && <button className="access-text event-cancel" type="button" disabled={busy !== ""} onClick={() => void cancelSponsor(item, sponsor)}>Entfernen</button>}</div>)}</div>}
+            {item.sponsors.length === 0 ? <p className="event-card__empty-sponsors">Noch keine Matchballsponsoren zugeordnet.</p> : <div className="event-sponsor-list">{item.sponsors.map((sponsor) => <div className="event-booking" key={`${sponsor.kind}:${sponsor.id}`}><div><strong>{sponsor.sponsorName}</strong><span>{sponsor.kind === "direct" ? `${sponsor.reference} · ${formatChf(sponsor.amountCents)}${sponsor.platformFeeCents ? ` + ${formatChf(sponsor.platformFeeCents)} Plattformgebühr` : ""} · ${sponsor.paymentMode === "invoice" ? "Rechnung" : "Barzahlung"}` : `${sponsor.packageName} · Paketleistung · ${sponsor.seasonKey}`}</span>{sponsor.kind === "direct" ? <small>{sponsor.contactName} · {sponsor.contactEmail}{sponsor.contactPhone ? ` · ${sponsor.contactPhone}` : ""}</small> : sponsor.note ? <small>{sponsor.note}</small> : null}</div>{canWrite && <button className="access-text event-cancel" type="button" disabled={busy !== ""} onClick={() => void cancelSponsor(item, sponsor)}>Entfernen</button>}</div>)}</div>}
 
             {canWrite && item.status !== "cancelled" && <details className="event-admin-details"><summary>Sponsorenleistung zuordnen</summary><div className="event-allocation-form"><label><span>Sponsor und Matchball-Kontingent</span><select value={selectedAllocation} onChange={(event) => setAllocationByEvent((current) => ({ ...current, [item.id]: event.target.value }))}><option value="">Leistung wählen</option>{data.entitlements.map((entry) => {
               const key = `${entry.sponsorId}:${entry.packageVersionId}:${entry.rightId}`;

@@ -1,4 +1,4 @@
-export type HelpSection = "overview" | "sponsors" | "packages" | "dossier" | "events" | "transitions" | "contracts" | "imports" | "team" | "settings";
+export type HelpSection = "finance" | "overview" | "sponsors" | "packages" | "dossier" | "events" | "transitions" | "contracts" | "imports" | "team" | "settings";
 
 type HelpArticle = {
   id: string;
@@ -20,6 +20,11 @@ export type HelpTopic = {
 
 // Keep instructions next to the UI code and update them when a workflow changes.
 export const workspaceHelpTopics: HelpTopic[] = [
+  { id: "finance", title: "Rechnungen & Abrechnung", section: "finance", sectionLabel: "Finanzen", permission: "finance:read", articles: [
+    { id: "finance-fee", question: "Wie werden Beitrag und Gebühr getrennt?", answer: "Die Plattformgebühr beträgt für neue, entsprechend vereinbarte Abschlüsse 2.5 % zusätzlich zum Sponsoringbeitrag. Der Vereinsbeitrag wird dadurch nicht gekürzt. Bestehende Buchungen behalten ihre bisherigen Konditionen. Versandkosten sind im ersten Ausbaustand noch nicht enthalten." },
+    { id: "finance-payout", question: "Was bedeutet monatliche Auszahlung?", answer: "Erfasste Zahlungseingänge werden anteilig dem Verein und der Plattform zugeordnet. Die Monatsabrechnung enthält die noch nicht zugeordneten Vereinsanteile bis Monatsende, einschliesslich älterer Eingänge. Die Banküberweisung erfolgt manuell; ihre Erfassung im Tool löst keine Überweisung aus. Es gibt keine Verzinsung." },
+    { id: "finance-drafts", question: "Welche Rechnungsentwürfe sind möglich?", answer: "Direkte Matchballmeldungen mit Zahlungsart Rechnung sowie bestätigte Verträge mit eindeutigem Beginn, Ende und jährlichem, halbjährlichem oder quartalsweisem Zahlungsplan. Individuelle oder undatierte Altverträge werden zur Prüfung angezeigt. In einem Paket enthaltene Matchbälle werden nicht nochmals verrechnet." },
+  ] },
   {
     id: "start", title: "Einstieg & Übersicht", section: "overview", sectionLabel: "Übersicht",
     articles: [
@@ -45,8 +50,8 @@ export const workspaceHelpTopics: HelpTopic[] = [
       },
       {
         id: "invoices", question: "Wo finde ich Rechnungen, Zahlungsstatus und weitere Leistungserfüllung?",
-        answer: "Eine vollständige Rechnungsverwaltung und Zahlungsübersicht gehören zum weiteren Ausbau. Aktuell verwalten Sie Pakete, Verträge und Matchball-Zuordnungen. Andere Leistungen können im Paket beschrieben werden; eine eigene Erfüllungsverwaltung dafür ist noch nicht vorhanden.",
-        note: "Die Zahlungsart «Rechnung» bei Matchbällen erstellt noch keine Rechnung. Auch eine Finanzrolle oder eine Verlängerungsklausel im Vertrag bedeutet nicht, dass Rechnungsversand oder automatische Vertragsverlängerungen bereits ausgeführt werden.",
+        answer: "Unter «Finanzen» können berechtigte Personen Rechnungsentwürfe für direkte Matchballmeldungen und bestätigte Verträge vorbereiten. Bankeingänge und monatliche Vereinsabrechnungen werden getrennt geführt. Andere Sponsoringleistungen haben noch keine eigene Erfüllungsverwaltung.",
+        note: "Ein Entwurf ist keine Zahlungsaufforderung. QR-Rechnung und Pingen-Echtversand werden erst nach Einrichtung und Prüfung der Zahlungsdaten freigegeben. Bankbewegungen werden ausschliesslich von der Plattformverantwortung anhand von Belegen erfasst; eine automatische Bankanbindung besteht noch nicht.",
         keywords: "Finanzen bezahlt Zahlung Banden Inserate Verlängerung",
       },
       {

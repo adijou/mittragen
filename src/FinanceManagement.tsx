@@ -1,0 +1,94 @@
+import { useCallback, useEffect, useState } from "react";
+import { formatBillingChf as chf, parseChf, swissToday } from "../shared/billing";
+import "./finance.css";
+
+type Invoice = { id:string;reference:string;description:string;recipient:{name:string};contribution_cents:number;platform_fee_cents:number;received_cents:string;sourceAvailable:boolean };
+type Receipt = { id:string;invoice_id:string;received_on:string;amount_cents:number;club_cents:number;platform_cents:number;bank_reference:string;reversed_at:string|null;payout_id:string|null };
+type Payout = { id:string;through_month:string;amount_cents:string;status:"prepared"|"paid";paid_on:string|null;bank_reference:string|null };
+type FinanceData = {
+  readiness:{ enabled:boolean;pingenConfigured:boolean;pingenEnvironment:string;blockers:string[] };
+  canWrite:boolean;canRecordBankMovements:boolean;
+  sources:Array<{sourceKey:string;description:string;recipient:{name:string};contributionCents:number;platformFeeCents:number}>;
+  unresolved:Array<{reference:string;reason:string}>;invoices:Invoice[];receipts:Receipt[];payouts:Payout[];
+};
+type BankAction = {kind:"receipt"|"payout"|"reverse"|"discard";id:string;label:string;amount?:number};
+const errorMessages:Record<string,string> = {
+  pingen_not_configured:"Der Pingen-API-Zugang ist noch nicht hinterlegt.",
+  pingen_auth_failed:"Pingen konnte die hinterlegten Zugangsdaten nicht bestätigen.",
+  pingen_price_failed:"Der Pingen-Preis konnte nicht geladen werden.",
+  pingen_price_invalid:"Pingen hat keinen gültigen CHF-Preis geliefert.",
+  permission_denied:"Für diesen Finanzbereich fehlt Ihnen die Berechtigung.",
+  billing_operator_required:"Bankbewegungen können nur von der Plattformverantwortung erfasst werden.",
+  billing_source_unavailable:"Die Buchung oder der Vertrag wurde geändert oder aufgehoben. Bitte zuerst die Abrechnung prüfen.",
+  billing_overpayment:"Der Zahlungseingang überschreitet den noch offenen Gesamtbetrag.",
+  billing_bank_reference_used:"Diese Bankbuchung wurde bereits erfasst.",
+  billing_duplicate_entry:"Diese Buchung oder Referenz ist bereits vorhanden. Bitte den aktuellen Stand prüfen.",
+  billing_idempotency_conflict:"Dieser Erfassungsversuch wurde bereits mit anderen Angaben gespeichert. Bitte laden Sie den aktuellen Stand.",
+  billing_period_overlap:"Für diesen Vertragszeitraum besteht bereits ein Entwurf. Bitte die bestehende Abrechnung prüfen.",
+  billing_receipt_locked:"Dieser Eingang ist einer Auszahlung zugeordnet oder es gibt spätere Eingänge. Eine Korrektur muss zuerst abgestimmt werden.",
+  billing_nothing_to_pay:"Bis zu diesem Monatsende gibt es keine unzugeordneten Vereinsanteile aus Zahlungseingängen.",
+  billing_month_not_closed:"Bitte wählen Sie einen bereits abgeschlossenen Monat.",
+  billing_payout_date_invalid:"Das Auszahlungsdatum muss nach dem abgerechneten Monatsende liegen.",
+  billing_payout_locked:"Die Auszahlung wurde bereits mit anderen Angaben erfasst.",
+  invalid_billing_input:"Bitte Betrag, Datum, Bankreferenz und Bestätigung prüfen.",
+  sponsor_account_changed:"Das angemeldete Konto hat gewechselt. Bitte laden Sie den Workspace neu.",
+};
+
+export function FinanceManagement({tenantId,accountId}:{tenantId:string;accountId:string}) {
+  const [quote,setQuote]=useState<{price:number;description:string;note:string}|null>(null);
+  const [data,setData]=useState<FinanceData|null>(null);
+  const [error,setError]=useState(""); const [message,setMessage]=useState(""); const [busy,setBusy]=useState(false);
+  const [sourceKey,setSourceKey]=useState(""); const [search,setSearch]=useState("");
+  const [month,setMonth]=useState(() => { const date=new Date(`${swissToday().slice(0,7)}-01T12:00:00Z`);date.setUTCMonth(date.getUTCMonth()-1);return date.toISOString().slice(0,7); });
+  const [bankAction,setBankAction]=useState<BankAction|null>(null);
+  const [amount,setAmount]=useState("");const [date,setDate]=useState(swissToday());const [reference,setReference]=useState("");
+  const [confirmed,setConfirmed]=useState(false);const [idempotencyKey,setIdempotencyKey]=useState(() => crypto.randomUUID());
+  const base=`/api/finance/${tenantId}`;
+  const api=useCallback(async <T,>(path:string,body?:object,signal?:AbortSignal):Promise<T> => {
+    const response=await fetch(`/api/finance/${tenantId}${path}`,{method:body?"POST":"GET",signal,
+      headers:{"Content-Type":"application/json","X-Sponsor-Account":accountId},body:body?JSON.stringify(body):undefined});
+    const result=await response.json();if(!response.ok)throw new Error(result.error ?? "finance_request_failed");return result as T;
+  },[tenantId,accountId]);
+  useEffect(() => {const abort=new AbortController();void api<FinanceData>("",undefined,abort.signal).then(setData).catch((reason:Error)=>{
+    if(!abort.signal.aborted)setError(errorMessages[reason.message] ?? "Finanzen konnten nicht geladen werden.");});return()=>abort.abort();},[api]);
+  const run=async(path:string,body:object,success:string)=>{
+    setBusy(true);setError("");setMessage("");
+    try{await api(path,body);setData(await api<FinanceData>(""));setMessage(success);setBankAction(null);setIdempotencyKey(crypto.randomUUID());}
+    catch(reason){setError(errorMessages[(reason as Error).message] ?? "Die Aktion konnte nicht abgeschlossen werden. Bitte den aktuellen Stand prüfen.");}
+    finally{setBusy(false);}
+  };
+  const loadQuote=async()=>{setBusy(true);setError("");try{const result=await api<{quote:{price:number;description:string;note:string}}>("/pingen-price",{});setQuote(result.quote);}catch(reason){setError(errorMessages[(reason as Error).message] ?? "Pingen ist momentan nicht erreichbar.");}finally{setBusy(false);}};
+  const openBank=(action:BankAction)=>{setBankAction(action);setAmount(action.amount?String(action.amount/100):"");setDate(swissToday());setReference("");setConfirmed(false);setIdempotencyKey(crypto.randomUUID());};
+  const submitBank=(event:React.FormEvent)=>{
+    event.preventDefault();if(!bankAction)return;
+    if(bankAction.kind==="receipt")void run(`/invoices/${bankAction.id}/receipts`,{amountCents:parseChf(amount),receivedOn:date,bankReference:reference,idempotencyKey,bankEvidenceConfirmed:confirmed},"Zahlungseingang anhand des Bankbelegs erfasst.");
+    if(bankAction.kind==="payout")void run(`/payouts/${bankAction.id}/paid`,{paidOn:date,bankReference:reference,bankEvidenceConfirmed:confirmed},"Bereits ausgeführte Auszahlung dokumentiert.");
+    if(bankAction.kind==="discard")void run(`/payouts/${bankAction.id}/discard`,{reason:reference},"Vorbereitung aufgehoben. Die Eingänge können erneut abgerechnet werden.");
+    if(bankAction.kind==="reverse")void run(`/receipts/${bankAction.id}/reverse`,{reason:reference},"Zahlungserfassung storniert. Die ursprüngliche Erfassung bleibt nachvollziehbar.");
+  };
+  if(!data)return <section className="workspace-panel"><h1>Finanzen</h1><p role={error?"alert":"status"}>{error || "Finanzen werden geladen …"}</p></section>;
+  const activeReceipts=data.receipts.filter(row=>!row.reversed_at);
+  const received=activeReceipts.reduce((sum,row)=>sum+row.amount_cents,0);
+  const club=activeReceipts.reduce((sum,row)=>sum+row.club_cents,0);
+  const paid=data.payouts.filter(row=>row.status==="paid").reduce((sum,row)=>sum+Number(row.amount_cents),0);
+  const matching=data.invoices.filter(row=>`${row.reference} ${row.recipient.name} ${row.description}`.toLocaleLowerCase("de-CH").includes(search.toLocaleLowerCase("de-CH")));
+  const selectedSource=data.sources.find(row=>row.sourceKey===sourceKey);
+  const csv=(payout:Payout)=>{
+    const escape=(value:string)=>`"${(/^[=+\-@\t\r]/.test(value)?"'":"")+value.replaceAll('"','""')}"`;
+    const rows=[["Monatsabrechnung","Entwurfsreferenz","Bankreferenz Eingang","Eingangsdatum","Vereinsanteil CHF"],...activeReceipts.filter(row=>row.payout_id===payout.id).map(row=>[payout.through_month,data.invoices.find(invoice=>invoice.id===row.invoice_id)?.reference ?? "",row.bank_reference,row.received_on.slice(0,10),(row.club_cents/100).toFixed(2)])];
+    const url=URL.createObjectURL(new Blob(["\uFEFF"+rows.map(row=>row.map(escape).join(";")).join("\r\n")],{type:"text/csv;charset=utf-8"}));
+    const link=document.createElement("a");link.href=url;link.download=`vereinsabrechnung-${payout.through_month}.csv`;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+  };
+  return <div className="finance-page">
+    <section className="workspace-heading"><div><p className="eyebrow">Rechnungen & Vereinsabrechnung</p><h1>Finanzen</h1><p>Beiträge, Plattformgebühr und monatliche Auszahlung im Überblick.</p></div><span className="workspace-status">Aufbauphase</span></section>
+    {error&&<p className="form-error" role="alert">{error}</p>}{message&&<p className="finance-success" role="status">{message}</p>}
+    <section className="workspace-metrics"><article><span>Erfasste Zahlungseingänge</span><strong>{chf(received)}</strong><small>manuell anhand von Bankbelegen</small></article><article><span>Vereinsanteil, noch nicht ausbezahlt</span><strong>{chf(club-paid)}</strong><small>inklusive vorbereiteter Auszahlungen</small></article><article><span>Dokumentierte Auszahlungen</span><strong>{chf(paid)}</strong><small>monatliche Abrechnung · keine Verzinsung</small></article></section>
+    <details className="workspace-panel finance-setup" open><summary>Einrichtung & Versandstatus</summary><p>Plattformgebühr: <strong>2.5 % zusätzlich zum Sponsoringbeitrag.</strong> {data.readiness.enabled?"Für neue Abschlüsse aktiv.":"Noch nicht für neue Abschlüsse aktiviert."} Bestehende Vereinbarungen behalten ihre Konditionen.</p><p>Pingen: <strong>{data.readiness.pingenConfigured?`Zugang hinterlegt (${data.readiness.pingenEnvironment})` : "API-Zugang noch nicht hinterlegt"}</strong>. Der Postversand ist noch nicht freigegeben.</p><ul>{data.readiness.blockers.map(text=><li key={text}>{text}</li>)}</ul><p>Entwürfe lösen weder Briefe noch Zahlungen aus. Die Monatsabrechnung bereitet eine manuelle Banküberweisung vor.</p>{data.canRecordBankMovements&&<button className="access-secondary" disabled={busy||!data.readiness.pingenConfigured} onClick={()=>void loadQuote()}>Pingen-Kostenbeispiel abrufen</button>}{quote&&<p><strong>{chf(Math.round(quote.price*100))}</strong> · {quote.description}<br/>{quote.note}</p>}</details>
+    {data.canWrite&&<section className="workspace-panel"><h2>Rechnungsentwurf vorbereiten</h2><p>Direkte Matchballmeldungen und bestätigte Verträge. In Paketen enthaltene Matchbälle werden nicht nochmals verrechnet.</p><form className="finance-create" onSubmit={event=>{event.preventDefault();if(sourceKey)void run("/invoices",{sourceKey},"Rechnungsentwurf erstellt.");}}><label>Abzurechnende Leistung<select required value={sourceKey} onChange={event=>setSourceKey(event.target.value)}><option value="">Leistung wählen …</option>{data.sources.map(row=><option key={row.sourceKey} value={row.sourceKey}>{row.recipient.name} · {row.description}</option>)}</select></label>{selectedSource&&<p>Verein {chf(selectedSource.contributionCents)} + Plattform {chf(selectedSource.platformFeeCents)} = <strong>{chf(selectedSource.contributionCents+selectedSource.platformFeeCents)}</strong></p>}<button className="access-primary" disabled={busy||!selectedSource}>Entwurf erstellen</button></form>{!data.sources.length&&<p>Keine weiteren Leistungen zur Abrechnung verfügbar.</p>}</section>}
+    {data.unresolved.length>0&&<details className="workspace-panel"><summary>{data.unresolved.length} Verträge benötigen eine Prüfung</summary><ul>{data.unresolved.map(row=><li key={row.reference}><strong>{row.reference}</strong>: {row.reason}</li>)}</ul></details>}
+    <section className="workspace-panel"><div className="finance-heading"><h2>Rechnungsentwürfe</h2><label>Suchen<input type="search" value={search} onChange={event=>setSearch(event.target.value)} placeholder="Sponsor oder Referenz"/></label></div><div className="finance-table-wrap"><table className="finance-table"><thead><tr><th>Sponsor / Leistung</th><th>Verein</th><th>Gebühr</th><th>Gesamt</th><th>Eingang</th><th>Aktion</th></tr></thead><tbody>{matching.map(row=><tr key={row.id}><td><strong>{row.recipient.name}</strong><small>{row.reference} · Entwurf</small><small>{row.description}</small>{!row.sourceAvailable&&<strong className="finance-warning">Abrechnungsgrundlage prüfen</strong>}</td><td>{chf(row.contribution_cents)}</td><td>{chf(row.platform_fee_cents)}</td><td>{chf(row.contribution_cents+row.platform_fee_cents)}</td><td>{chf(Number(row.received_cents))}<small>{Number(row.received_cents)===row.contribution_cents+row.platform_fee_cents?"Vollständig erfasst":Number(row.received_cents)>0?"Teilzahlung":"Noch kein Eingang"}</small></td><td>{row.sourceAvailable&&<a href={`${base}/invoices/${row.id}/pdf?account=${encodeURIComponent(accountId)}`} target="_blank" rel="noreferrer">PDF-Vorschau</a>}{data.canRecordBankMovements&&row.sourceAvailable&&Number(row.received_cents)<row.contribution_cents+row.platform_fee_cents&&<button disabled={busy} className="access-secondary" onClick={()=>openBank({kind:"receipt",id:row.id,label:row.reference,amount:row.contribution_cents+row.platform_fee_cents-Number(row.received_cents)})}>Eingang erfassen</button>}</td></tr>)}</tbody></table>{!matching.length&&<p className="finance-empty">Noch keine passenden Rechnungsentwürfe.</p>}</div></section>
+    <section className="workspace-panel"><h2>Monatliche Vereinsabrechnung</h2><p>Berücksichtigt unzugeordnete Vereinsanteile aus erfassten Eingängen bis zum gewählten Monatsende, einschliesslich Rückständen. Die Plattformgebühr wird nicht nochmals vom Vereinsanteil abgezogen.</p>{data.canRecordBankMovements&&<form className="finance-create" onSubmit={event=>{event.preventDefault();void run("/payouts",{month},"Monatsabrechnung vorbereitet. Es wurde keine Banküberweisung ausgelöst.");}}><label>Abgeschlossener Monat<input required type="month" value={month} max={swissToday().slice(0,7)} onChange={event=>setMonth(event.target.value)}/></label><button className="access-secondary" disabled={busy}>Abrechnung vorbereiten</button></form>}<div className="finance-table-wrap"><table className="finance-table"><thead><tr><th>Bis Monatsende</th><th>Vereinsanteil</th><th>Status</th><th>Beleg / Aktion</th></tr></thead><tbody>{data.payouts.map(row=><tr key={row.id}><td>{row.through_month}</td><td>{chf(Number(row.amount_cents))}</td><td>{row.status==="paid"?`Auszahlung dokumentiert · ${row.paid_on?.slice(0,10)}`:"Vorbereitet"}</td><td><button className="access-secondary" onClick={()=>csv(row)}>CSV herunterladen</button>{row.bank_reference&&<small>{row.bank_reference}</small>}{data.canRecordBankMovements&&row.status==="prepared"&&<button disabled={busy} className="access-secondary" onClick={()=>openBank({kind:"payout",id:row.id,label:`Auszahlung ${row.through_month}: ${chf(Number(row.amount_cents))}`})}>Banküberweisung dokumentieren</button>}{data.canRecordBankMovements&&row.status==="prepared"&&<button disabled={busy} className="access-secondary" onClick={()=>openBank({kind:"discard",id:row.id,label:`Abrechnung ${row.through_month}`})}>Vorbereitung aufheben</button>}</td></tr>)}</tbody></table>{!data.payouts.length&&<p className="finance-empty">Noch keine Monatsabrechnung. Nicht bezahlte Zusagen erzeugen kein auszahlbares Guthaben.</p>}</div></section>
+    {data.receipts.length>0&&<details className="workspace-panel"><summary>Erfasste Bankeingänge ({data.receipts.length})</summary><div className="finance-table-wrap"><table className="finance-table"><thead><tr><th>Datum / Referenz</th><th>Eingang</th><th>Verein</th><th>Plattform</th><th>Status</th></tr></thead><tbody>{data.receipts.map(row=><tr key={row.id}><td>{row.received_on.slice(0,10)}<small>{row.bank_reference}</small></td><td>{chf(row.amount_cents)}</td><td>{chf(row.club_cents)}</td><td>{chf(row.platform_cents)}</td><td>{row.reversed_at?"Erfassung storniert":row.payout_id?"Abrechnung zugeordnet":"Erfasst"}{data.canRecordBankMovements&&!row.reversed_at&&!row.payout_id&&<button disabled={busy} className="access-secondary" onClick={()=>openBank({kind:"reverse",id:row.id,label:row.bank_reference})}>Erfassung korrigieren</button>}</td></tr>)}</tbody></table></div></details>}
+    {bankAction&&<section className="workspace-panel finance-bank-form"><h2>{bankAction.kind==="receipt"?"Zahlungseingang erfassen":bankAction.kind==="payout"?"Auszahlung dokumentieren":bankAction.kind==="discard"?"Auszahlungsvorbereitung aufheben":"Falsche Erfassung stornieren"}</h2><p>{bankAction.label}</p><form onSubmit={submitBank}>{bankAction.kind==="receipt"&&<label>Eingegangener Betrag CHF<input required inputMode="decimal" value={amount} onChange={event=>setAmount(event.target.value)}/></label>}{(bankAction.kind==="receipt"||bankAction.kind==="payout")&&<label>Datum auf dem Bankbeleg<input required type="date" min="2020-01-01" max={swissToday()} value={date} onChange={event=>setDate(event.target.value)}/></label>}<label>{(bankAction.kind==="reverse"||bankAction.kind==="discard")?"Korrekturgrund":"Eindeutige Bankbuchungsreferenz"}<input required minLength={(bankAction.kind==="reverse"||bankAction.kind==="discard")?5:3} maxLength={(bankAction.kind==="reverse"||bankAction.kind==="discard")?500:200} value={reference} onChange={event=>setReference(event.target.value)}/></label>{(bankAction.kind==="receipt"||bankAction.kind==="payout")&&<label className="finance-checkbox"><input required type="checkbox" checked={confirmed} onChange={event=>setConfirmed(event.target.checked)}/><span>Ich habe die tatsächlich erfolgte Bankbewegung anhand des Bankbelegs geprüft. Hier wird keine Überweisung ausgelöst.</span></label>}<div><button className="access-primary" disabled={busy}>Erfassung speichern</button><button type="button" className="access-secondary" disabled={busy} onClick={()=>setBankAction(null)}>Abbrechen</button></div></form></section>}
+  </div>;
+}
