@@ -5,6 +5,13 @@ import { billingConfig, billingReadiness, newBillingTerms } from "../netlify/fun
 import { contractInstallments } from "../netlify/functions/_shared/billing-sources.ts";
 import type { ContractPdfData } from "../netlify/functions/_shared/contract-pdf.ts";
 import { pingenSamplePrice } from "../netlify/functions/_shared/pingen.ts";
+import { invoicePostalAddress } from "../netlify/functions/_shared/invoice-pdf.ts";
+
+test("Swiss domestic invoice addresses end with postcode and city, without a country line",()=>{
+  const recipient={name:"Muster Sponsor AG",street:"Hauptstrasse 1",postalCode:"3186",city:"Düdingen",country:"CH"};
+  assert.deepEqual(invoicePostalAddress(recipient),["Muster Sponsor AG","Hauptstrasse 1","3186 Düdingen"]);
+  assert.equal(recipient.country,"CH"); // Country remains available to the Swiss QR payload.
+});
 
 test("250 basis points are added on top and rounded only to cents",()=>{
   assert.equal(feeCents(100_000),2_500);assert.equal(feeCents(15_000),375);

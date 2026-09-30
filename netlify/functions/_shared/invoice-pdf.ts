@@ -9,6 +9,11 @@ import type { OrganizationPdfBrand } from "./organization-pdf-brand.ts";
 import { formatBillingChf } from "../../../shared/billing.ts";
 import { invoiceQrData } from "./swiss-qr.ts";
 
+/** Swiss domestic postal addresses end with postcode/city; ISO codes belong only in the QR data. */
+export function invoicePostalAddress(recipient:InvoiceRow["recipient"]) {
+  return [recipient.name,recipient.street,`${recipient.postalCode} ${recipient.city}`,...(recipient.country==="CH"?[]:[recipient.country])];
+}
+
 /** Drafts remain non-payable. Issued copies include a separate A4 QR sheet for simplex postal printing. */
 export async function createInvoicePdf(invoice: InvoiceRow, brand: OrganizationPdfBrand) {
   const issued = invoice.status === "issued";
@@ -21,13 +26,13 @@ export async function createInvoicePdf(invoice: InvoiceRow, brand: OrganizationP
   const mm = (value: number) => value * 72 / 25.4;
   let page = pdf.addPage([mm(210), mm(297)]);
   let y = mm(194);
-  function draw(text: string, x: number, top: number, size = 10, strong = false) {
+  function draw(text: string, x: number, top: number, size = 10, strong = false, color = strong ? dark : muted) {
     const font = strong ? bold : regular;
     // Never silently change a name or payment instruction in a financial document.
     const supported = new Set(font.getCharacterSet());
     const clean = text.replace(/[\u2010-\u2015]/g,"-").replace(/\s/g," ");
     if ([...clean].some(char => !supported.has(char.codePointAt(0)!))) throw new Error("billing_pdf_character_unsupported");
-    page.drawText(clean,{ x, y: top, size, font, color: strong ? dark : muted });
+    page.drawText(clean,{ x, y: top, size, font, color });
   }
   function paragraph(text: string, size = 10, strong = false) {
     const font = strong ? bold : regular;
@@ -59,9 +64,9 @@ export async function createInvoicePdf(invoice: InvoiceRow, brand: OrganizationP
   }
   // The entire right postage area (x116/y40/w89.5/h47.5 mm from the top) stays clear except recipient.
   // Long addresses fail visibly instead of silently changing the postal recipient.
-  const addressLines = [invoice.recipient.name,invoice.recipient.street,`${invoice.recipient.postalCode} ${invoice.recipient.city}`,invoice.recipient.country];
+  const addressLines = invoicePostalAddress(invoice.recipient);
   if (addressLines.some((line) => regular.widthOfTextAtSize(line,10) > mm(85.5))) throw new Error("billing_address_too_long");
-  addressLines.forEach((line,index) => draw(line,mm(118),mm(237)-10-index*13,10));
+  addressLines.forEach((line,index) => draw(line,mm(118),mm(237)-10-index*13,10,false,rgb(0,0,0)));
   const issuerLines = [invoice.issuer.name,invoice.issuer.street,`${invoice.issuer.postalCode} ${invoice.issuer.city}`];
   issuerLines.forEach((line,index) => {
     let fontSize=10;
