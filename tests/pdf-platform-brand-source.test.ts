@@ -6,6 +6,7 @@ test("all generated documents use the shared neutral platform signet", async () 
   const helper = await readFile(new URL("../netlify/functions/_shared/pdf-platform-brand.ts", import.meta.url), "utf8");
   const sources = await Promise.all([
     "contract-pdf.ts",
+    "invoice-pdf.ts",
     "dossier-pdf.ts",
     "event-flyer-pdf.ts",
   ].map((name) => readFile(new URL(`../netlify/functions/_shared/${name}`, import.meta.url), "utf8")));

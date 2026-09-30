@@ -112,7 +112,7 @@ export default async (request: Request, context: Context) => {
     return new Response(bytes as BodyInit,{ headers:{"Content-Type":"application/pdf","Content-Disposition":`inline; filename="${filename}.pdf"`,"Cache-Control":"no-store","X-Content-Type-Options":"nosniff"} });
   } catch (error) {
     if (error instanceof BillingError) return json({ error:error.message },error.status);
-    if (error instanceof Error && ["billing_address_too_long","billing_pdf_character_unsupported","billing_qr_address_invalid","billing_qr_data_invalid"].includes(error.message)) return json({error:error.message},422);
+    if (error instanceof Error && ["billing_invoice_layout_too_long","billing_address_too_long","billing_pdf_character_unsupported","billing_qr_address_invalid","billing_qr_data_invalid"].includes(error.message)) return json({error:error.message},422);
     if ((error as {code?:string}).code === "23505") return json({error:"billing_duplicate_entry"},409);
     console.error("finance_request_failed",{ requestId:context.requestId,tenantId,error });
     return json({error:"finance_request_failed",requestId:context.requestId},500);

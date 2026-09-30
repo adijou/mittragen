@@ -172,7 +172,7 @@ test("finance routes enforce real PostgreSQL isolation, money allocation and ret
       assert.equal((await call(tenantA,`/invoices/${draft.id}/issue`,{detailsConfirmed:true})).invoice.invoice_number,issued.invoice_number);
       await call(tenantA,"/invoices",{sourceKey:`event:${legacy}`,refresh:true},409);
       const pdf=async()=>new Uint8Array(await (await handler(request(tenantA,`/invoices/${draft.id}/pdf`),{requestId:"qr-pdf"} as never)).arrayBuffer());
-      const bytes=await pdf();assert.equal((await PDFDocument.load(bytes)).getPageCount(),2);
+      const bytes=await pdf();assert.equal((await PDFDocument.load(bytes)).getPageCount(),1);
       if(process.env.BILLING_QR_PDF_FIXTURE)await writeFile(process.env.BILLING_QR_PDF_FIXTURE,bytes);
       env.BILLING_QR_CREDITOR="invalid";
       await db.query("UPDATE event_sponsorship_bookings SET status='cancelled' WHERE id=$1",[legacy]);

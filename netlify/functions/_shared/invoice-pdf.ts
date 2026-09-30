@@ -1,126 +1,178 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import fontkit from "@pdf-lib/fontkit";
-import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
+import { PDFDocument, rgb, type PDFFont } from "pdf-lib";
 import PDFKit from "pdfkit";
 import { SwissQRBill } from "swissqrbill/pdf";
 import type { InvoiceRow } from "./billing-ledger.ts";
 import type { OrganizationPdfBrand } from "./organization-pdf-brand.ts";
+import { drawPlatformCredit } from "./pdf-platform-brand.ts";
 import { formatBillingChf } from "../../../shared/billing.ts";
 import { invoiceQrData } from "./swiss-qr.ts";
 
-/** Swiss domestic postal addresses end with postcode/city; ISO codes belong only in the QR data. */
-export function invoicePostalAddress(recipient:InvoiceRow["recipient"]) {
-  return [recipient.name,recipient.street,`${recipient.postalCode} ${recipient.city}`,...(recipient.country==="CH"?[]:[recipient.country])];
+const mm = (value: number) => value * 72 / 25.4;
+const WIDTH = mm(210), HEIGHT = mm(297), LEFT = mm(18), RIGHT = mm(192), CONTENT = RIGHT - LEFT;
+type Color = [number, number, number];
+function color(value: string, fallback: string): Color {
+  const hex = /^#[0-9a-f]{6}$/i.test(value) ? value : fallback;
+  return [1, 3, 5].map(index => parseInt(hex.slice(index, index + 2), 16) / 255) as Color;
+}
+const mixWhite = (value: Color, weight: number): Color => value.map(channel => channel * (1 - weight) + weight) as Color;
+// Same readable primary/accent treatment as the contract document family.
+function darken(value: Color, limit: number): Color {
+  const luminance = (v: Color) => v.map(c => c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4)
+    .reduce((sum, c, index) => sum + c * [0.2126, 0.7152, 0.0722][index], 0);
+  let result = value;
+  while (luminance(result) > limit) result = result.map(c => c * 0.82) as Color;
+  return result;
 }
 
-/** Drafts remain non-payable. Issued copies include a separate A4 QR sheet for simplex postal printing. */
+/** Swiss domestic postal addresses end with postcode/city; ISO codes belong only in the QR data. */
+export function invoicePostalAddress(recipient: InvoiceRow["recipient"]) {
+  return [recipient.name, recipient.street, `${recipient.postalCode} ${recipient.city}`,
+    ...(recipient.country === "CH" ? [] : [recipient.country])].filter(line => line.trim());
+}
+
+/** One A4 sheet, with an unscaled 210 x 105 mm payment part at the bottom. */
 export async function createInvoicePdf(invoice: InvoiceRow, brand: OrganizationPdfBrand) {
   const issued = invoice.status === "issued";
   const documentNumber = issued ? invoice.invoice_number! : invoice.reference;
   const pdf = await PDFDocument.create();
   pdf.registerFontkit(fontkit);
-  const regular = await pdf.embedFont(await readFile(resolve("assets/fonts/DejaVuSans-Latin.ttf")), { subset: true });
-  const bold = await pdf.embedFont(await readFile(resolve("assets/fonts/DejaVuSans-Latin-Bold.ttf")), { subset: true });
-  const dark = rgb(0.04,0.13,0.26); const muted = rgb(0.32,0.39,0.46);
-  const mm = (value: number) => value * 72 / 25.4;
-  let page = pdf.addPage([mm(210), mm(297)]);
-  let y = mm(194);
-  function draw(text: string, x: number, top: number, size = 10, strong = false, color = strong ? dark : muted) {
-    const font = strong ? bold : regular;
-    // Never silently change a name or payment instruction in a financial document.
-    const supported = new Set(font.getCharacterSet());
-    const clean = text.replace(/[\u2010-\u2015]/g,"-").replace(/\s/g," ");
-    if ([...clean].some(char => !supported.has(char.codePointAt(0)!))) throw new Error("billing_pdf_character_unsupported");
-    page.drawText(clean,{ x, y: top, size, font, color });
-  }
-  function paragraph(text: string, size = 10, strong = false) {
-    const font = strong ? bold : regular;
-    let line = "";
-    const flush = () => {
-        if (y < mm(30)) { page = pdf.addPage([mm(210),mm(297)]); y=mm(268); }
-        draw(line,mm(18),y,size,strong); y-=size*1.5; line="";
-    };
-    for (let word of text.trim().split(/\s+/)) {
-      if (line && font.widthOfTextAtSize(`${line} ${word}`,size) > mm(174)) flush();
-      while (font.widthOfTextAtSize(word,size) > mm(174)) {
-        let count=1; while(count<word.length && font.widthOfTextAtSize(word.slice(0,count+1),size)<=mm(174)) count++;
-        line=word.slice(0,count);flush();word=word.slice(count);
+  const [regularBytes, boldBytes] = await Promise.all([
+    readFile(resolve("assets/fonts/LiberationSans-Regular.ttf")),
+    readFile(resolve("assets/fonts/LiberationSans-Bold.ttf")),
+  ]);
+  const regular = await pdf.embedFont(regularBytes, { subset: true });
+  const bold = await pdf.embedFont(boldBytes, { subset: true });
+  const supported = new Set(regular.getCharacterSet());
+  const primary = color(brand.primaryColor, "#0B2142"), accent = color(brand.accentColor, "#1F6BFF");
+  const ink = rgb(...darken(primary, 0.22)), highlight = rgb(...darken(accent, 0.48));
+  const soft = rgb(...mixWhite(primary, 0.94)), lineColor = rgb(...mixWhite(primary, 0.82));
+  const muted = rgb(67 / 255, 83 / 255, 107 / 255), black = rgb(0, 0, 0);
+  const page = pdf.addPage([WIDTH, HEIGHT]);
+  const clean = (value: string) => {
+    const text = value.normalize("NFC").replace(/[\u2010-\u2015]/g, "-").replace(/\s/g, " ");
+    if ([...text].some(character => !supported.has(character.codePointAt(0)!))) throw new Error("billing_pdf_character_unsupported");
+    return text;
+  };
+  const wrap = (value: string, width: number, size: number, font: PDFFont = regular) => {
+    const lines: string[] = []; let line = "";
+    for (const word of clean(value).trim().split(/\s+/)) {
+      if (line && font.widthOfTextAtSize(`${line} ${word}`, size) > width) { lines.push(line); line = ""; }
+      for (const character of (line ? " " : "") + word) {
+        if (font.widthOfTextAtSize(line + character, size) > width) { lines.push(line); line = ""; }
+        line += character;
       }
-      line += (line?" ":"") + word;
     }
-    if (line) flush();
-    y-=8;
-  }
+    if (line) lines.push(line);
+    return lines;
+  };
+  // All coordinates below are baselines measured from the top of the page.
+  const draw = (text: string, x: number, top: number, size = 9.5, strong = false, fill = ink) => {
+    const font = strong ? bold : regular;
+    page.drawText(clean(text), { x, y: HEIGHT - top, size, font, color: fill });
+  };
+  const rule = (top: number) => page.drawLine({ start: { x: LEFT, y: HEIGHT - top }, end: { x: RIGHT, y: HEIGHT - top }, thickness: 0.6, color: lineColor });
+  const block = (lines: string[], x: number, top: number, size: number, strong = false, fill = ink) => {
+    lines.forEach((text, index) => draw(text, x, top + index * size * 1.3, size, strong, fill));
+  };
+  const requireLines = (lines: string[], max: number, error = "billing_invoice_layout_too_long") => {
+    if (lines.length > max) throw new Error(error);
+    return lines;
+  };
   pdf.setTitle(`${issued ? "Rechnung" : "Rechnungsentwurf"} ${documentNumber}`);
   pdf.setAuthor(invoice.issuer.name);
   pdf.setSubject(issued ? "Rechnung mit Schweizer QR-Zahlteil" : "Entwurf - keine Zahlungsaufforderung");
-  draw(issued ? "RECHNUNG" : "RECHNUNGSENTWURF",mm(18),mm(278),15,true);
-  draw(issued ? `Rechnungsdatum: ${invoice.issued_on!.slice(0,10).split("-").reverse().join(".")}` : "Keine Zahlungsaufforderung",mm(18),mm(270),10);
+
+  if (issued) {
+    if (!invoice.payment_creditor || !invoice.qr_reference || !invoice.invoice_number) throw new Error("billing_qr_data_invalid");
+    const data = invoiceQrData({ creditor: invoice.payment_creditor, recipient: invoice.recipient,
+      amountCents: invoice.contribution_cents + invoice.platform_fee_cents, qrReference: invoice.qr_reference, invoiceNumber: invoice.invoice_number });
+    // SIX permits Liberation Sans. Validate every original field without replacing payment data.
+    for (const party of [data.creditor, data.debtor!]) for (const value of Object.values(party)) clean(String(value));
+    const qrDocument = new PDFKit({ size: "A4", margin: 0 });
+    qrDocument.registerFont("Liberation Sans", regularBytes);
+    qrDocument.registerFont("Liberation Sans-Bold", boldBytes);
+    const chunks: Buffer[] = [];
+    const qrBytes = new Promise<Buffer>((resolve, reject) => {
+      qrDocument.on("data", (chunk: Buffer) => chunks.push(chunk));
+      qrDocument.on("end", () => resolve(Buffer.concat(chunks))); qrDocument.on("error", reject);
+    });
+    new SwissQRBill(data, { language: "DE", scissors: true, outlines: true, fontName: "Liberation Sans" }).attachTo(qrDocument);
+    qrDocument.end();
+    // Draw on the existing invoice page at 1:1; preserve separator/scissors and QR quiet zones.
+    const [paymentPage] = await pdf.embedPdf(await qrBytes);
+    page.drawPage(paymentPage, { x: 0, y: 0, xScale: 1, yScale: 1 });
+  }
+
+  // Inset the family header line to respect Pingen's 5 mm print margins.
+  page.drawRectangle({ x: LEFT, y: HEIGHT - mm(10), width: CONTENT, height: mm(2), color: highlight });
+  let nameX = LEFT;
   if (brand.logo) {
     const logo = brand.logo.contentType === "image/png" ? await pdf.embedPng(brand.logo.bytes) : await pdf.embedJpg(brand.logo.bytes);
-    const scale = Math.min(mm(37)/logo.width,mm(18)/logo.height);
-    page.drawImage(logo,{x:mm(155),y:mm(268),width:logo.width*scale,height:logo.height*scale});
+    const scale = Math.min(mm(23) / logo.width, mm(13) / logo.height, 1);
+    page.drawImage(logo, { x: LEFT, y: HEIGHT - mm(29), width: logo.width * scale, height: logo.height * scale });
+    nameX += logo.width * scale + mm(4);
   }
-  // The entire right postage area (x116/y40/w89.5/h47.5 mm from the top) stays clear except recipient.
-  // Long addresses fail visibly instead of silently changing the postal recipient.
-  const addressLines = invoicePostalAddress(invoice.recipient);
-  if (addressLines.some((line) => regular.widthOfTextAtSize(line,10) > mm(85.5))) throw new Error("billing_address_too_long");
-  addressLines.forEach((line,index) => draw(line,mm(118),mm(237)-10-index*13,10,false,rgb(0,0,0)));
-  const issuerLines = [invoice.issuer.name,invoice.issuer.street,`${invoice.issuer.postalCode} ${invoice.issuer.city}`];
-  issuerLines.forEach((line,index) => {
-    let fontSize=10;
-    while (regular.widthOfTextAtSize(line,fontSize)>mm(90) && fontSize>7) fontSize-=0.5;
-    draw(line,mm(18),mm(248)-index*14,fontSize,index===0);
-  });
-  paragraph(documentNumber,11,true);
-  paragraph(invoice.description,12,true);
-  y-=10;
-  const line = (label: string,amount: number,strong=false) => {
-    draw(label,mm(18),y,11,strong);
-    const value=formatBillingChf(amount); const font=strong?bold:regular;
-    draw(value,mm(192)-font.widthOfTextAtSize(value,11),y,11,strong); y-=26;
-  };
-  line("Sponsoringbeitrag zugunsten des Vereins",invoice.contribution_cents);
-  line(`Plattformgebühr (${invoice.fee_basis_points / 100} %)`,invoice.platform_fee_cents);
-  page.drawLine({start:{x:mm(18),y:y+14},end:{x:mm(192),y:y+14},thickness:0.7,color:rgb(.8,.83,.88)});
-  line("Gesamtbetrag CHF",invoice.contribution_cents+invoice.platform_fee_cents,true);
-  y-=10;
-  paragraph(invoice.collection_notice || "Die Zahlungskonditionen und die vereinbarte Abrechnung des bestehenden Sponsorings bleiben unverändert.");
-  paragraph(issued ? "Es werden keine Versandkosten verrechnet." : "Versandkosten sind nicht enthalten. Es wurde kein kostenpflichtiger Versand ausgelöst.");
+  block(requireLines(wrap(invoice.issuer.name, mm(143) - nameX, 11, bold), 2), nameX, mm(22), 11, true);
+  drawPlatformCredit(page, { right: RIGHT, y: HEIGHT - mm(22), regular, bold });
+  rule(mm(35));
+  draw("RECHNUNGSSTELLER", LEFT, mm(45), 7, true, muted);
+  const issuerLines = [invoice.issuer.name, invoice.issuer.street, `${invoice.issuer.postalCode} ${invoice.issuer.city}`]
+    .filter(value => value.trim()).flatMap(value => wrap(value, mm(88), 9.5));
+  block(requireLines(issuerLines, 7), LEFT, mm(51), 9.5);
+  // Right postage zone x116/y40/w89.5/h47.5 mm stays empty except the recipient.
+  // Wrap names/streets, but never split the postcode/city line or shrink below postal requirements.
+  const addressLines = invoicePostalAddress(invoice.recipient).flatMap((value, index) =>
+    index < 2 ? wrap(value, mm(85.5), 10) : [clean(value)]);
+  if (addressLines.some(value => regular.widthOfTextAtSize(value, 10) > mm(85.5))) throw new Error("billing_address_too_long");
+  block(requireLines(addressLines, 5, "billing_address_too_long"), mm(118), mm(60) + 10, 10, false, black);
+
+  draw(issued ? "Rechnung" : "Rechnungsentwurf", LEFT, mm(100), 24, true);
+  page.drawRectangle({ x: LEFT, y: HEIGHT - mm(114), width: CONTENT, height: mm(9), color: issued ? soft : rgb(1, 0.96, 0.84) });
+  draw(issued ? `Rechnungsnummer  ${documentNumber}` : "ENTWURF - NOCH NICHT FREIGEGEBEN", LEFT + mm(3), mm(111), 8.5, true);
   if (issued) {
-    paragraph("Bitte verwenden Sie für die Zahlung den beiliegenden QR-Zahlteil mit der angegebenen Referenz. Es gelten die vereinbarten Zahlungskonditionen.",10,true);
-    if (!invoice.payment_creditor || !invoice.qr_reference || !invoice.invoice_number) throw new Error("billing_qr_data_invalid");
-    const data = invoiceQrData({creditor:invoice.payment_creditor,recipient:invoice.recipient,
-      amountCents:invoice.contribution_cents+invoice.platform_fee_cents,qrReference:invoice.qr_reference,invoiceNumber:invoice.invoice_number});
-    // PDFKit's standard Helvetica must represent every QR field exactly (no missing glyphs).
-    const helvetica = await pdf.embedFont(StandardFonts.Helvetica);
-    try { for (const party of [data.creditor,data.debtor!]) for (const value of Object.values(party)) helvetica.encodeText(String(value)); }
-    catch { throw new Error("billing_pdf_character_unsupported"); }
-    const qr = new SwissQRBill(data,{language:"DE",scissors:true,outlines:true});
-    const qrDocument = new PDFKit({size:"A4",margin:0});
-    const chunks: Buffer[] = [];
-    const qrBytes = new Promise<Buffer>((resolve,reject) => {
-      qrDocument.on("data",(chunk:Buffer)=>chunks.push(chunk));
-      qrDocument.on("end",()=>resolve(Buffer.concat(chunks))); qrDocument.on("error",reject);
-    });
-    qr.attachTo(qrDocument); qrDocument.end();
-    const [paymentPage] = await pdf.embedPdf(await qrBytes);
-    page = pdf.addPage([mm(210),mm(297)]);
-    page.drawPage(paymentPage,{x:0,y:0,width:mm(210),height:mm(297)});
-    draw(`Zahlteil zur Rechnung ${documentNumber}`,mm(18),mm(278),14,true);
-    draw("Bitte diesen Rechnungsbetrag nur einmal bezahlen.",mm(18),mm(265),10);
-  } else {
-    paragraph("Dieser Entwurf ist zur Prüfung bestimmt. Bitte auf Grundlage dieses Dokuments keine Zahlung auslösen. Die zahlbare QR-Rechnung entsteht erst bei der Freigabe.",10,true);
-    paragraph("Steuerangaben und allfällige Mehrwertsteuer werden vor der Rechnungsfreigabe geprüft.",9);
+    const date = invoice.issued_on!.slice(0, 10).split("-").reverse().join(".");
+    const label = `Datum  ${date}`;
+    draw(label, RIGHT - mm(3) - regular.widthOfTextAtSize(label, 8.5), mm(111), 8.5);
   }
-  const pages=pdf.getPages();
-  pages.forEach((sheet,index) => {
-    // Never put a footer inside the reserved 210 x 105 mm QR payment area.
-    const footerY = issued && index === pages.length-1 ? mm(120) : mm(16);
-    page=sheet; draw(`mittragen.ch · ${issued ? documentNumber : "Rechnungsentwurf"}`,mm(18),footerY,8);
-    draw(`${index+1} / ${pages.length}`,mm(181),footerY,8);
-  });
+
+  const notice = invoice.collection_notice || "Die Zahlungskonditionen und die vereinbarte Abrechnung des bestehenden Sponsorings bleiben unverändert.";
+  const instructions = issued
+    ? "Bitte verwenden Sie den untenstehenden QR-Zahlteil. Es gelten die vereinbarten Zahlungskonditionen. Dem Sponsor werden keine Versandkosten verrechnet."
+    : "Keine Zahlungsaufforderung. Die zahlbare QR-Rechnung entsteht erst bei der Freigabe. Versandkosten sind nicht enthalten; es wurde kein kostenpflichtiger Versand ausgelöst. Steuerangaben und allfällige Mehrwertsteuer werden vor der Rechnungsfreigabe geprüft.";
+  let bodySize = 10;
+  const measure = (size: number) => {
+    const description = wrap(invoice.description, CONTENT, size + 1, bold);
+    const collection = wrap(notice, CONTENT, size);
+    const payment = wrap(instructions, CONTENT, size);
+    const height = description.length * (size + 1) * 1.3 + 8 + 70 + collection.length * size * 1.3 + 8 + payment.length * size * 1.3;
+    return { description, collection, payment, height };
+  };
+  let layout = measure(bodySize);
+  while (mm(121) + layout.height > mm(180) && bodySize > 9) { bodySize -= 0.5; layout = measure(bodySize); }
+  // Fail before issuing instead of adding a chargeable sheet, clipping data or shrinking the QR part.
+  if (mm(121) + layout.height > mm(180)) throw new Error("billing_invoice_layout_too_long");
+  let top = mm(121);
+  block(layout.description, LEFT, top, bodySize + 1, true);
+  top += layout.description.length * (bodySize + 1) * 1.3 + 8;
+  const amount = (label: string, cents: number, strong = false) => {
+    const size = strong ? 11 : bodySize, font = strong ? bold : regular, value = formatBillingChf(cents);
+    draw(label, LEFT + mm(3), top, size, strong);
+    draw(value, RIGHT - mm(3) - font.widthOfTextAtSize(value, size), top, size, strong);
+  };
+  amount("Sponsoringbeitrag zugunsten des Vereins", invoice.contribution_cents); top += 20;
+  amount(`Plattformgebühr (${invoice.fee_basis_points / 100} %)`, invoice.platform_fee_cents); top += 20;
+  page.drawRectangle({ x: LEFT, y: HEIGHT - top - 7, width: CONTENT, height: 25, color: soft });
+  amount("Gesamtbetrag", invoice.contribution_cents + invoice.platform_fee_cents, true); top += 30;
+  block(layout.collection, LEFT, top, bodySize, false, muted); top += layout.collection.length * bodySize * 1.3 + 8;
+  block(layout.payment, LEFT, top, bodySize, false, muted);
+  // Footer is above, never inside, the reserved payment area (starts 192 mm from the top).
+  rule(mm(183));
+  draw(documentNumber, LEFT, mm(188), 7, false, muted);
+  const pageLabel = "Seite 1 von 1";
+  draw(pageLabel, RIGHT - regular.widthOfTextAtSize(pageLabel, 7), mm(188), 7, false, muted);
   return pdf.save();
 }
 

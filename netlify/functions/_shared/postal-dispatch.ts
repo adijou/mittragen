@@ -50,7 +50,7 @@ export async function preparePostal(s:Session,invoiceId:string,deployContext?:st
     const doc=(await client.query<{pdf_bytes:Uint8Array;sha256:string}>("SELECT pdf_bytes,sha256 FROM billing_invoice_documents WHERE tenant_id=$1 AND invoice_id=$2",[s.tenantId,invoiceId])).rows[0];
     if(!doc||createHash('sha256').update(doc.pdf_bytes).digest('hex')!==doc.sha256)throw new BillingError("billing_document_missing");
     const pdf=await PDFDocument.load(doc.pdf_bytes);const count=pdf.getPageCount();
-    if(count<2||count>100||pdf.getPages().some(p=>Math.abs(p.getWidth()-595.276)>1||Math.abs(p.getHeight()-841.89)>1))throw new BillingError("pingen_document_mismatch");
+    if(count<1||count>100||pdf.getPages().some(p=>Math.abs(p.getWidth()-595.276)>1||Math.abs(p.getHeight()-841.89)>1))throw new BillingError("pingen_document_mismatch");
     if(prior){await client.query("UPDATE billing_postal_dispatches SET status='preparing',last_error=NULL,updated_at=now() WHERE tenant_id=$1 AND id=$2",[s.tenantId,prior.id]);return {row:prior,bytes:doc.pdf_bytes};}
     const id=randomUUID();const paper=Array.from({length:count},(_,i)=>i===count-1?'qr':'normal');
     const row=(await client.query<PostalDispatch>(`INSERT INTO billing_postal_dispatches(id,tenant_id,invoice_id,environment,organisation_id,file_name,pdf_sha256,page_count,paper_types,created_by)

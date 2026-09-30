@@ -62,6 +62,8 @@ Eine feine Linie trennt den Footer. Er enthält Organisation, Dokumentnummer, «
 
 ## Rechnungen
 
+Die Rechnung und ihr QR-Zahlteil stehen auf derselben A4-Seite. Der Zahlteil bleibt unverkleinert (210 × 105 mm) am unteren Rand. Logo, Primär- und Akzentfarbe stammen aus den Organisationseinstellungen; der Plattformhinweis bleibt neutral. Die Kopfzeile wird für den Postdruck auf den Inhaltsbereich eingerückt. Rechnungen betten Liberation Sans (metrisch kompatibel zur Helvetica-Dokumentfamilie und für den Zahlteil von SIX zugelassen) mit ihrer SIL-OFL-Lizenz ein. Die Fusszeile steht oberhalb des Zahlteils. Lange Texte werden ohne Kürzung umbrochen; passt der Inhalt nicht bei mindestens 9 pt, wird die Freigabe mit einer verständlichen Meldung gestoppt statt ein zusätzliches Blatt zu erzeugen.
+
 Rechnungen verwenden dieselbe Dokumentfamilie. Positionstabelle, Summenblock und Schweizer QR-Zahlteil folgen den jeweils geltenden fachlichen Vorgaben. Zahlungsdaten, MWST und QR-Referenz dürfen nicht aus Annahmen erzeugt werden.
 
 ## Qualitätskontrolle

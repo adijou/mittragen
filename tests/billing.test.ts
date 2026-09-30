@@ -65,7 +65,7 @@ test("Pingen pricing defaults to sandbox and never uploads, creates, sends or ex
   assert.equal(calls[0].url,"https://api-staging.pingen.com/auth/access-tokens");
   assert.match(calls[1].url,/\/price-calculator$/);assert.equal(calls[1].init.redirect,"error");
   const payload=JSON.parse(String(calls[1].init.body));
-  assert.deepEqual(payload.data.attributes,{country:"CH",paper_types:["normal","qr"],print_mode:"simplex",print_spectrum:"grayscale",delivery_product:"cheap"});
+  assert.deepEqual(payload.data.attributes,{country:"CH",paper_types:["qr"],print_mode:"simplex",print_spectrum:"grayscale",delivery_product:"cheap"});
   assert.doesNotMatch(JSON.stringify(quote),/secret-fixture|token-fixture|client-fixture/);
   await assert.rejects(pingenSamplePrice(()=>undefined,fetcher),/pingen_not_configured/);
   assert.equal(calls.length,2);

@@ -3,6 +3,7 @@ import { createHmac,randomUUID } from 'node:crypto';
 import { readFile,readdir } from 'node:fs/promises';
 import { registerHooks } from 'node:module';
 import test from 'node:test';
+import { PDFDocument } from 'pdf-lib';
 import { PGlite } from '@electric-sql/pglite';
 import { pgcrypto } from '@electric-sql/pglite/contrib/pgcrypto';
 import type { DatabaseClient } from '../netlify/functions/_shared/database.ts';
@@ -59,20 +60,21 @@ test('postal workflow binds immutable invoices, confirms real costs, and deducts
     };
     type Remote={id:string;type:string;attributes:Record<string,unknown>};
     const remotes=new Map<string,Remote>();let quote=1.50,actualCost=1.60,sendCount=0,createCount=0,uploadCount=0,loseSend=false,loseCreate=false,wrongAddress=false,unsafeUpload=false;
+    let uploadedPages=0;
     let time=Date.now();const tick=()=>new Date(time+=1000).toISOString();
     const response=(data:unknown,status=200)=>new Response(JSON.stringify(data),{status,headers:{'Content-Type':'application/vnd.api+json'}});
     globalThis.fetch=(async(url,init)=>{
       const target=String(url),method=init?.method??'GET',headers=new Headers(init?.headers);
       if(target.endsWith('/auth/access-tokens'))return response({access_token:'fake-token'});
       if(target.endsWith('/file-upload'))return response({data:{attributes:{url:unsafeUpload?'https://127.0.0.1/private':'https://objects.cloudscale.ch/test/file?signature=test',url_signature:'fake-signature'}}});
-      if(target.startsWith('https://objects.cloudscale.ch/')){assert.equal(headers.has('Authorization'),false);assert.equal(method,'PUT');uploadCount++;return response({});}
+      if(target.startsWith('https://objects.cloudscale.ch/')){assert.equal(headers.has('Authorization'),false);assert.equal(method,'PUT');uploadedPages=(await PDFDocument.load(new Uint8Array(init!.body as ArrayBuffer))).getPageCount();assert.equal(uploadedPages,1);uploadCount++;return response({});}
       assert.equal(headers.get('Authorization'),'Bearer fake-token');
       const body=init?.body?JSON.parse(String(init.body)):null;
-      if(target.endsWith('/price-calculator')){assert.deepEqual(body.data.attributes.paper_types,['normal','qr']);return response({data:{attributes:{currency:'CHF',price:quote}}});}
+      if(target.endsWith('/price-calculator')){assert.deepEqual(body.data.attributes.paper_types,['qr']);return response({data:{attributes:{currency:'CHF',price:quote}}});}
       if(target.includes('?filter=')){const name=JSON.parse(new URL(target).searchParams.get('filter')!).file_original_name;return response({data:[...remotes.values()].filter(row=>row.attributes.file_original_name===name)});}
       if(target.endsWith('/letters')&&method==='POST'){
         assert.equal(body.data.attributes.auto_send,false);assert.equal(body.data.attributes.address_position,'right');assert.ok(headers.get('Idempotency-Key'));
-        const id=randomUUID();const remote={id,type:'letters',attributes:{status:'valid',file_original_name:body.data.attributes.file_original_name,file_pages:2,paper_types:['normal','normal'],country:'CH',address_position:'right',address:'Muster Sponsor AG\nHauptstrasse 1\n3186 Düdingen',submitted_at:null,updated_at:tick()}};
+        const id=randomUUID();const remote={id,type:'letters',attributes:{status:'valid',file_original_name:body.data.attributes.file_original_name,file_pages:uploadedPages,paper_types:Array(uploadedPages).fill('normal'),country:'CH',address_position:'right',address:'Muster Sponsor AG\nHauptstrasse 1\n3186 Düdingen',submitted_at:null,updated_at:tick()}};
         remotes.set(id,remote);createCount++;if(loseCreate)throw new Error('response lost after creation');return response({data:remote},201);
       }
       const match=target.match(/\/letters\/([\da-f-]+)(?:\/(send|cost-details))?$/);assert.ok(match,`Unexpected network request: ${target}`);
@@ -82,7 +84,7 @@ test('postal workflow binds immutable invoices, confirms real costs, and deducts
         sendCount++;assert.equal(method,'PATCH');assert.ok(headers.get('Idempotency-Key'));assert.equal(body.data.attributes.print_mode,'simplex');
         row.attributes.status='sent';row.attributes.submitted_at=tick();row.attributes.updated_at=tick();if(loseSend)throw new Error('response lost after send');return response({data:row});
       }
-      if(method==='PATCH'){assert.deepEqual(body.data.attributes.paper_types,['normal','qr']);row.attributes.paper_types=body.data.attributes.paper_types;row.attributes.updated_at=tick();}
+      if(method==='PATCH'){assert.deepEqual(body.data.attributes.paper_types,['qr']);row.attributes.paper_types=body.data.attributes.paper_types;row.attributes.updated_at=tick();}
       return response({data:wrongAddress?{...row,attributes:{...row.attributes,country:'DE'}}:row});
     }) as typeof fetch;
     let invoice='',id='',letterId='',ready:any;
@@ -98,7 +100,7 @@ test('postal workflow binds immutable invoices, confirms real costs, and deducts
     await t.test('one immutable PDF upload, QR paper selection, address review and server price',async()=>{
       const a=(await post(`/invoices/${invoice}/prepare`)).dispatch;id=a.id;letterId=a.provider_letter_id;
       assert.equal((await post(`/invoices/${invoice}/prepare`)).dispatch.id,id);assert.equal(createCount,1);assert.equal(uploadCount,1);assert.equal(sendCount,0);
-      ready=(await post(`/dispatches/${id}/sync`)).dispatch;assert.equal(ready.status,'ready');assert.equal(ready.quoted_cents,150);
+      ready=(await post(`/dispatches/${id}/sync`)).dispatch;assert.equal(ready.status,'ready');assert.equal(ready.page_count,1);assert.deepEqual(ready.paper_types,['qr']);assert.equal(ready.quoted_cents,150);
       assert.match(ready.provider_address,/Düdingen/);assert.equal((await db.query('SELECT id FROM billing_postal_costs')).rows.length,0);
       await post(`/dispatches/${id}/send`,{quoteToken:ready.quote_token,quotedCents:1,costsAccepted:true},409);
       wrongAddress=true;await post(`/dispatches/${id}/send`,{quoteToken:ready.quote_token,quotedCents:150,costsAccepted:true},409);wrongAddress=false;assert.equal(sendCount,0);

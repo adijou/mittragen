@@ -21,6 +21,7 @@ const errorMessages:Record<string,string> = {
   billing_qr_not_configured:"Die QR-Zahlungsverbindung ist noch nicht vollständig eingerichtet.",
   billing_qr_address_invalid:"Bitte Name, PLZ, Ort und Land des Rechnungsempfängers prüfen. Die Adresse ist für den QR-Zahlteil ungültig.",
   billing_pdf_character_unsupported:"Ein Zeichen im Namen oder in der Adresse kann im PDF nicht korrekt dargestellt werden. Bitte die Angaben prüfen.",
+  billing_invoice_layout_too_long:"Der Rechnungstext ist für eine Seite mit QR-Zahlteil zu lang. Bitte die Beschreibung in der Buchung oder im Vertrag kürzen und den Entwurf aktualisieren.",
   billing_address_too_long:"Die Empfängeradresse passt nicht in das Brieffenster. Bitte die Angaben prüfen.",
   billing_draft_outdated:"Die Angaben haben sich seit Erstellung des Entwurfs geändert. Bitte den Entwurf aktualisieren.",
   billing_invoice_already_received:"Für diesen Entwurf wurde bereits ein Zahlungseingang erfasst. Eine neue Zahlungsaufforderung ist deshalb gesperrt.",
