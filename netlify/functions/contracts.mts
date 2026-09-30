@@ -13,6 +13,7 @@ import { sendContractAccessEmail, sendContractCopyEmail, sendContractSigningEmai
 import { absoluteSiteUrl, contractEmailConfig } from "./_shared/contract-delivery.ts";
 import { contractSnapshotHash } from "./_shared/contract-hash.ts";
 import { ensureDirectReservation, nextContractNumber } from "./_shared/contract-reservations.ts";
+import { newBillingTerms } from "./_shared/billing-config.ts";
 
 type ContractStatus = "draft" | "released" | "confirmed" | "void";
 type ContractRow = {
@@ -240,7 +241,7 @@ async function buildSnapshots(client: DatabaseClient, tenantId: string, selectio
         name: right.name, description: right.description, quantity: right.quantity,
         scheduleText: right.schedule_text, channel: right.channel, location: right.location,
       })),
-    },
+    } as ContractPdfData["package"],
     terms: {
       renewalMode: settings.renewal_mode,
       noticeMonths: settings.notice_months,
@@ -563,6 +564,8 @@ export default async (request: Request, context: Context) => {
         if (!role || !hasPermission(role, "packages:write")) return { state: "denied" as const };
         const snapshots = await buildSnapshots(client, tenantId, parsed.value);
         if (!snapshots) return { state: "selection_not_found" as const };
+        const billing = parsed.value.mode === "direct" ? newBillingTerms() : undefined;
+        if (billing) snapshots.package.billing = billing;
         const year = new Date().getUTCFullYear();
         const counter = await client.query<{ last_value: number }>(`
           INSERT INTO contract_number_counters (tenant_id, contract_year, last_value) VALUES ($1,$2,1)
@@ -668,6 +671,7 @@ export default async (request: Request, context: Context) => {
           && current.contract.package_version_id === parsed.value.packageVersionId;
         const snapshots = await buildSnapshots(client, tenantId, parsed.value, preservesExistingSelection);
         if (!snapshots) return { state: "selection_not_found" as const };
+        if (current.contract.package_snapshot.billing) snapshots.package.billing = current.contract.package_snapshot.billing;
         const updated = await client.query<{ id: string }>(`
           UPDATE sponsorship_contracts SET
             sponsor_id = $3,
@@ -852,6 +856,7 @@ export default async (request: Request, context: Context) => {
           };
         const snapshots = await buildSnapshots(client, tenantId, source, source.mode === "direct");
         if (!snapshots) return { state: "source_missing" as const };
+        if (existing.contract.package_snapshot.billing) snapshots.package.billing = existing.contract.package_snapshot.billing;
         if (!snapshots.settingsComplete) return { state: "settings_incomplete" as const };
         if (!snapshots.sponsorComplete) return { state: "sponsor_incomplete" as const };
         if (source.mode === "direct" && !await ensureDirectReservation(client, tenantId, snapshots.sponsorId, snapshots.packageVersionId, user.id)) {
@@ -1006,6 +1011,7 @@ export default async (request: Request, context: Context) => {
           contractNumber: authorized.contract.contract_number,
           packageName: authorized.contract.package_snapshot.name,
           annualValueCents: Number(authorized.contract.package_snapshot.priceCents),
+          feeBasisPoints: authorized.contract.package_snapshot.billing?.feeBasisPoints,
           confirmationUrl,
           deliveryMode: mode,
           expiresAt: prepared.expires_at,
@@ -1208,6 +1214,7 @@ export default async (request: Request, context: Context) => {
         contractNumber: contract.contract_number,
         packageName: contract.package_snapshot.name,
         annualValueCents: Number(contract.package_snapshot.priceCents),
+        feeBasisPoints: contract.package_snapshot.billing?.feeBasisPoints,
         pdfBase64: Buffer.from(bytes).toString("base64"),
       }, contractEmailConfig());
       const detail = await withSession(user.id, tenantId, async (client) => {

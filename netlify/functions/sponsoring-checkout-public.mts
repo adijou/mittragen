@@ -1,4 +1,6 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { billingConfig, newBillingTerms } from "./_shared/billing-config.ts";
+import { feeCents } from "../../shared/billing.ts";
 import { getStore } from "@netlify/blobs";
 import type { Config, Context } from "@netlify/functions";
 import { AuthError, verifyRequestOrigin } from "@netlify/identity";
@@ -155,6 +157,7 @@ async function publicData(client: DatabaseClient, publicKey: string) {
       sponsorshipImpact: profile.rows[0]?.sponsorship_impact ?? null,
       audience: profile.rows[0]?.audience ?? null,
     },
+    billing: billingConfig(),
     contractReady: organization.contractComplete,
     terms: {
       renewalMode: organization.renewalMode,
@@ -178,7 +181,7 @@ function organizationSnapshot(row: NonNullable<Awaited<ReturnType<typeof getOrga
   } satisfies ContractPdfData["organization"];
 }
 
-function packageSnapshot(item: CheckoutPackageRow, rights: CheckoutRightRow[]) {
+function packageSnapshot(item: CheckoutPackageRow, rights: CheckoutRightRow[]): ContractPdfData["package"] {
   return {
     name: item.name,
     description: item.description,
@@ -245,7 +248,8 @@ export default async (request: Request, context: Context) => {
 
   const invalidOrigin = verifyMutation(request);
   if (invalidOrigin) return invalidOrigin;
-  const parsed = parseSponsoringCheckout(await request.json().catch(() => null));
+  const body = await request.json().catch(() => null);
+  const parsed = parseSponsoringCheckout(body);
   if (!parsed.ok) return json({ error: parsed.error }, 422);
 
   let identityUser;
@@ -365,6 +369,14 @@ export default async (request: Request, context: Context) => {
         contactEmail: parsed.value.contactEmail,
       } satisfies ContractPdfData["sponsor"];
       const selectedPackage = packageSnapshot(selected, rights.rows);
+      const billing = newBillingTerms();
+      const expectedTotal = selected.price_cents + feeCents(selected.price_cents, billing?.feeBasisPoints ?? 0);
+      if ((billing || body.expectedTotalCents !== undefined)
+        && (body.expectedTotalCents !== expectedTotal || body.expectedFeeBasisPoints !== (billing?.feeBasisPoints ?? 0))) {
+        // Throw so sponsor/reservation writes earlier in this transaction are rolled back.
+        throw new Error("billing_quote_changed");
+      }
+      if (billing) selectedPackage.billing = billing;
       const terms = {
         renewalMode: organization.renewal_mode,
         noticeMonths: organization.notice_months,
@@ -435,6 +447,7 @@ export default async (request: Request, context: Context) => {
         sponsorName: parsed.value.legalName,
         packageName: selected.name,
         annualValueCents: selected.price_cents,
+        feeBasisPoints: billing?.feeBasisPoints,
         reference,
         expiresAt: signing.rows[0].expires_at,
         organizationLogoAvailable: Boolean(organization.logo_blob_key && organization.logo_content_type),
@@ -473,6 +486,7 @@ export default async (request: Request, context: Context) => {
         contractNumber: result.contractNumber,
         packageName: result.packageName,
         annualValueCents: result.annualValueCents,
+        feeBasisPoints: result.feeBasisPoints,
         confirmationUrl,
         deliveryMode,
         expiresAt: result.expiresAt,
@@ -518,6 +532,7 @@ export default async (request: Request, context: Context) => {
     const message = error instanceof Error ? error.message : "";
     if (message.includes("package_capacity_exceeded")) return json({ error: "package_capacity_exceeded" }, 409);
     if (message.includes("package_exclusivity_conflict")) return json({ error: "package_exclusivity_conflict" }, 409);
+    if (error instanceof Error && error.message === "billing_quote_changed") return json({ error: "billing_quote_changed" }, 409);
     console.error("sponsoring_checkout_submit_failed", { requestId: context.requestId, error });
     return json({ error: "sponsoring_checkout_submit_failed", requestId: context.requestId }, 500);
   }

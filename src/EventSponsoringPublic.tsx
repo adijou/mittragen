@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { feeCents } from "../shared/billing";
 import { Brand } from "./ProductBrand";
 
 type PublicEvent = {
@@ -16,6 +17,7 @@ type PublicEvent = {
 };
 
 type PublicData = {
+  billing: { enabled: boolean; feeBasisPoints: number; collectionNotice: string };
   organization: {
     name: string;
     contactName: string | null;
@@ -46,7 +48,7 @@ const emptyForm = {
 };
 
 const formatChf = (cents: number) => new Intl.NumberFormat("de-CH", {
-  style: "currency", currency: "CHF", maximumFractionDigits: 0,
+  style: "currency", currency: "CHF", minimumFractionDigits: 2, maximumFractionDigits: 2,
 }).format(cents / 100);
 
 const formatDate = (value: string) => new Intl.DateTimeFormat("de-CH", {
@@ -70,6 +72,7 @@ export function EventSponsoringPublic({ onHome }: { onHome: () => void }) {
   const [data, setData] = useState<PublicData | null>(null);
   const [selectedId, setSelectedId] = useState("");
   const [form, setForm] = useState(emptyForm);
+  const [idempotencyKey] = useState(() => crypto.randomUUID());
   const [startedAt] = useState(() => Date.now());
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -85,7 +88,9 @@ export function EventSponsoringPublic({ onHome }: { onHome: () => void }) {
   }, [key]);
 
   const selected = useMemo(() => data?.events.find((event) => event.id === selectedId) ?? null, [data, selectedId]);
-  const total = selected ? selected.priceCents + (form.includeFnMention ? selected.fnSupplementCents : 0) : 0;
+  const contribution = selected ? selected.priceCents + (form.includeFnMention ? selected.fnSupplementCents : 0) : 0;
+  const platformFee = feeCents(contribution, data?.billing.feeBasisPoints ?? 0);
+  const total = contribution + platformFee;
   const update = <Key extends keyof typeof emptyForm>(field: Key, value: typeof emptyForm[Key]) => setForm((current) => ({ ...current, [field]: value }));
 
   const submit = async (event: React.FormEvent) => {
@@ -95,13 +100,13 @@ export function EventSponsoringPublic({ onHome }: { onHome: () => void }) {
     try {
       const result = await request<{ booking: { reference: string; amountCents: number } }>(`/api/event-sponsoring-public/${key}/book`, {
         method: "POST",
-        body: JSON.stringify({ ...form, eventId: selected.id, startedAt }),
+        body: JSON.stringify({ ...form, eventId: selected.id, startedAt, idempotencyKey, expectedTotalCents: total, expectedFeeBasisPoints: data?.billing.feeBasisPoints ?? 0 }),
       });
       setBooking(result.booking);
       window.scrollTo({ top: 0, behavior: "smooth" });
     } catch (reason) {
       const code = reason instanceof Error ? reason.message : "event_sponsoring_public_booking_failed";
-      setError(code === "event_booking_terms_required"
+      setError(code === "billing_quote_changed" ? "Preis oder Abrechnung haben sich geändert. Bitte laden Sie die Seite neu und prüfen Sie den Gesamtbetrag." : code === "event_booking_terms_required"
           ? "Bitte bestätigen Sie die verbindliche Anmeldung."
           : "Die Anmeldung konnte nicht gespeichert werden. Bitte prüfen Sie alle Angaben und versuchen Sie es erneut.");
     } finally { setBusy(false); }
@@ -139,7 +144,8 @@ export function EventSponsoringPublic({ onHome }: { onHome: () => void }) {
         <label className="event-public-honeypot" aria-hidden="true"><span>Website</span><input tabIndex={-1} autoComplete="off" value={form.website} onChange={(event) => update("website", event.target.value)}/></label>
       </div>
       {selected.fnSupplementCents > 0 && <label className="event-public-choice"><input type="checkbox" checked={form.includeFnMention} onChange={(event) => update("includeFnMention", event.target.checked)}/><span><strong>Verdankung in den Freiburger Nachrichten</strong><small>Zusätzlich {formatChf(selected.fnSupplementCents)}</small></span></label>}
-      <fieldset className="event-public-payment"><legend>Abrechnung</legend><label><input type="radio" name="payment" checked={form.paymentMode === "invoice"} onChange={() => update("paymentMode", "invoice")}/><span>Rechnung an Sponsor</span></label><label><input type="radio" name="payment" checked={form.paymentMode === "cash"} onChange={() => update("paymentMode", "cash")}/><span>Barzahlung</span></label></fieldset>
+      {data.billing.enabled && <aside className="event-public-terms"><strong>Sponsoringbeitrag {formatChf(contribution)} + Plattformgebühr (2.5 %) {formatChf(platformFee)}</strong><p>Gesamtbetrag: {formatChf(total)}</p><p>{data.billing.collectionNotice}</p></aside>}
+      <fieldset className="event-public-payment"><legend>Abrechnung</legend><label><input type="radio" name="payment" checked={form.paymentMode === "invoice"} onChange={() => update("paymentMode", "invoice")}/><span>Rechnung an Sponsor</span></label>{!data.billing.enabled && <label><input type="radio" name="payment" checked={form.paymentMode === "cash"} onChange={() => update("paymentMode", "cash")}/><span>Barzahlung</span></label>}</fieldset>
       <aside className="event-public-terms"><strong>Hinweise</strong><p>{data.settings.termsText}</p></aside>
       <label className="event-public-confirm"><input required type="checkbox" checked={form.termsAccepted} onChange={(event) => update("termsAccepted", event.target.checked)}/><span>Ich melde dieses Matchball-Sponsoring verbindlich an. Die Angaben dürfen für Abrechnung und Spieltagskommunikation verwendet werden.</span></label>
       <button className="event-public-submit" disabled={busy}>{busy ? "Anmeldung wird gespeichert …" : `Jetzt für ${formatChf(total)} anmelden`}</button>

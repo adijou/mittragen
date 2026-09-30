@@ -1,3 +1,4 @@
+import { feeCents, type BillingTerms } from "../shared/billing";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { SortableHeader, useTableSort } from "./SortableHeader";
 import { filterOptions, matchesSearch, sortRows } from "./tableData";
@@ -10,7 +11,7 @@ type ContractView = "list" | "new" | "legacy" | "import" | "detail";
 type ContractItem = {
   id: string; contract_number: string; version_number: number; title: string; sponsor_name: string;
   parent_contract_id: string | null; sponsor_id: string; package_version_id: string;
-  package_name: string; package_snapshot: { priceCents: number; durationMonths: number };
+  package_name: string; package_snapshot: { priceCents: number; durationMonths: number; billing?: BillingTerms };
   special_agreements: string; status: ContractStatus; signing_method: "click" | "advanced" | "qualified";
   source: "workspace" | "public_checkout";
   snapshot_hash: string | null; released_at: string | null; confirmed_at: string | null; confirmed_email: string | null;
@@ -566,7 +567,7 @@ export function ContractManagement({ tenantId, canWrite, canManage, onOpenOrgani
     </section>}
     {!loading && canWrite && view === "import" && <LegacyContractImport key={tenantId} tenantId={tenantId} sponsors={sponsors} catalog={legacyCatalog} onChanged={() => load()} onBusyChange={setImportBusy}/>}
     {!loading && view === "detail" && <section className="contract-detail-page" aria-label="Vertragsdetails" aria-busy={busy === "load"}>{detail ? <>
-        <header className="contract-detail-header"><div><span className={`contract-status contract-status--${detail.contract.status}`}>{statusLabels[detail.contract.status]}</span>{detail.contract.source === "public_checkout" && <span className="contract-source-badge">Online-Direktabschluss</span>}<h2>{detail.contract.contract_number} <small>V{detail.contract.version_number}</small></h2><p>{detail.contract.sponsor_name} · {detail.contract.package_name} · {formatChf(detail.contract.package_snapshot.priceCents)}/Jahr</p>{detail.contract.parent_contract_id && <small className="contract-detail-header__revision">Korrekturversion eines früheren Vertragsstands</small>}</div><a className="access-secondary" href={`/api/contracts/${tenantId}/${detail.contract.id}/pdf`} target="_blank" rel="noreferrer">PDF öffnen</a></header>
+        <header className="contract-detail-header"><div><span className={`contract-status contract-status--${detail.contract.status}`}>{statusLabels[detail.contract.status]}</span>{detail.contract.source === "public_checkout" && <span className="contract-source-badge">Online-Direktabschluss</span>}<h2>{detail.contract.contract_number} <small>V{detail.contract.version_number}</small></h2><p>{detail.contract.sponsor_name} · {detail.contract.package_name} · {formatChf(detail.contract.package_snapshot.priceCents)}/Jahr</p>{detail.contract.package_snapshot.billing && <p>Zusätzliche Plattformgebühr (2.5 %): {formatChf(feeCents(detail.contract.package_snapshot.priceCents))}/Jahr. Gesamtbetrag: {formatChf(detail.contract.package_snapshot.priceCents + feeCents(detail.contract.package_snapshot.priceCents))}/Jahr.</p>}{detail.contract.parent_contract_id && <small className="contract-detail-header__revision">Korrekturversion eines früheren Vertragsstands</small>}</div><a className="access-secondary" href={`/api/contracts/${tenantId}/${detail.contract.id}/pdf`} target="_blank" rel="noreferrer">PDF öffnen</a></header>
         {detail.contract.status === "draft" ? <form className="contract-editor" onSubmit={saveDraft}>
           <div className="contract-editor__selection">
             <label><span>Sponsor</span><select required value={draftSponsorId} onChange={(event) => setDraftSponsorId(event.target.value)}><option value="">Sponsor wählen</option>{!sponsors.some((sponsor) => sponsor.id === draftSponsorId) && <option value={draftSponsorId}>{detail.contract.sponsor_name}</option>}{sponsors.map((sponsor) => <option key={sponsor.id} value={sponsor.id}>{sponsor.legal_name}</option>)}</select></label>

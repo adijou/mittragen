@@ -3,7 +3,9 @@ import { getStore } from "@netlify/blobs";
 import type { Config, Context } from "@netlify/functions";
 import { AuthError, verifyRequestOrigin } from "@netlify/identity";
 import { json } from "./_shared/auth.ts";
-import { withSession, type DatabaseClient } from "./_shared/database.ts";
+import { withSession, isUuid, type DatabaseClient } from "./_shared/database.ts";
+import { billingConfig } from "./_shared/billing-config.ts";
+import { feeCents } from "../../shared/billing.ts";
 import { parseEventBooking } from "./_shared/event-sponsoring-input.ts";
 import { getOrganizationProfile, mapOrganizationProfile } from "./_shared/organization-profile.ts";
 
@@ -84,6 +86,7 @@ async function publicData(client: DatabaseClient, publicKey: string) {
   `, [settings.tenant_id]);
   return {
     tenantId: settings.tenant_id,
+    billing: billingConfig(),
     organization: {
       name: tenant.rows[0].name,
       contactName: organization?.contactName ?? null,
@@ -165,12 +168,26 @@ export default async (request: Request, context: Context) => {
 
   const invalidOrigin = verifyMutation(request);
   if (invalidOrigin) return invalidOrigin;
-  const parsed = parseEventBooking(await request.json().catch(() => null));
+  const body = await request.json().catch(() => null);
+  const parsed = parseEventBooking(body);
   if (!parsed.ok) return json({ error: parsed.error }, 422);
   try {
     const result = await withSession(`event-public:${publicKey}`, null, async (client) => {
       const settings = await loadSettings(client, publicKey);
       if (!settings) return { state: "not_found" as const };
+      const billing = billingConfig();
+      const checkoutKey = isUuid(body.idempotencyKey) ? body.idempotencyKey : null;
+      if (billing.enabled && (!checkoutKey || parsed.value.paymentMode !== "invoice")) return { state: "quote_changed" as const };
+      if (checkoutKey) {
+        await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [`matchball:${settings.tenant_id}:${checkoutKey}`]);
+        const prior = await client.query<{ reference: string; amount_cents: number; fee_basis_points: number; submitted_at: string; event_id: string; contact_email: string; sponsor_name: string; status: string }>(
+          `SELECT reference, amount_cents, fee_basis_points, submitted_at::text, event_id, contact_email, sponsor_name, status FROM event_sponsorship_bookings
+           WHERE tenant_id=$1 AND checkout_key=$2`, [settings.tenant_id, checkoutKey]);
+        if (prior.rows[0] && (prior.rows[0].event_id !== parsed.value.eventId || prior.rows[0].contact_email !== parsed.value.contactEmail
+          || prior.rows[0].sponsor_name !== parsed.value.sponsorName || prior.rows[0].status !== "submitted")) return { state: "quote_changed" as const };
+        if (prior.rows[0]) return { state: "booked" as const, reference: prior.rows[0].reference,
+          amountCents: prior.rows[0].amount_cents + feeCents(prior.rows[0].amount_cents, prior.rows[0].fee_basis_points), submittedAt: prior.rows[0].submitted_at };
+      }
       const event = await client.query<{
         id: string; price_cents: number; fn_supplement_cents: number;
       }>(`SELECT id, price_cents, fn_supplement_cents FROM sponsorship_events
@@ -180,25 +197,29 @@ export default async (request: Request, context: Context) => {
       if (!event.rows[0]) return { state: "event_not_found" as const };
       const value = parsed.value;
       const amountCents = event.rows[0].price_cents + (value.includeFnMention ? event.rows[0].fn_supplement_cents : 0);
+      const totalCents = amountCents + feeCents(amountCents, billing.feeBasisPoints);
+      if ((billing.enabled || body.expectedTotalCents !== undefined)
+        && (body.expectedTotalCents !== totalCents || body.expectedFeeBasisPoints !== billing.feeBasisPoints)) return { state: "quote_changed" as const };
       const year = new Date().getUTCFullYear();
       const reference = `MB-${year}-${randomBytes(4).toString("hex").toUpperCase()}`;
       const booking = await client.query<{ id: string; submitted_at: string }>(`INSERT INTO event_sponsorship_bookings
         (tenant_id, event_id, reference, sponsor_name, address, postal_code, city, contact_name,
          contact_email, contact_phone, referred_by_member, include_fn_mention, payment_mode,
-         amount_cents, source)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'public_form')
+         amount_cents, source, fee_basis_points, collection_notice, checkout_key)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'public_form',$15,$16,$17)
         RETURNING id, submitted_at::text`,
       [settings.tenant_id, value.eventId, reference, value.sponsorName, value.address, value.postalCode,
         value.city, value.contactName, value.contactEmail, value.contactPhone, value.referredByMember,
-        value.includeFnMention, value.paymentMode, amountCents]);
+        value.includeFnMention, value.paymentMode, amountCents, billing.feeBasisPoints, billing.collectionNotice, checkoutKey]);
       await client.query(`INSERT INTO audit_events (tenant_id, actor_user_id, action, object_type, object_id, metadata)
         VALUES ($1,$2,'event_sponsoring.public_booking_created','event_sponsorship_booking',$3::text,
         jsonb_build_object('event_id',$4::text,'reference',$5::text,'amount_cents',$6::integer,'source','public_form'))`,
       [settings.tenant_id, `event-public:${booking.rows[0].id}`, booking.rows[0].id, value.eventId, reference, amountCents]);
-      return { state: "booked" as const, reference, amountCents, submittedAt: booking.rows[0].submitted_at };
+      return { state: "booked" as const, reference, amountCents: totalCents, submittedAt: booking.rows[0].submitted_at };
     });
     if (result.state === "not_found") return json({ error: "event_sponsoring_link_invalid" }, 404);
     if (result.state === "event_not_found") return json({ error: "event_not_found" }, 404);
+    if (result.state === "quote_changed") return json({ error: "billing_quote_changed" }, 409);
     return json({ booking: { reference: result.reference, amountCents: result.amountCents, submittedAt: result.submittedAt } }, 201);
   } catch (error) {
     console.error("event_sponsoring_public_booking_failed", { requestId: context.requestId, error });

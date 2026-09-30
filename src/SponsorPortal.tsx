@@ -1,3 +1,4 @@
+import { feeCents } from "../shared/billing";
 import { pickSponsorContact } from "../shared/sponsor-contact";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { getUser, logout, onAuthChange, refreshSession, type User } from "@netlify/identity";
@@ -24,7 +25,7 @@ type Proposal = {
 };
 type SponsorContract = {
   id: string; contract_number: string; title: string; status: "released" | "confirmed";
-  package_name: string; price_cents: number; snapshot_hash: string; released_at: string; confirmed_at: string | null;
+  package_name: string; price_cents: number; fee_basis_points: number; snapshot_hash: string; released_at: string; confirmed_at: string | null;
   signer_name: string | null; signer_role: string | null; can_confirm: boolean;
 };
 type Space = {
@@ -40,7 +41,7 @@ type Space = {
 };
 
 const formatChf = (cents: number) => new Intl.NumberFormat("de-CH", {
-  style: "currency", currency: "CHF", maximumFractionDigits: 0,
+  style: "currency", currency: "CHF", minimumFractionDigits: 2, maximumFractionDigits: 2,
 }).format(cents / 100);
 const formatDateTime = (value: string) => new Intl.DateTimeFormat("de-CH", {
   dateStyle: "long", timeStyle: "short",
@@ -308,7 +309,7 @@ export function SponsorPortal({ onHome, onLogin }: { onHome: () => void; onLogin
           <header><div><p className="eyebrow">Dokumente</p><h2>Ihre Dokumente</h2></div><p>Hier finden Sie Ihre freigegebenen und bestätigten Sponsoringverträge als PDF.</p></header>
           {space.contracts.length === 0 && <p>Ihre Vertragsdokumente erscheinen hier, sobald die Organisation sie freigegeben hat.</p>}
           <div className="sponsor-contracts__list">{space.contracts.map((contract) => <article className={`sponsor-contract sponsor-contract--${contract.status}`} key={contract.id}>
-            <div className="sponsor-contract__summary"><span className={`contract-status contract-status--${contract.status}`}>{contract.status === "confirmed" ? "Bestätigt" : "Ihre Bestätigung fehlt"}</span><h3>{contract.title}</h3><p>{contract.contract_number} · {contract.package_name} · {formatChf(contract.price_cents)}</p><small>{contract.status === "confirmed" && contract.confirmed_at ? `Bestätigt am ${formatDateTime(contract.confirmed_at)}` : `Freigegeben am ${formatDateTime(contract.released_at)}`}</small><button className="access-secondary" disabled={busy === `pdf-${contract.id}`} onClick={() => void downloadContract(contract)}>{busy === `pdf-${contract.id}` ? "PDF wird erstellt …" : "Vertrag als PDF"}</button></div>
+            <div className="sponsor-contract__summary"><span className={`contract-status contract-status--${contract.status}`}>{contract.status === "confirmed" ? "Bestätigt" : "Ihre Bestätigung fehlt"}</span><h3>{contract.title}</h3><p>{contract.contract_number} · {contract.package_name} · {formatChf(contract.price_cents)}</p>{contract.fee_basis_points > 0 && <p>+ Plattformgebühr (2.5 %): {formatChf(feeCents(Number(contract.price_cents)))}. Gesamtbetrag pro Jahr: {formatChf(Number(contract.price_cents) + feeCents(Number(contract.price_cents)))}.</p>}<small>{contract.status === "confirmed" && contract.confirmed_at ? `Bestätigt am ${formatDateTime(contract.confirmed_at)}` : `Freigegeben am ${formatDateTime(contract.released_at)}`}</small><button className="access-secondary" disabled={busy === `pdf-${contract.id}`} onClick={() => void downloadContract(contract)}>{busy === `pdf-${contract.id}` ? "PDF wird erstellt …" : "Vertrag als PDF"}</button></div>
             {contract.status === "released" ? contract.can_confirm ? <form className="sponsor-contract__confirm" onSubmit={(event) => { event.preventDefault(); void confirmContract(contract); }}><div><strong>Vertrag elektronisch bestätigen</strong><p>Ihr angemeldetes mittragen.ch-Konto weist Ihre Identität nach. Bitte lesen Sie zuerst das vollständige PDF.</p></div>{contract.signer_name ? <div className="sponsor-contract__identity"><span>Unterzeichnende Person</span><strong>{contract.signer_name}</strong><small>{contract.signer_role}</small></div> : <><label><span>Name der berechtigten Person</span><input required value={signingAuthorityName} onChange={(event) => setSigningAuthorityName(event.target.value)} autoComplete="name"/></label><label><span>Funktion beim Sponsor</span><input required value={signingAuthorityRole} onChange={(event) => setSigningAuthorityRole(event.target.value)} placeholder="z. B. Geschäftsführung"/></label></>}<label className="sponsor-ack"><input type="checkbox" checked={contractAcknowledged} onChange={(event) => setContractAcknowledged(event.target.checked)}/><span>Ich habe den vollständigen Vertrag geprüft, bin zur Bestätigung berechtigt und stimme dem unveränderlichen Vertragsstand zu.</span></label><button className="access-primary" disabled={!contractAcknowledged || (!contract.signer_name && (!signingAuthorityName.trim() || !signingAuthorityRole.trim())) || busy !== ""}>{busy === `confirm-${contract.id}` ? "Wird bestätigt …" : "Vertrag verbindlich bestätigen"}</button><small className="sponsor-contract__legal-note">Die Bestätigung wird mit Ihrem Konto, Zeitpunkt und dem unveränderlichen Vertragsstand protokolliert.</small></form> : <div className="sponsor-contract__proof"><strong>Bestätigung einer anderen Person zugewiesen</strong><p>Sie können den Vertrag ansehen. Verbindlich bestätigen kann nur das dafür bestimmte mittragen.ch-Konto.</p></div> : <div className="sponsor-contract__proof"><strong>Bestätigung protokolliert</strong><p>Das PDF enthält den freigegebenen Stand und den Bestätigungsnachweis.</p><code>{contract.snapshot_hash.slice(0, 16)}…</code></div>}
           </article>)}</div>
         </section>

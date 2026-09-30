@@ -39,6 +39,14 @@ test("account contract email asks the identified user to sign in", () => {
   assert.match(email.html, /Anmelden und bestätigen/);
 });
 
+test("contract email discloses the separate platform fee and gross annual amount", () => {
+  const email=buildContractSigningEmail({...input,annualValueCents:100_000,feeBasisPoints:250});
+  assert.match(email.text,/2\.5 % Plattformgebühr/);
+  assert.match(email.text,/25\.00/);
+  assert.match(email.text,/1.?025\.00/);
+  assert.doesNotMatch(buildContractSigningEmail({...input,annualValueCents:100_000}).text,/Plattformgebühr/);
+});
+
 test("contract delivery uses Resend and PDF copies carry an attachment", async () => {
   const payloads: Array<Record<string, unknown>> = [];
   const config = {

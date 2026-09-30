@@ -8,6 +8,11 @@ NODE_VERSION = "22"
 [functions."sponsors"]
 included_files = ["assets/fonts/*.ttf", "assets/fonts/LICENSE-DejaVu.txt"]
 
+[functions."finance"]
+node_bundler = "esbuild"
+external_node_modules = ["pdfkit"]
+included_files = ["assets/fonts/*.ttf", "assets/fonts/LICENSE-DejaVu.txt", "node_modules/pdfkit/js/data/*"]
+
 [[redirects]]
 from = "/*"
 to = "/index.html"

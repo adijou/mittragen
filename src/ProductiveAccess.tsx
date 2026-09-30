@@ -22,6 +22,7 @@ import type { HelpSection } from "./workspaceHelpContent";
 import { ImportManagement } from "./ImportManagement";
 import { TransitionManagement } from "./TransitionManagement";
 import { PackageManagement } from "./PackageManagement";
+import { FinanceManagement } from "./FinanceManagement";
 import { ContractManagement } from "./ContractManagement";
 import { SponsoringDossier } from "./SponsoringDossier";
 import { EventSponsoringManagement } from "./EventSponsoringManagement";
@@ -494,6 +495,7 @@ function WorkspacePage({ user, setUser, onHome, onLogin, onSponsor, onPrototype:
         <button className={workspaceSection === "events" ? "active" : ""} onClick={() => setWorkspaceSection("events")}>Events</button>
         <button className={workspaceSection === "transitions" ? "active" : ""} onClick={() => setWorkspaceSection("transitions")}>Überführung</button>
         <button className={workspaceSection === "contracts" ? "active" : ""} onClick={() => setWorkspaceSection("contracts")}>Verträge</button>
+        {workspace?.membership.permissions.includes("finance:read") && <button className={workspaceSection === "finance" ? "active" : ""} onClick={() => setWorkspaceSection("finance")}>Finanzen</button>}
         {workspace?.membership.permissions.includes("sponsors:write") && <button className={workspaceSection === "imports" ? "active" : ""} onClick={() => setWorkspaceSection("imports")}>Datenübernahme</button>}
         {workspace?.membership.permissions.includes("members:manage") && <button className={workspaceSection === "team" ? "active" : ""} onClick={() => setWorkspaceSection("team")}>Team</button>}
         <button className={workspaceSection === "settings" ? "active" : ""} onClick={() => setWorkspaceSection("settings")}>Organisation</button>
@@ -521,6 +523,7 @@ function WorkspacePage({ user, setUser, onHome, onLogin, onSponsor, onPrototype:
                   : workspaceSection === "events" && workspace ? <EventSponsoringManagement tenantId={selectedTenantId} canWrite={workspace.membership.permissions.includes("fulfillment:write")} canManage={workspace.membership.permissions.includes("tenant:manage")}/>
                     : workspaceSection === "transitions" && workspace ? <TransitionManagement key={selectedTenantId} tenantId={selectedTenantId} canWrite={workspace.membership.permissions.includes("sponsors:write")}/>
                       : workspaceSection === "contracts" && workspace ? <ContractManagement key={selectedTenantId} tenantId={selectedTenantId} canWrite={workspace.membership.permissions.includes("packages:write")} canManage={workspace.membership.permissions.includes("tenant:manage")} onOpenOrganization={() => setWorkspaceSection("settings")}/>
+                        : workspaceSection === "finance" && workspace ? <FinanceManagement key={`${selectedTenantId}:${user?.id}`} tenantId={selectedTenantId} accountId={user?.id ?? ""}/>
                         : workspaceSection === "imports" && workspace ? <ImportManagement key={selectedTenantId} tenantId={selectedTenantId} tenantName={workspace.tenant.name} demoSponsorCount={workspace.demoSponsorCount} canDeleteDemo={workspace.membership.permissions.includes("tenant:manage")} onChanged={() => { void reloadWorkspace(); }}/>
                           : workspaceSection === "team" && workspace ? <TeamManagement tenantId={selectedTenantId}/>
                             : workspaceSection === "settings" && workspace ? <OrganizationSettings tenant={workspace.tenant as OrganizationTenant} canManage={workspace.membership.permissions.includes("tenant:manage")} onSaved={(updated) => { setTenants((current) => current.map((tenant) => tenant.id === updated.id ? updated : tenant)); setWorkspace((current) => current ? { ...current, tenant: { ...current.tenant, ...updated } } : current); }}/>

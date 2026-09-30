@@ -1,0 +1,80 @@
+import type { DatabaseClient } from "./database.ts";
+import type { ContractPdfData } from "./contract-pdf.ts";
+import { feeCents, isDate } from "../../../shared/billing.ts";
+
+export type InvoiceParty = { name: string; street: string; postalCode: string; city: string; country: string };
+export type InvoiceSource = {
+  sourceType: "event_booking" | "contract"; sourceId: string; sourceKey: string; description: string;
+  recipient: InvoiceParty; issuer: InvoiceParty; contributionCents: number; feeBasisPoints: number;
+  platformFeeCents: number; collectionNotice: string;
+  periodStart?: string; periodEnd?: string;
+};
+
+function addMonths(date: string, months: number) {
+  const [year, month, day] = date.split("-").map(Number);
+  const lastDay = new Date(Date.UTC(year, month + months, 0)).getUTCDate();
+  return new Date(Date.UTC(year, month - 1 + months, Math.min(day, lastDay))).toISOString().slice(0, 10);
+}
+const previousDay = (date: string) => new Date(Date.parse(`${date}T12:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
+
+/** Only unambiguous, dated schedules. Legacy/custom agreements require review, never guessed billing. */
+export function contractInstallments(item: ContractPdfData["package"]) {
+  const step = ({ annual: 12, semiannual: 6, quarterly: 3 } as Record<string, number>)[item.paymentPlan];
+  if (!step || !isDate(item.validFrom) || !isDate(item.validUntil) || !Number.isInteger(item.durationMonths)
+    || item.durationMonths < 1 || item.durationMonths > 120 || !Number.isSafeInteger(item.priceCents) || item.priceCents <= 0
+    || previousDay(addMonths(item.validFrom, item.durationMonths)) !== item.validUntil) return [];
+  const result = [];
+  for (let month = 0; month < item.durationMonths; month += step) {
+    const end = Math.min(month + step, item.durationMonths);
+    const contributionCents = Math.round(item.priceCents * end / 12) - Math.round(item.priceCents * month / 12);
+    if (contributionCents > 0) result.push({ start: addMonths(item.validFrom, month), end: previousDay(addMonths(item.validFrom, end)), contributionCents });
+  }
+  return result;
+}
+
+export async function billingSources(client: DatabaseClient, tenantId: string) {
+  const profile = await client.query<{ name: string; street: string | null; postal_code: string | null; city: string | null; country: string | null }>(
+    `SELECT COALESCE(settings.legal_name, tenant.name) name, settings.street, settings.postal_code, settings.city, settings.country
+     FROM tenants tenant LEFT JOIN tenant_contract_settings settings ON settings.tenant_id=tenant.id WHERE tenant.id=$1`, [tenantId]);
+  const org = profile.rows[0];
+  const issuer: InvoiceParty = { name: org.name, street: org.street ?? "", postalCode: org.postal_code ?? "", city: org.city ?? "", country: org.country ?? "CH" };
+  const bookings = await client.query<{ id: string; reference: string; sponsor_name: string; address: string; postal_code: string; city: string; amount_cents: number; fee_basis_points: number; collection_notice: string; team_name: string; opponent: string }>(
+    `SELECT booking.*, event.team_name, event.opponent FROM event_sponsorship_bookings booking
+     JOIN sponsorship_events event ON event.id=booking.event_id AND event.tenant_id=booking.tenant_id
+     WHERE booking.tenant_id=$1 AND booking.status='submitted' AND booking.payment_mode='invoice'
+       AND booking.amount_cents>0 AND event.status<>'cancelled' ORDER BY booking.submitted_at FOR SHARE OF booking,event`, [tenantId]);
+  const sources: InvoiceSource[] = bookings.rows.map((row) => ({
+    sourceType: "event_booking", sourceId: row.id, sourceKey: `event:${row.id}`,
+    description: `${row.reference} · Matchball ${row.team_name} – ${row.opponent}`,
+    recipient: { name: row.sponsor_name, street: row.address, postalCode: row.postal_code, city: row.city, country: "CH" }, issuer,
+    contributionCents: row.amount_cents, feeBasisPoints: row.fee_basis_points,
+    platformFeeCents: feeCents(row.amount_cents, row.fee_basis_points), collectionNotice: row.collection_notice,
+  }));
+  const contracts = await client.query<{ id: string; root_id: string; contract_number: string; package_snapshot: ContractPdfData["package"]; sponsor_snapshot: ContractPdfData["sponsor"]; organization_snapshot: ContractPdfData["organization"] }>(
+    `WITH RECURSIVE family AS (
+       SELECT id,id root_id FROM sponsorship_contracts WHERE tenant_id=$1 AND parent_contract_id IS NULL
+       UNION ALL SELECT child.id,family.root_id FROM sponsorship_contracts child JOIN family ON child.parent_contract_id=family.id WHERE child.tenant_id=$1
+     ) SELECT contract.id,family.root_id,contract_number,package_snapshot,sponsor_snapshot,organization_snapshot
+     FROM sponsorship_contracts contract JOIN family ON family.id=contract.id
+     WHERE tenant_id=$1 AND status='confirmed' ORDER BY contract_number,version_number DESC FOR SHARE OF contract`, [tenantId]);
+  const unresolved: Array<{ reference: string; reason: string }> = [];
+  for (const row of contracts.rows) {
+    const periods = contractInstallments(row.package_snapshot);
+    if (!periods.length) { unresolved.push({ reference: row.contract_number, reason: "Laufzeit oder Zahlungsplan benötigt eine manuelle Prüfung. Es wird kein Betrag geschätzt." }); continue; }
+    const sponsor = row.sponsor_snapshot; const club = row.organization_snapshot;
+    for (const period of periods) {
+      const basisPoints = row.package_snapshot.billing?.feeBasisPoints ?? 0;
+      sources.push({ sourceType: "contract", sourceId: row.id,
+        // Corrective versions have new numbers; the original contract id stays the billing identity.
+        sourceKey: `contract:${row.root_id}:${period.start}`,
+        periodStart: period.start, periodEnd: period.end,
+        description: `${row.contract_number} · ${row.package_snapshot.name} · ${period.start} bis ${period.end}`,
+        recipient: { name: sponsor.legalName, street: sponsor.street ?? "", postalCode: sponsor.postalCode ?? "", city: sponsor.city ?? "", country: "CH" },
+        issuer: { name: club.legalName, street: club.street, postalCode: club.postalCode, city: club.city, country: club.country },
+        contributionCents: period.contributionCents, feeBasisPoints: basisPoints,
+        platformFeeCents: feeCents(period.contributionCents, basisPoints), collectionNotice: row.package_snapshot.billing?.collectionNotice ?? "",
+      });
+    }
+  }
+  return { sources, unresolved };
+}
