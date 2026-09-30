@@ -3,6 +3,8 @@ import type { DatabaseClient } from "./database.ts";
 import { splitReceipt } from "../../../shared/billing.ts";
 import { billingSources, type InvoiceParty, type InvoiceSource } from "./billing-sources.ts";
 import type { QrCreditor } from "./swiss-qr.ts";
+import { allocatePostalCosts, availablePostalCosts, requireConfirmedPostalCosts, requireFreshPayoutCosts } from "./postal-costs.ts";
+import { swissToday } from "../../../shared/billing.ts";
 
 export class BillingError extends Error {
   status: number;
@@ -106,6 +108,7 @@ export async function reverseReceipt(client: DatabaseClient, tenantId: string, a
 export async function preparePayout(client: DatabaseClient, tenantId: string, actor: string, month: string) {
   const existing = await client.query<{ id: string }>("SELECT id FROM billing_payouts WHERE tenant_id=$1 AND through_month=$2", [tenantId,month]);
   if (existing.rows[0]) return existing.rows[0].id;
+  await requireConfirmedPostalCosts(client,tenantId,month);
   const { sources } = await billingSources(client,tenantId);
   const invoices = await client.query<InvoiceRow>("SELECT * FROM billing_invoices WHERE tenant_id=$1",[tenantId]);
   const allowedIds = invoices.rows.filter((row) => canSettle(row,sources)).map((row) => row.id);
@@ -114,31 +117,50 @@ export async function preparePayout(client: DatabaseClient, tenantId: string, ac
       AND receipt.received_on < ($2::date + interval '1 month') AND receipt.invoice_id=ANY($3::uuid[])
       AND NOT EXISTS (SELECT 1 FROM billing_payout_items item WHERE item.tenant_id=receipt.tenant_id AND item.receipt_id=receipt.id)
     ORDER BY receipt.received_on,receipt.id`,[tenantId,`${month}-01`,allowedIds]);
-  if (!receipts.rows.length) throw new BillingError("billing_nothing_to_pay");
   const id = randomUUID();
-  const amount = receipts.rows.reduce((sum,row) => sum + row.club_cents,0);
-  await client.query("INSERT INTO billing_payouts (id,tenant_id,through_month,amount_cents,created_by) VALUES ($1,$2,$3,$4,$5)",[id,tenantId,month,amount,actor]);
+  const gross = receipts.rows.reduce((sum,row) => sum + row.club_cents,0);
+  const allocation = allocatePostalCosts(gross,await availablePostalCosts(client,tenantId,month));
+  if (!receipts.rows.length && !allocation.items.length) throw new BillingError("billing_nothing_to_pay");
+  await client.query("INSERT INTO billing_payouts (id,tenant_id,through_month,amount_cents,created_by,gross_cents,postal_cents) VALUES ($1,$2,$3,$4,$5,$6,$7)",[id,tenantId,month,allocation.netCents,actor,gross,allocation.postalCents]);
   for (const receipt of receipts.rows) await client.query("INSERT INTO billing_payout_items (tenant_id,payout_id,receipt_id,amount_cents) VALUES ($1,$2,$3,$4)",[tenantId,id,receipt.id,receipt.club_cents]);
-  await audit(client,tenantId,actor,"billing.payout_prepared",id,{ throughMonth: month, amountCents: amount, receiptCount: receipts.rows.length });
+  for (const item of allocation.items) await client.query("INSERT INTO billing_payout_postal_items (tenant_id,payout_id,cost_id,amount_cents) VALUES ($1,$2,$3,$4)",[tenantId,id,item.id,item.amountCents]);
+  await audit(client,tenantId,actor,"billing.payout_prepared",id,{ throughMonth: month, amountCents:allocation.netCents,grossCents:gross,postalCents:allocation.postalCents,receiptCount:receipts.rows.length });
   return id;
 }
 
-export async function recordPayout(client: DatabaseClient, tenantId: string, actor: string, payoutId: string, paidOn: string, bankReference: string) {
-  const prior = await client.query<{ status: string; through_month: string; paid_on: string | null; bank_reference: string | null }>("SELECT status,through_month,paid_on::text,bank_reference FROM billing_payouts WHERE tenant_id=$1 AND id=$2",[tenantId,payoutId]);
-  if (!prior.rows[0]) throw new BillingError("billing_payout_not_found",404);
-  if (paidOn.slice(0,7) <= prior.rows[0].through_month) throw new BillingError("billing_payout_date_invalid",422);
-  if (prior.rows[0].status === "paid") {
-    if (prior.rows[0].paid_on !== paidOn || prior.rows[0].bank_reference !== bankReference) throw new BillingError("billing_payout_locked");
-    return;
-  }
+async function requirePayoutSources(client:DatabaseClient,tenantId:string,payoutId:string) {
   const invoices = await client.query<InvoiceRow>(`SELECT DISTINCT invoice.* FROM billing_invoices invoice
     JOIN billing_receipts receipt ON receipt.invoice_id=invoice.id AND receipt.tenant_id=invoice.tenant_id
     JOIN billing_payout_items item ON item.receipt_id=receipt.id AND item.tenant_id=receipt.tenant_id
     WHERE item.tenant_id=$1 AND item.payout_id=$2`,[tenantId,payoutId]);
   const { sources } = await billingSources(client,tenantId);
   if (invoices.rows.some((row) => !canSettle(row,sources))) throw new BillingError("billing_source_unavailable");
+}
+
+export async function recordPayout(client: DatabaseClient, tenantId: string, actor: string, payoutId: string, paidOn: string, bankReference: string) {
+  const prior = await client.query<{ status: string; amount_cents:string; through_month: string; paid_on: string | null; bank_reference: string | null }>("SELECT status,amount_cents::text,through_month,paid_on::text,bank_reference FROM billing_payouts WHERE tenant_id=$1 AND id=$2",[tenantId,payoutId]);
+  if (!prior.rows[0]) throw new BillingError("billing_payout_not_found",404);
+  if (Number(prior.rows[0].amount_cents)===0) throw new BillingError("billing_payout_no_transfer",422);
+  if (paidOn.slice(0,7) <= prior.rows[0].through_month) throw new BillingError("billing_payout_date_invalid",422);
+  if (prior.rows[0].status === "paid") {
+    if (prior.rows[0].paid_on !== paidOn || prior.rows[0].bank_reference !== bankReference) throw new BillingError("billing_payout_locked");
+    return;
+  }
+  await requireFreshPayoutCosts(client,tenantId,payoutId);
+  await requirePayoutSources(client,tenantId,payoutId);
   await client.query("UPDATE billing_payouts SET status='paid',paid_on=$3,bank_reference=$4,recorded_by=$5 WHERE tenant_id=$1 AND id=$2",[tenantId,payoutId,paidOn,bankReference,actor]);
   await audit(client,tenantId,actor,"billing.payout_recorded",payoutId,{ paidOn, bankReference });
+}
+
+export async function settlePayout(client:DatabaseClient,tenantId:string,actor:string,payoutId:string) {
+  const row=(await client.query<{status:string;amount_cents:string}>("SELECT status,amount_cents::text FROM billing_payouts WHERE tenant_id=$1 AND id=$2",[tenantId,payoutId])).rows[0];
+  if(!row)throw new BillingError("billing_payout_not_found",404);
+  if(row.status==='offset')return;
+  if(row.status!=='prepared'||Number(row.amount_cents)!==0)throw new BillingError("billing_payout_locked");
+  await requireFreshPayoutCosts(client,tenantId,payoutId);
+  await requirePayoutSources(client,tenantId,payoutId);
+  await client.query("UPDATE billing_payouts SET status='offset',settled_on=$3,recorded_by=$4 WHERE tenant_id=$1 AND id=$2",[tenantId,payoutId,swissToday(),actor]);
+  await audit(client,tenantId,actor,"billing.payout_offset",payoutId);
 }
 
 export async function discardPayout(client: DatabaseClient, tenantId: string, actor: string, payoutId: string, reason: string) {
@@ -146,7 +168,9 @@ export async function discardPayout(client: DatabaseClient, tenantId: string, ac
   if (!payout.rows[0]) return;
   if (payout.rows[0].status !== "prepared") throw new BillingError("billing_payout_locked");
   const items = await client.query("SELECT receipt_id,amount_cents FROM billing_payout_items WHERE tenant_id=$1 AND payout_id=$2",[tenantId,payoutId]);
-  await audit(client,tenantId,actor,"billing.payout_preparation_discarded",payoutId,{...payout.rows[0],items:items.rows,reason});
+  const postalItems = await client.query("SELECT cost_id,amount_cents FROM billing_payout_postal_items WHERE tenant_id=$1 AND payout_id=$2",[tenantId,payoutId]);
+  await audit(client,tenantId,actor,"billing.payout_preparation_discarded",payoutId,{...payout.rows[0],items:items.rows,postalItems:postalItems.rows,reason});
+  await client.query("DELETE FROM billing_payout_postal_items WHERE tenant_id=$1 AND payout_id=$2",[tenantId,payoutId]);
   await client.query("DELETE FROM billing_payout_items WHERE tenant_id=$1 AND payout_id=$2",[tenantId,payoutId]);
   await client.query("DELETE FROM billing_payouts WHERE tenant_id=$1 AND id=$2",[tenantId,payoutId]);
 }

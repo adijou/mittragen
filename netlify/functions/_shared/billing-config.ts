@@ -25,6 +25,7 @@ export function newBillingTerms(read?: Env): BillingTerms | undefined {
 export function billingReadiness(read: Env = env) {
   const config = billingConfig(read);
   const creditor = readQrCreditor(read);
+  const pingenConfigured=Boolean(read("PINGEN_CLIENT_ID")&&read("PINGEN_CLIENT_SECRET")&&read("PINGEN_ORGANISATION_ID"));
   return {
     enabled: config.enabled,
     feeBasisPoints: PLATFORM_FEE_BASIS_POINTS,
@@ -32,13 +33,17 @@ export function billingReadiness(read: Env = env) {
     interestBasisPoints: 0,
     operatorConfigured: Boolean(config.operator),
     // A login email is not API access. Never expose secrets to the browser.
-    pingenConfigured: Boolean(read("PINGEN_CLIENT_ID") && read("PINGEN_CLIENT_SECRET") && read("PINGEN_ORGANISATION_ID")),
+    pingenConfigured,
     pingenEnvironment: read("PINGEN_ENVIRONMENT") === "production" ? "production" : "staging",
     invoiceIssuingEnabled: Boolean(creditor),
     qrAccountConfigured: Boolean(creditor),
-    postalSendingEnabled: false,
+    postalSendingEnabled:pingenConfigured&&read("PINGEN_POSTAL_ENABLED")==="true",
+    postageCostBearer:"club" as const,
+    postageBilling:"deduct_from_monthly_payout" as const,
+    pingenWebhookConfigured:Boolean(read("PINGEN_WEBHOOK_SECRET")),
     blockers: [...(!creditor ? ["Gültige QR-IBAN und strukturierte Kontoinhaberadresse fehlen für die Rechnungsfreigabe."] : []),
-      "Pingen-Zugang und Testversand müssen vor dem Postversand eingerichtet und geprüft werden.",
-      "Versandkosten werden separat geführt. Kostenträger und Kostenfreigabe sind noch festzulegen."],
+      ...(!pingenConfigured?["Pingen-API-Zugang des zentralen Kontos fehlt noch."]:[]),
+      ...(read("PINGEN_POSTAL_ENABLED")!=="true"?["Pingen-Testversand und Versandfreigabe stehen noch aus."]:[]),
+      ...(!read("PINGEN_WEBHOOK_SECRET")?["Automatische Versandstatusmeldungen sind noch nicht verbunden."]:[])],
   };
 }

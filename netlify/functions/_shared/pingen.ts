@@ -1,7 +1,7 @@
 import { BillingError } from "./billing-ledger.ts";
 
 type Env = (name:string)=>string|undefined;
-/** Read-only pricing integration. No upload/create/send operation exists in this milestone. */
+/** Read-only sample pricing. Invoice upload and dispatch live in postal-dispatch.ts. */
 export async function pingenSamplePrice(read:Env=(name)=>Netlify.env.get(name), fetcher:typeof fetch=fetch) {
   const clientId=read("PINGEN_CLIENT_ID"),secret=read("PINGEN_CLIENT_SECRET"),organisationId=read("PINGEN_ORGANISATION_ID");
   if(!clientId||!secret||!organisationId)throw new BillingError("pingen_not_configured",422);
