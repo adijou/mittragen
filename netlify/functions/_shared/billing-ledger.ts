@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { DatabaseClient } from "./database.ts";
 import { splitReceipt } from "../../../shared/billing.ts";
 import { billingSources, type InvoiceParty, type InvoiceSource } from "./billing-sources.ts";
+import type { QrCreditor } from "./swiss-qr.ts";
 
 export class BillingError extends Error {
   status: number;
@@ -10,7 +11,9 @@ export class BillingError extends Error {
 export type InvoiceRow = {
   id: string; source_type: string; source_id: string; source_key: string; reference: string; description: string;
   recipient: InvoiceParty; issuer: InvoiceParty; contribution_cents: number; platform_fee_cents: number;
-  fee_basis_points: number; collection_notice: string; status: "draft" | "cancelled"; created_at: string;
+  fee_basis_points: number; collection_notice: string; status: "draft" | "issued" | "cancelled"; created_at: string;
+  invoice_number?: string | null; qr_reference?: string | null; payment_creditor?: QrCreditor | null;
+  issued_on?: string | null; issued_by?: string | null;
 };
 
 export const lockBilling = (client: DatabaseClient, tenantId: string) => client.query(
@@ -21,12 +24,23 @@ async function audit(client: DatabaseClient, tenantId: string, actor: string, ac
     VALUES ($1,$2,$3,'billing',$4,$5::jsonb)`, [tenantId, actor, action, id, JSON.stringify(metadata)]);
 }
 
-export async function draftInvoice(client: DatabaseClient, tenantId: string, actor: string, sourceKey: string) {
+export async function draftInvoice(client: DatabaseClient, tenantId: string, actor: string, sourceKey: string, refresh = false) {
   const { sources } = await billingSources(client, tenantId);
   const source = sources.find((item) => item.sourceKey === sourceKey);
   if (!source) throw new BillingError("billing_source_unavailable");
   const existing = await client.query<InvoiceRow>("SELECT * FROM billing_invoices WHERE tenant_id=$1 AND source_key=$2", [tenantId, sourceKey]);
-  if (existing.rows[0]) return existing.rows[0];
+  if (existing.rows[0]) {
+    if (!refresh) return existing.rows[0];
+    const invoice = existing.rows[0];
+    if (invoice.status !== "draft") throw new BillingError("billing_invoice_locked");
+    const paid = await client.query("SELECT id FROM billing_receipts WHERE tenant_id=$1 AND invoice_id=$2 AND reversed_at IS NULL LIMIT 1",[tenantId,invoice.id]);
+    if (paid.rows.length) throw new BillingError("billing_invoice_already_received");
+    const refreshed = await client.query<InvoiceRow>(`UPDATE billing_invoices SET source_id=$3,description=$4,recipient=$5::jsonb,issuer=$6::jsonb,
+      contribution_cents=$7,fee_basis_points=$8,platform_fee_cents=$9,collection_notice=$10 WHERE tenant_id=$1 AND id=$2 RETURNING *`,
+      [tenantId,invoice.id,source.sourceId,source.description,JSON.stringify(source.recipient),JSON.stringify(source.issuer),source.contributionCents,source.feeBasisPoints,source.platformFeeCents,source.collectionNotice]);
+    await audit(client,tenantId,actor,"billing.draft_refreshed",invoice.id,{sourceKey});
+    return refreshed.rows[0];
+  }
   if (source.periodStart && source.periodEnd) {
     const familyPrefix = source.sourceKey.split(":").slice(0,2).join(":") + ":%";
     const overlap = await client.query("SELECT id FROM billing_invoices WHERE tenant_id=$1 AND source_key LIKE $2 AND period_start <= $4::date AND period_end >= $3::date",[tenantId,familyPrefix,source.periodStart,source.periodEnd]);
@@ -45,10 +59,13 @@ export async function draftInvoice(client: DatabaseClient, tenantId: string, act
 }
 
 export function sourceMatches(invoice: InvoiceRow, sources: InvoiceSource[]) {
-  return invoice.status === "draft" && sources.some((source) => source.sourceKey === invoice.source_key
+  return invoice.status !== "cancelled" && sources.some((source) => source.sourceKey === invoice.source_key
     && source.sourceId === invoice.source_id && source.contributionCents === invoice.contribution_cents
-    && source.platformFeeCents === invoice.platform_fee_cents);
+    && source.platformFeeCents === invoice.platform_fee_cents && source.feeBasisPoints === invoice.fee_basis_points);
 }
+
+// Once issued, the frozen invoice remains payable even after the underlying agreement changes.
+const canSettle = (invoice: InvoiceRow, sources: InvoiceSource[]) => invoice.status === "issued" || sourceMatches(invoice,sources);
 
 export async function recordReceipt(client: DatabaseClient, tenantId: string, actor: string, invoiceId: string,
   input: { idempotencyKey: string; amountCents: number; receivedOn: string; bankReference: string }) {
@@ -63,7 +80,7 @@ export async function recordReceipt(client: DatabaseClient, tenantId: string, ac
   if (duplicate.rows.length) throw new BillingError("billing_bank_reference_used");
   const rows = await client.query<InvoiceRow>("SELECT * FROM billing_invoices WHERE tenant_id=$1 AND id=$2 FOR UPDATE", [tenantId, invoiceId]);
   const invoice = rows.rows[0];
-  if (!invoice || !sourceMatches(invoice, (await billingSources(client, tenantId)).sources)) throw new BillingError("billing_source_unavailable");
+  if (!invoice || !canSettle(invoice, (await billingSources(client, tenantId)).sources)) throw new BillingError("billing_source_unavailable");
   const sum = await client.query<{ paid: string }>("SELECT COALESCE(sum(amount_cents),0)::text paid FROM billing_receipts WHERE tenant_id=$1 AND invoice_id=$2 AND reversed_at IS NULL", [tenantId,invoiceId]);
   let allocation;
   try { allocation = splitReceipt(invoice.contribution_cents, invoice.platform_fee_cents, Number(sum.rows[0].paid), input.amountCents); }
@@ -91,7 +108,7 @@ export async function preparePayout(client: DatabaseClient, tenantId: string, ac
   if (existing.rows[0]) return existing.rows[0].id;
   const { sources } = await billingSources(client,tenantId);
   const invoices = await client.query<InvoiceRow>("SELECT * FROM billing_invoices WHERE tenant_id=$1",[tenantId]);
-  const allowedIds = invoices.rows.filter((row) => sourceMatches(row,sources)).map((row) => row.id);
+  const allowedIds = invoices.rows.filter((row) => canSettle(row,sources)).map((row) => row.id);
   const receipts = await client.query<{ id: string; club_cents: number }>(`SELECT receipt.id,receipt.club_cents FROM billing_receipts receipt
     WHERE receipt.tenant_id=$1 AND receipt.reversed_at IS NULL AND receipt.club_cents>0
       AND receipt.received_on < ($2::date + interval '1 month') AND receipt.invoice_id=ANY($3::uuid[])
@@ -119,7 +136,7 @@ export async function recordPayout(client: DatabaseClient, tenantId: string, act
     JOIN billing_payout_items item ON item.receipt_id=receipt.id AND item.tenant_id=receipt.tenant_id
     WHERE item.tenant_id=$1 AND item.payout_id=$2`,[tenantId,payoutId]);
   const { sources } = await billingSources(client,tenantId);
-  if (invoices.rows.some((row) => !sourceMatches(row,sources))) throw new BillingError("billing_source_unavailable");
+  if (invoices.rows.some((row) => !canSettle(row,sources))) throw new BillingError("billing_source_unavailable");
   await client.query("UPDATE billing_payouts SET status='paid',paid_on=$3,bank_reference=$4,recorded_by=$5 WHERE tenant_id=$1 AND id=$2",[tenantId,payoutId,paidOn,bankReference,actor]);
   await audit(client,tenantId,actor,"billing.payout_recorded",payoutId,{ paidOn, bankReference });
 }

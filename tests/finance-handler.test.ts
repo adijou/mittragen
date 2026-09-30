@@ -75,6 +75,7 @@ test("finance routes enforce real PostgreSQL isolation, money allocation and ret
     const partial={idempotencyKey:randomUUID(),amountCents:51250,receivedOn:"2026-08-31",bankReference:"BANK-IN-001",bankEvidenceConfirmed:true};
     await t.test("partial receipt is split, replay is harmless, conflicting replay and overpayment rejected",async()=>{
       receiptId=(await call(tenantA,`/invoices/${invoiceId}/receipts`,partial,201)).id;
+      assert.equal((await call(tenantA,`/invoices/${invoiceId}/issue`,{detailsConfirmed:true},409)).error,"billing_invoice_already_received");
       assert.equal((await call(tenantA,`/invoices/${invoiceId}/receipts`,partial,201)).id,receiptId);
       await call(tenantA,`/invoices/${invoiceId}/receipts`,{...partial,amountCents:5},409);
       await call(tenantA,`/invoices/${invoiceId}/receipts`,{...partial,idempotencyKey:randomUUID(),bankReference:"OVER",amountCents:51251},409);
@@ -142,6 +143,51 @@ test("finance routes enforce real PostgreSQL isolation, money allocation and ret
       await db.query("UPDATE sponsorship_contracts SET status='void',voided_at=now(),voided_by='fixture',void_reason='Korrektur' WHERE id=$1",[root]);
       await insert(revision,root,"MT-2026-TEST2",{...snapshot,paymentPlan:"annual",validFrom:"2026-08-01",validUntil:"2027-07-31"});
       const rejected=await call(tenantA,"/invoices",{sourceKey:`contract:${root}:2026-08-01`},409);assert.equal(rejected.error,"billing_period_overlap");
+    });
+    await t.test("QR issuance is tenant-scoped, atomic, immutable and repeat-safe",async()=>{
+      // SIX public example account: no actual customer account data in fixtures.
+      const creditor={iban:"CH4431999123000889012",name:"Test Inkasso",street:"",houseNumber:"",postalCode:"8000",city:"Zürich",country:"CH"};
+      const env:Record<string,string>={BILLING_OPERATOR_USER_IDS:"operator"};
+      Object.assign(globalThis,{Netlify:{env:{get:(name:string)=>env[name]}}});
+      const draft=(await call(tenantA,"/invoices",{sourceKey:`event:${legacy}`},201)).invoice;
+      await call(tenantA,`/invoices/${draft.id}/issue`,{detailsConfirmed:true},422);
+      env.BILLING_QR_CREDITOR=JSON.stringify(creditor);
+      await call(tenantB,`/invoices/${draft.id}/issue`,{detailsConfirmed:true},404);
+      await call(tenantA,`/invoices/${draft.id}/issue`,{},422);
+      user="reader";setTestUser({id:user});await call(tenantA,`/invoices/${draft.id}/issue`,{detailsConfirmed:true},403);
+      user="club-owner";setTestUser({id:user});
+      await db.query("UPDATE event_sponsorship_bookings SET city='Bern',postal_code='3000' WHERE id=$1",[legacy]);
+      assert.equal((await call(tenantA,`/invoices/${draft.id}/issue`,{detailsConfirmed:true},409)).error,"billing_draft_outdated");
+      await call(tenantA,"/invoices",{sourceKey:`event:${legacy}`,refresh:true},201);
+      await db.query("UPDATE event_sponsorship_bookings SET city=repeat('i',36) WHERE id=$1",[legacy]);
+      await call(tenantA,"/invoices",{sourceKey:`event:${legacy}`,refresh:true},201);
+      await call(tenantA,`/invoices/${draft.id}/issue`,{detailsConfirmed:true},422);
+      assert.equal((await db.query("SELECT invoice_id FROM billing_invoice_documents WHERE invoice_id=$1",[draft.id])).rows.length,0);
+      assert.equal((await call(tenantA)).invoices.find((row:{id:string})=>row.id===draft.id).status,"draft");
+      await db.query("UPDATE event_sponsorship_bookings SET city='Bern' WHERE id=$1",[legacy]);
+      await call(tenantA,"/invoices",{sourceKey:`event:${legacy}`,refresh:true},201);
+      const issued=(await call(tenantA,`/invoices/${draft.id}/issue`,{detailsConfirmed:true,amountCents:1})).invoice;
+      assert.equal(issued.status,"issued");assert.equal(issued.platform_fee_cents,0);assert.match(issued.invoice_number,/^RE-\d{4}-\d{8}$/);
+      assert.match(issued.qr_reference,/^\d{27}$/);assert.equal(issued.payment_creditor.name,creditor.name);
+      assert.equal((await call(tenantA,`/invoices/${draft.id}/issue`,{detailsConfirmed:true})).invoice.invoice_number,issued.invoice_number);
+      await call(tenantA,"/invoices",{sourceKey:`event:${legacy}`,refresh:true},409);
+      const pdf=async()=>new Uint8Array(await (await handler(request(tenantA,`/invoices/${draft.id}/pdf`),{requestId:"qr-pdf"} as never)).arrayBuffer());
+      const bytes=await pdf();assert.equal((await PDFDocument.load(bytes)).getPageCount(),2);
+      if(process.env.BILLING_QR_PDF_FIXTURE)await writeFile(process.env.BILLING_QR_PDF_FIXTURE,bytes);
+      env.BILLING_QR_CREDITOR="invalid";
+      await db.query("UPDATE event_sponsorship_bookings SET status='cancelled' WHERE id=$1",[legacy]);
+      assert.deepEqual(await pdf(),bytes);
+      assert.equal((await call(tenantA,`/invoices/${draft.id}/issue`,{detailsConfirmed:true})).invoice.invoice_number,issued.invoice_number);
+      assert.equal((await session("operator",tenantB,client=>client.query("SELECT invoice_id FROM billing_invoice_documents WHERE invoice_id=$1",[draft.id]))).rows.length,0);
+      await assert.rejects(db.query("UPDATE billing_invoices SET description='changed' WHERE id=$1",[draft.id]),/immutable/);
+      await assert.rejects(db.query("DELETE FROM billing_invoice_documents WHERE invoice_id=$1",[draft.id]),/immutable/);
+      user="operator";setTestUser({id:user});env.BILLING_QR_CREDITOR=JSON.stringify(creditor);
+      await call(tenantA,`/invoices/${draft.id}/receipts`,{...partial,idempotencyKey:randomUUID(),bankReference:"ISSUED-IN",amountCents:100000},201);
+      // A different tenant receives another global reference, with the disclosed 2.5% fee intact.
+      const other=(await call(tenantB,`/invoices/${invoiceB}/issue`,{detailsConfirmed:true})).invoice;
+      assert.notEqual(other.qr_reference,issued.qr_reference);assert.equal(other.platform_fee_cents,2500);
+      if(process.env.BILLING_QR_FEE_PDF_FIXTURE){const response=await handler(request(tenantB,`/invoices/${invoiceB}/pdf`),{requestId:"qr-fee-pdf"} as never);await writeFile(process.env.BILLING_QR_FEE_PDF_FIXTURE,new Uint8Array(await response.arrayBuffer()));}
+      const audit=await db.query("SELECT id FROM audit_events WHERE object_id=$1 AND action='billing.invoice_issued'",[draft.id]);assert.equal(audit.rows.length,1);
     });
     await t.test("only a disclosed public price can be booked and retries cannot create duplicate fees",async()=>{
       const key="a".repeat(36);

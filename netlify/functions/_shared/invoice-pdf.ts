@@ -1,13 +1,18 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import fontkit from "@pdf-lib/fontkit";
-import { PDFDocument, rgb } from "pdf-lib";
+import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
+import PDFKit from "pdfkit";
+import { SwissQRBill } from "swissqrbill/pdf";
 import type { InvoiceRow } from "./billing-ledger.ts";
 import type { OrganizationPdfBrand } from "./organization-pdf-brand.ts";
 import { formatBillingChf } from "../../../shared/billing.ts";
+import { invoiceQrData } from "./swiss-qr.ts";
 
-/** Deliberately non-payable: no account, QR code, due date or issued invoice number. */
-export async function createInvoiceDraftPdf(invoice: InvoiceRow, brand: OrganizationPdfBrand) {
+/** Drafts remain non-payable. Issued copies include a separate A4 QR sheet for simplex postal printing. */
+export async function createInvoicePdf(invoice: InvoiceRow, brand: OrganizationPdfBrand) {
+  const issued = invoice.status === "issued";
+  const documentNumber = issued ? invoice.invoice_number! : invoice.reference;
   const pdf = await PDFDocument.create();
   pdf.registerFontkit(fontkit);
   const regular = await pdf.embedFont(await readFile(resolve("assets/fonts/DejaVuSans-Latin.ttf")), { subset: true });
@@ -18,9 +23,10 @@ export async function createInvoiceDraftPdf(invoice: InvoiceRow, brand: Organiza
   let y = mm(194);
   function draw(text: string, x: number, top: number, size = 10, strong = false) {
     const font = strong ? bold : regular;
-    // The embedded Latin font cannot represent every script. Replace unsupported glyphs explicitly.
+    // Never silently change a name or payment instruction in a financial document.
     const supported = new Set(font.getCharacterSet());
-    const clean = [...text.replace(/[\u2010-\u2015]/g,"-").replace(/\s/g," ")].map((char) => supported.has(char.codePointAt(0)!) ? char : "?").join("");
+    const clean = text.replace(/[\u2010-\u2015]/g,"-").replace(/\s/g," ");
+    if ([...clean].some(char => !supported.has(char.codePointAt(0)!))) throw new Error("billing_pdf_character_unsupported");
     page.drawText(clean,{ x, y: top, size, font, color: strong ? dark : muted });
   }
   function paragraph(text: string, size = 10, strong = false) {
@@ -41,11 +47,11 @@ export async function createInvoiceDraftPdf(invoice: InvoiceRow, brand: Organiza
     if (line) flush();
     y-=8;
   }
-  pdf.setTitle(`Rechnungsentwurf ${invoice.reference}`);
+  pdf.setTitle(`${issued ? "Rechnung" : "Rechnungsentwurf"} ${documentNumber}`);
   pdf.setAuthor(invoice.issuer.name);
-  pdf.setSubject("Entwurf - keine Zahlungsaufforderung");
-  draw("RECHNUNGSENTWURF",mm(18),mm(278),15,true);
-  draw("Keine Zahlungsaufforderung",mm(18),mm(270),10);
+  pdf.setSubject(issued ? "Rechnung mit Schweizer QR-Zahlteil" : "Entwurf - keine Zahlungsaufforderung");
+  draw(issued ? "RECHNUNG" : "RECHNUNGSENTWURF",mm(18),mm(278),15,true);
+  draw(issued ? `Rechnungsdatum: ${invoice.issued_on!.slice(0,10).split("-").reverse().join(".")}` : "Keine Zahlungsaufforderung",mm(18),mm(270),10);
   if (brand.logo) {
     const logo = brand.logo.contentType === "image/png" ? await pdf.embedPng(brand.logo.bytes) : await pdf.embedJpg(brand.logo.bytes);
     const scale = Math.min(mm(37)/logo.width,mm(18)/logo.height);
@@ -62,7 +68,7 @@ export async function createInvoiceDraftPdf(invoice: InvoiceRow, brand: Organiza
     while (regular.widthOfTextAtSize(line,fontSize)>mm(90) && fontSize>7) fontSize-=0.5;
     draw(line,mm(18),mm(248)-index*14,fontSize,index===0);
   });
-  paragraph(invoice.reference,11,true);
+  paragraph(documentNumber,11,true);
   paragraph(invoice.description,12,true);
   y-=10;
   const line = (label: string,amount: number,strong=false) => {
@@ -76,13 +82,41 @@ export async function createInvoiceDraftPdf(invoice: InvoiceRow, brand: Organiza
   line("Gesamtbetrag CHF",invoice.contribution_cents+invoice.platform_fee_cents,true);
   y-=10;
   paragraph(invoice.collection_notice || "Die Zahlungskonditionen und die vereinbarte Abrechnung des bestehenden Sponsorings bleiben unverändert.");
-  paragraph("Versandkosten sind nicht enthalten. Es wurde kein kostenpflichtiger Versand ausgelöst.");
-  paragraph("Dieser Entwurf ist zur Prüfung bestimmt. Die zahlbare QR-Rechnung wird nach Einrichtung der vollständigen Zahlungsangaben erstellt. Bitte auf Grundlage dieses Dokuments keine Zahlung auslösen.",10,true);
-  paragraph("Steuerangaben und allfällige Mehrwertsteuer werden vor der Rechnungsfreigabe geprüft.",9);
+  paragraph(issued ? "Es werden keine Versandkosten verrechnet." : "Versandkosten sind nicht enthalten. Es wurde kein kostenpflichtiger Versand ausgelöst.");
+  if (issued) {
+    paragraph("Bitte verwenden Sie für die Zahlung den beiliegenden QR-Zahlteil mit der angegebenen Referenz. Es gelten die vereinbarten Zahlungskonditionen.",10,true);
+    if (!invoice.payment_creditor || !invoice.qr_reference || !invoice.invoice_number) throw new Error("billing_qr_data_invalid");
+    const data = invoiceQrData({creditor:invoice.payment_creditor,recipient:invoice.recipient,
+      amountCents:invoice.contribution_cents+invoice.platform_fee_cents,qrReference:invoice.qr_reference,invoiceNumber:invoice.invoice_number});
+    // PDFKit's standard Helvetica must represent every QR field exactly (no missing glyphs).
+    const helvetica = await pdf.embedFont(StandardFonts.Helvetica);
+    try { for (const party of [data.creditor,data.debtor!]) for (const value of Object.values(party)) helvetica.encodeText(String(value)); }
+    catch { throw new Error("billing_pdf_character_unsupported"); }
+    const qr = new SwissQRBill(data,{language:"DE",scissors:true,outlines:true});
+    const qrDocument = new PDFKit({size:"A4",margin:0});
+    const chunks: Buffer[] = [];
+    const qrBytes = new Promise<Buffer>((resolve,reject) => {
+      qrDocument.on("data",(chunk:Buffer)=>chunks.push(chunk));
+      qrDocument.on("end",()=>resolve(Buffer.concat(chunks))); qrDocument.on("error",reject);
+    });
+    qr.attachTo(qrDocument); qrDocument.end();
+    const [paymentPage] = await pdf.embedPdf(await qrBytes);
+    page = pdf.addPage([mm(210),mm(297)]);
+    page.drawPage(paymentPage,{x:0,y:0,width:mm(210),height:mm(297)});
+    draw(`Zahlteil zur Rechnung ${documentNumber}`,mm(18),mm(278),14,true);
+    draw("Bitte diesen Rechnungsbetrag nur einmal bezahlen.",mm(18),mm(265),10);
+  } else {
+    paragraph("Dieser Entwurf ist zur Prüfung bestimmt. Bitte auf Grundlage dieses Dokuments keine Zahlung auslösen. Die zahlbare QR-Rechnung entsteht erst bei der Freigabe.",10,true);
+    paragraph("Steuerangaben und allfällige Mehrwertsteuer werden vor der Rechnungsfreigabe geprüft.",9);
+  }
   const pages=pdf.getPages();
   pages.forEach((sheet,index) => {
-    page=sheet; draw("mittragen.ch · Rechnungsentwurf",mm(18),mm(16),8);
-    draw(`${index+1} / ${pages.length}`,mm(181),mm(16),8);
+    // Never put a footer inside the reserved 210 x 105 mm QR payment area.
+    const footerY = issued && index === pages.length-1 ? mm(120) : mm(16);
+    page=sheet; draw(`mittragen.ch · ${issued ? documentNumber : "Rechnungsentwurf"}`,mm(18),footerY,8);
+    draw(`${index+1} / ${pages.length}`,mm(181),footerY,8);
   });
   return pdf.save();
 }
+
+export const createInvoiceDraftPdf = createInvoicePdf;

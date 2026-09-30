@@ -9,6 +9,7 @@ import { closedMonth, isDate, swissToday } from "../../shared/billing.ts";
 import { createInvoiceDraftPdf } from "./_shared/invoice-pdf.ts";
 import { loadOrganizationPdfBrand } from "./_shared/organization-pdf-brand.ts";
 import { pingenSamplePrice } from "./_shared/pingen.ts";
+import { issueInvoice } from "./_shared/invoice-issuing.ts";
 
 function operator(userId: string) {
   return (Netlify.env.get("BILLING_OPERATOR_USER_IDS") ?? "").split(",").map((id) => id.trim()).filter(Boolean).includes(userId);
@@ -17,11 +18,11 @@ const bankReference = (value: unknown): value is string => typeof value === "str
 const dateInPast = (value: unknown): value is string => isDate(value) && value >= "2020-01-01" && value <= swissToday();
 
 export default async (request: Request, context: Context) => {
-  const match = new URL(request.url).pathname.match(/^\/api\/finance\/([0-9a-f-]+)(?:\/(invoices|receipts|payouts|pingen-price)(?:\/([0-9a-f-]+)(?:\/(pdf|receipts|reverse|paid|discard))?)?)?$/i);
+  const match = new URL(request.url).pathname.match(/^\/api\/finance\/([0-9a-f-]+)(?:\/(invoices|receipts|payouts|pingen-price)(?:\/([0-9a-f-]+)(?:\/(pdf|issue|receipts|reverse|paid|discard))?)?)?$/i);
   if (!match || !isUuid(match[1]) || (match[3] && !isUuid(match[3]))) return json({ error: "not_found" },404);
   const [,tenantId,resource,id,action] = match;
   const read = request.method === "GET" && ((!resource && !id) || (resource === "invoices" && id && action === "pdf"));
-  const write = request.method === "POST" && ((resource === "invoices" && ((!id && !action) || (id && action === "receipts")))
+  const write = request.method === "POST" && ((resource === "invoices" && ((!id && !action) || (id && (action === "receipts" || action === "issue"))))
     || (resource === "receipts" && id && action === "reverse") || (resource === "pingen-price" && !id) || (resource === "payouts" && ((!id && !action) || (id && (action === "paid" || action === "discard")))));
   if (!read && !write) return json({ error: "method_not_allowed" },405);
   const user = await requireUser(request);
@@ -36,8 +37,8 @@ export default async (request: Request, context: Context) => {
       if (!role || !hasPermission(role,write ? "finance:write" : "finance:read")) throw new BillingError("permission_denied",403);
       const canRecordBankMovements = operator(user.id) && hasPermission(role,"finance:write");
       if (write) {
-        // Clubs can prepare documents; only the central collection operator can attest movements on its bank account.
-        if ((action || resource === "payouts" || resource === "pingen-price") && !canRecordBankMovements) throw new BillingError("billing_operator_required",403);
+        // Finance writers can issue their club's invoices; only the collection operator attests bank movements.
+        if ((action && action !== "issue" || resource === "payouts" || resource === "pingen-price") && !canRecordBankMovements) throw new BillingError("billing_operator_required",403);
         await lockBilling(client,tenantId);
       }
       if (resource === "pingen-price") return { pingenPrice: true as const };
@@ -56,12 +57,21 @@ export default async (request: Request, context: Context) => {
       if (read && id) {
         const invoice = await client.query<InvoiceRow>("SELECT * FROM billing_invoices WHERE tenant_id=$1 AND id=$2",[tenantId,id]);
         if (!invoice.rows[0]) throw new BillingError("not_found",404);
+        if (invoice.rows[0].status === "issued") {
+          const document = await client.query<{pdf_bytes:Buffer}>("SELECT pdf_bytes FROM billing_invoice_documents WHERE tenant_id=$1 AND invoice_id=$2",[tenantId,id]);
+          if (!document.rows[0]) throw new BillingError("billing_document_missing",409);
+          return {bytes:document.rows[0].pdf_bytes,filename:invoice.rows[0].invoice_number!};
+        }
         if (!sourceMatches(invoice.rows[0],(await billingSources(client,tenantId)).sources)) throw new BillingError("billing_source_unavailable");
         return { invoice:invoice.rows[0],brand:await loadOrganizationPdfBrand(client,tenantId,context.requestId) };
       }
       if (resource === "invoices" && !id) {
         if (typeof body.sourceKey !== "string" || body.sourceKey.length > 200) throw new BillingError("invalid_billing_input",422);
-        return json({ invoice:await draftInvoice(client,tenantId,user.id,body.sourceKey) },201);
+        return json({ invoice:await draftInvoice(client,tenantId,user.id,body.sourceKey,body.refresh === true) },201);
+      }
+      if (resource === "invoices" && action === "issue" && id) {
+        if (body.detailsConfirmed !== true) throw new BillingError("invalid_billing_input",422);
+        return json({invoice:await issueInvoice(client,tenantId,user.id,id,context.requestId)});
       }
       if (resource === "invoices" && action === "receipts" && id) {
         if (!isUuid(body.idempotencyKey) || !Number.isSafeInteger(body.amountCents) || body.amountCents <= 0 || !dateInPast(body.receivedOn)
@@ -88,11 +98,12 @@ export default async (request: Request, context: Context) => {
     },user.email ?? undefined);
     if (result instanceof Response) return result;
     if ("pingenPrice" in result) return json({ quote:await pingenSamplePrice() });
-    const bytes = await createInvoiceDraftPdf(result.invoice,result.brand);
-    return new Response(bytes as BodyInit,{ headers:{"Content-Type":"application/pdf","Content-Disposition":`inline; filename="${result.invoice.reference}.pdf"`,"Cache-Control":"no-store","X-Content-Type-Options":"nosniff"} });
+    const bytes = "bytes" in result ? result.bytes : await createInvoiceDraftPdf(result.invoice,result.brand);
+    const filename = "filename" in result ? result.filename : result.invoice.reference;
+    return new Response(bytes as BodyInit,{ headers:{"Content-Type":"application/pdf","Content-Disposition":`inline; filename="${filename}.pdf"`,"Cache-Control":"no-store","X-Content-Type-Options":"nosniff"} });
   } catch (error) {
     if (error instanceof BillingError) return json({ error:error.message },error.status);
-    if (error instanceof Error && error.message === "billing_address_too_long") return json({error:error.message},422);
+    if (error instanceof Error && ["billing_address_too_long","billing_pdf_character_unsupported","billing_qr_address_invalid","billing_qr_data_invalid"].includes(error.message)) return json({error:error.message},422);
     if ((error as {code?:string}).code === "23505") return json({error:"billing_duplicate_entry"},409);
     console.error("finance_request_failed",{ requestId:context.requestId,tenantId,error });
     return json({error:"finance_request_failed",requestId:context.requestId},500);
@@ -100,4 +111,4 @@ export default async (request: Request, context: Context) => {
 };
 
 export const config: Config = { path:["/api/finance/:tenantId","/api/finance/:tenantId/invoices","/api/finance/:tenantId/invoices/:id/pdf",
-  "/api/finance/:tenantId/invoices/:id/receipts","/api/finance/:tenantId/receipts/:id/reverse","/api/finance/:tenantId/payouts","/api/finance/:tenantId/payouts/:id/paid","/api/finance/:tenantId/pingen-price","/api/finance/:tenantId/payouts/:id/discard"] };
+  "/api/finance/:tenantId/invoices/:id/issue","/api/finance/:tenantId/invoices/:id/receipts","/api/finance/:tenantId/receipts/:id/reverse","/api/finance/:tenantId/payouts","/api/finance/:tenantId/payouts/:id/paid","/api/finance/:tenantId/pingen-price","/api/finance/:tenantId/payouts/:id/discard"] };

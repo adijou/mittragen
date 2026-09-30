@@ -1,4 +1,5 @@
 import { PLATFORM_FEE_BASIS_POINTS, type BillingTerms } from "../../../shared/billing.ts";
+import { readQrCreditor } from "./swiss-qr.ts";
 
 type Env = (name: string) => string | undefined;
 const env: Env = (name) => Netlify.env.get(name);
@@ -23,6 +24,7 @@ export function newBillingTerms(read?: Env): BillingTerms | undefined {
 
 export function billingReadiness(read: Env = env) {
   const config = billingConfig(read);
+  const creditor = readQrCreditor(read);
   return {
     enabled: config.enabled,
     feeBasisPoints: PLATFORM_FEE_BASIS_POINTS,
@@ -32,10 +34,11 @@ export function billingReadiness(read: Env = env) {
     // A login email is not API access. Never expose secrets to the browser.
     pingenConfigured: Boolean(read("PINGEN_CLIENT_ID") && read("PINGEN_CLIENT_SECRET") && read("PINGEN_ORGANISATION_ID")),
     pingenEnvironment: read("PINGEN_ENVIRONMENT") === "production" ? "production" : "staging",
-    invoiceIssuingEnabled: false,
+    invoiceIssuingEnabled: Boolean(creditor),
+    qrAccountConfigured: Boolean(creditor),
     postalSendingEnabled: false,
-    blockers: ["QR-IBAN und vollständige Kontoinhaberadresse fehlen noch für die Freigabe der Zahlungsrechnungen.",
-      "QR-Rechnung und Pingen-Testversand müssen vor dem Echtversand freigegeben werden.",
+    blockers: [...(!creditor ? ["Gültige QR-IBAN und strukturierte Kontoinhaberadresse fehlen für die Rechnungsfreigabe."] : []),
+      "Pingen-Zugang und Testversand müssen vor dem Postversand eingerichtet und geprüft werden.",
       "Versandkosten werden separat geführt. Kostenträger und Kostenfreigabe sind noch festzulegen."],
   };
 }
