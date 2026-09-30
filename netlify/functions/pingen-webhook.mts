@@ -8,7 +8,15 @@ export default async(request:Request)=>{
   if(request.method!=="POST")return new Response(null,{status:405});
   if(Number(request.headers.get('content-length')??0)>65536)return new Response(null,{status:413});
   const raw=await request.text();if(Buffer.byteLength(raw)>65536)return new Response(null,{status:413});
-  if(!validPingenSignature(raw,request.headers.get('signature'),Netlify.env.get('PINGEN_WEBHOOK_SECRET')))return new Response(null,{status:401});
+  const signature=request.headers.get('signature'),secret=Netlify.env.get('PINGEN_WEBHOOK_SECRET');
+  if(!validPingenSignature(raw,signature,secret)){
+    // Diagnose delivery configuration without recording credentials, signatures or payloads.
+    console.warn('pingen_webhook_signature_rejected',{
+      secretConfigured:Boolean(secret),signaturePresent:Boolean(signature),
+      signatureFormatValid:Boolean(signature&&/^[a-f0-9]{64}$/.test(signature)),
+    });
+    return new Response(null,{status:401});
+  }
   let decoded:unknown;try{decoded=JSON.parse(raw);}catch{return new Response(null,{status:400});}
   if(!decoded||typeof decoded!=='object')return new Response(null,{status:400});
   const payload=decoded as {data?:{id?:string;type?:string;relationships?:Record<string,{data?:{id?:string;type?:string}}>}};
