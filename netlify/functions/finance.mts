@@ -4,7 +4,7 @@ import { hasPermission, isResponse, json, requireUser, type MembershipRole } fro
 import { isUuid, withSession } from "./_shared/database.ts";
 import { billingReadiness } from "./_shared/billing-config.ts";
 import { billingSources } from "./_shared/billing-sources.ts";
-import { BillingError, discardPayout, draftInvoice, lockBilling, preparePayout, recordPayout, recordReceipt, reverseReceipt, settlePayout, sourceMatches, type InvoiceRow } from "./_shared/billing-ledger.ts";
+import { BillingError, discardPayout, draftInvoice, invoiceRefreshSources, refreshInvoice, lockBilling, preparePayout, recordPayout, recordReceipt, reverseReceipt, settlePayout, sourceMatches, type InvoiceRow } from "./_shared/billing-ledger.ts";
 import { closedMonth, isDate, swissToday } from "../../shared/billing.ts";
 import { createInvoiceDraftPdf } from "./_shared/invoice-pdf.ts";
 import { loadOrganizationPdfBrand } from "./_shared/organization-pdf-brand.ts";
@@ -19,11 +19,11 @@ const bankReference = (value: unknown): value is string => typeof value === "str
 const dateInPast = (value: unknown): value is string => isDate(value) && value >= "2020-01-01" && value <= swissToday();
 
 export default async (request: Request, context: Context) => {
-  const match = new URL(request.url).pathname.match(/^\/api\/finance\/([0-9a-f-]+)(?:\/(invoices|receipts|payouts|fee-settlements|pingen-price)(?:\/([0-9a-f-]+)(?:\/(pdf|issue|receipts|assume-fee|reverse|paid|discard|settle))?)?)?$/i);
+  const match = new URL(request.url).pathname.match(/^\/api\/finance\/([0-9a-f-]+)(?:\/(invoices|receipts|payouts|fee-settlements|pingen-price)(?:\/([0-9a-f-]+)(?:\/(pdf|issue|refresh|receipts|assume-fee|reverse|paid|discard|settle))?)?)?$/i);
   if (!match || !isUuid(match[1]) || (match[3] && !isUuid(match[3]))) return json({ error: "not_found" },404);
   const [,tenantId,resource,id,action] = match;
   const read = request.method === "GET" && ((!resource && !id) || (resource === "invoices" && id && action === "pdf"));
-  const write = request.method === "POST" && ((resource === "invoices" && ((!id && !action) || (id && (action === "receipts" || action === "issue" || action === "assume-fee"))))
+  const write = request.method === "POST" && ((resource === "invoices" && ((!id && !action) || (id && (action === "receipts" || action === "issue" || action === "refresh" || action === "assume-fee"))))
     || ((resource === "receipts" || resource === "fee-settlements") && id && action === "reverse") || (resource === "pingen-price" && !id) || (resource === "payouts" && ((!id && !action) || (id && (action === "paid" || action === "discard" || action === "settle")))));
   if (!read && !write) return json({ error: "method_not_allowed" },405);
   const user = await requireUser(request);
@@ -39,7 +39,7 @@ export default async (request: Request, context: Context) => {
       const canRecordBankMovements = operator(user.id) && hasPermission(role,"finance:write");
       if (write) {
         // Finance writers can issue their club's invoices; only the collection operator attests bank movements.
-        if ((action && action !== "issue" || resource === "payouts" || resource === "pingen-price") && !canRecordBankMovements) throw new BillingError("billing_operator_required",403);
+        if ((action && action !== "issue" && action !== "refresh" || resource === "payouts" || resource === "pingen-price") && !canRecordBankMovements) throw new BillingError("billing_operator_required",403);
         await lockBilling(client,tenantId);
       }
       if (resource === "pingen-price") return { pingenPrice: true as const };
@@ -60,7 +60,7 @@ export default async (request: Request, context: Context) => {
         const feeItems=await client.query("SELECT * FROM billing_payout_fee_items WHERE tenant_id=$1",[tenantId]);
         return json({ feeSettlements:feeSettlements.rows,feeItems:feeItems.rows,dispatches:dispatches.rows,postalCosts:postalCosts.rows,postalItems:postalItems.rows,readiness:billingReadiness(), canWrite:hasPermission(role,"finance:write"),canRecordBankMovements,
           sources:sources.filter((source) => source.canCreateDraft && !invoices.rows.some((row) => row.source_key === source.sourceKey)),unresolved,
-          invoices:invoices.rows.map((row) => ({...row,sourceAvailable:sourceMatches(row,sources),fee_waived_cents:feeSettlements.rows.filter((fee)=>fee.invoice_id===row.id&&!fee.reversed_at).reduce((sum,fee)=>sum+fee.waived_cents,0)})),receipts:receipts.rows,payouts:payouts.rows });
+          invoices:invoices.rows.map((row) => ({...row,sourceAvailable:sourceMatches(row,sources),refreshSources:row.status==="draft"?invoiceRefreshSources(row,sources):[],fee_waived_cents:feeSettlements.rows.filter((fee)=>fee.invoice_id===row.id&&!fee.reversed_at).reduce((sum,fee)=>sum+fee.waived_cents,0)})),receipts:receipts.rows,payouts:payouts.rows });
       }
       if (read && id) {
         const invoice = await client.query<InvoiceRow>("SELECT * FROM billing_invoices WHERE tenant_id=$1 AND id=$2",[tenantId,id]);
@@ -76,6 +76,10 @@ export default async (request: Request, context: Context) => {
       if (resource === "invoices" && !id) {
         if (typeof body.sourceKey !== "string" || body.sourceKey.length > 200) throw new BillingError("invalid_billing_input",422);
         return json({ invoice:await draftInvoice(client,tenantId,user.id,body.sourceKey,body.refresh === true) },201);
+      }
+      if (resource === "invoices" && action === "refresh" && id) {
+        if (body.sourceKey !== undefined && (typeof body.sourceKey !== "string" || body.sourceKey.length > 200)) throw new BillingError("invalid_billing_input",422);
+        return json({invoice:await refreshInvoice(client,tenantId,user.id,id,body.sourceKey)});
       }
       if (resource === "invoices" && action === "issue" && id) {
         if (body.detailsConfirmed !== true) throw new BillingError("invalid_billing_input",422);
@@ -131,6 +135,6 @@ export default async (request: Request, context: Context) => {
 };
 
 export const config: Config = { path:["/api/finance/:tenantId","/api/finance/:tenantId/invoices","/api/finance/:tenantId/invoices/:id/pdf",
-  "/api/finance/:tenantId/invoices/:id/issue","/api/finance/:tenantId/invoices/:id/receipts",
+  "/api/finance/:tenantId/invoices/:id/issue","/api/finance/:tenantId/invoices/:id/refresh","/api/finance/:tenantId/invoices/:id/receipts",
     "/api/finance/:tenantId/invoices/:id/assume-fee",
     "/api/finance/:tenantId/fee-settlements/:id/reverse","/api/finance/:tenantId/receipts/:id/reverse","/api/finance/:tenantId/payouts","/api/finance/:tenantId/payouts/:id/paid","/api/finance/:tenantId/pingen-price","/api/finance/:tenantId/payouts/:id/discard","/api/finance/:tenantId/payouts/:id/settle"] };

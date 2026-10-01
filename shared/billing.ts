@@ -1,6 +1,12 @@
 /** All amounts are CHF cents. Never calculate fees on binary floating point CHF values. */
 export const PLATFORM_FEE_BASIS_POINTS = 250;
-export type BillingTerms = { feeBasisPoints: number; collectionNotice: string };
+export type BillingTerms = { feeBasisPoints: number; collectionNotice: string; contractNotice?: string };
+export const CONTRACT_PLATFORM_FEE_NOTICE = "Mit der Plattformgebühr tragen die Sponsoren zur Finanzierung der Infrastruktur von mittragen.ch bei und entlasten damit die Klubs.";
+
+/** Freeze the contract wording separately from payment/collection instructions. */
+export function contractBillingTerms(billing: BillingTerms): BillingTerms {
+  return { ...billing, contractNotice: CONTRACT_PLATFORM_FEE_NOTICE };
+}
 
 export function feeCents(contributionCents: number, basisPoints = PLATFORM_FEE_BASIS_POINTS) {
   if (!Number.isSafeInteger(contributionCents) || contributionCents < 0 || contributionCents > 100_000_000

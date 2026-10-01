@@ -1,7 +1,7 @@
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFImage, type PDFPage } from "pdf-lib";
 import type { OrganizationPdfBrand } from "./organization-pdf-brand.ts";
 import { drawPlatformCredit } from "./pdf-platform-brand.ts";
-import { feeCents, type BillingTerms } from "../../../shared/billing.ts";
+import { CONTRACT_PLATFORM_FEE_NOTICE, feeCents, type BillingTerms } from "../../../shared/billing.ts";
 
 type ContractRight = {
   name: string;
@@ -460,9 +460,14 @@ export async function createContractPdf(data: ContractPdfData): Promise<Uint8Arr
   ]);
 
   if (data.package.billing?.feeBasisPoints) {
-    const fee = feeCents(data.package.priceCents, data.package.billing.feeBasisPoints);
-    drawText(`Zusätzliche Plattformgebühr (2.5 %): ${formatChf(fee)} pro Jahr. Gesamtbetrag inklusive Plattformgebühr: ${formatChf(data.package.priceCents + fee)} pro Jahr. Bei Ratenzahlung wird die Gebühr je Rate auf einen Rappen gerundet.`, { after: 6 });
-    drawText(data.package.billing.collectionNotice, { after: 6 });
+    const notice = data.status === "draft" ? CONTRACT_PLATFORM_FEE_NOTICE : data.package.billing.contractNotice;
+    if (notice) drawText(notice, { after: 6 });
+    else {
+      // Already released versions retain the wording that was agreed at release.
+      const fee = feeCents(data.package.priceCents, data.package.billing.feeBasisPoints);
+      drawText(`Zusätzliche Plattformgebühr (2.5 %): ${formatChf(fee)} pro Jahr. Gesamtbetrag inklusive Plattformgebühr: ${formatChf(data.package.priceCents + fee)} pro Jahr. Bei Ratenzahlung wird die Gebühr je Rate auf einen Rappen gerundet.`, { after: 6 });
+      drawText(data.package.billing.collectionNotice, { after: 6 });
+    }
   }
 
   section("2", "Vereinbarte Leistungen");

@@ -1,4 +1,4 @@
-import { PLATFORM_FEE_BASIS_POINTS, type BillingTerms } from "../../../shared/billing.ts";
+import { PLATFORM_FEE_BASIS_POINTS, contractBillingTerms, type BillingTerms } from "../../../shared/billing.ts";
 import { readQrCreditor } from "./swiss-qr.ts";
 
 type Env = (name: string) => string | undefined;
@@ -19,7 +19,7 @@ export function billingConfig(read: Env = env) {
 
 export function newBillingTerms(read?: Env): BillingTerms | undefined {
   const config = billingConfig(read);
-  return config.enabled ? { feeBasisPoints: config.feeBasisPoints, collectionNotice: config.collectionNotice } : undefined;
+  return config.enabled ? contractBillingTerms({ feeBasisPoints: config.feeBasisPoints, collectionNotice: config.collectionNotice }) : undefined;
 }
 
 export function billingReadiness(read: Env = env) {

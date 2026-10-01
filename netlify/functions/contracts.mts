@@ -1,3 +1,4 @@
+import { contractBillingTerms } from "../../shared/billing.ts";
 import { sponsorSpacePath } from "../../shared/sponsor-space-link.ts";
 import { createHash, randomBytes } from "node:crypto";
 import type { Config, Context } from "@netlify/functions";
@@ -672,7 +673,7 @@ export default async (request: Request, context: Context) => {
           && current.contract.package_version_id === parsed.value.packageVersionId;
         const snapshots = await buildSnapshots(client, tenantId, parsed.value, preservesExistingSelection);
         if (!snapshots) return { state: "selection_not_found" as const };
-        if (current.contract.package_snapshot.billing) snapshots.package.billing = current.contract.package_snapshot.billing;
+        if (current.contract.package_snapshot.billing) snapshots.package.billing = contractBillingTerms(current.contract.package_snapshot.billing);
         if (parsed.value.enablePlatformFee && !snapshots.package.billing?.feeBasisPoints) {
           const billing = newBillingTerms();
           if (!billing) return { state: "billing_unavailable" as const };
@@ -865,7 +866,7 @@ export default async (request: Request, context: Context) => {
           };
         const snapshots = await buildSnapshots(client, tenantId, source, source.mode === "direct");
         if (!snapshots) return { state: "source_missing" as const };
-        if (existing.contract.package_snapshot.billing) snapshots.package.billing = existing.contract.package_snapshot.billing;
+        if (existing.contract.package_snapshot.billing) snapshots.package.billing = contractBillingTerms(existing.contract.package_snapshot.billing);
         if (!snapshots.settingsComplete) return { state: "settings_incomplete" as const };
         if (!snapshots.sponsorComplete) return { state: "sponsor_incomplete" as const };
         if (source.mode === "direct" && !await ensureDirectReservation(client, tenantId, snapshots.sponsorId, snapshots.packageVersionId, user.id)) {

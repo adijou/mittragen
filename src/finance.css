@@ -72,5 +72,5 @@
 .finance-dialog h2 { margin: 0 0 16px; }
 .finance-dialog form { display: grid; gap: 18px; }
 .finance-dialog form > div { display: flex; flex-wrap: wrap; gap: 10px; }
-.finance-dialog input:not([type="checkbox"]) { width: 100%; padding: 10px; }
+.finance-dialog input:not([type="checkbox"]), .finance-dialog select { width: 100%; padding: 10px; }
 .finance-dialog .finance-checkbox { display: flex; gap: 10px; align-items: start; line-height: 1.5; }

@@ -17,6 +17,7 @@ export type InvoiceRow = {
   fee_basis_points: number; collection_notice: string; status: "draft" | "issued" | "cancelled"; created_at: string;
   invoice_number?: string | null; qr_reference?: string | null; payment_creditor?: QrCreditor | null;
   issued_on?: string | null; issued_by?: string | null;
+  period_start?: string | Date | null; period_end?: string | Date | null;
 };
 
 export const lockBilling = (client: DatabaseClient, tenantId: string) => client.query(
@@ -28,22 +29,16 @@ async function audit(client: DatabaseClient, tenantId: string, actor: string, ac
 }
 
 export async function draftInvoice(client: DatabaseClient, tenantId: string, actor: string, sourceKey: string, refresh = false) {
+  if (refresh) {
+    const existing = await client.query<InvoiceRow>("SELECT * FROM billing_invoices WHERE tenant_id=$1 AND source_key=$2", [tenantId, sourceKey]);
+    if (!existing.rows[0]) throw new BillingError("not_found",404);
+    return refreshInvoice(client,tenantId,actor,existing.rows[0].id);
+  }
   const { sources } = await billingSources(client, tenantId);
   const source = sources.find((item) => item.sourceKey === sourceKey);
   if (!source) throw new BillingError("billing_source_unavailable");
   const existing = await client.query<InvoiceRow>("SELECT * FROM billing_invoices WHERE tenant_id=$1 AND source_key=$2", [tenantId, sourceKey]);
-  if (existing.rows[0]) {
-    if (!refresh) return existing.rows[0];
-    const invoice = existing.rows[0];
-    if (invoice.status !== "draft") throw new BillingError("billing_invoice_locked");
-    const paid = await client.query("SELECT id FROM billing_receipts WHERE tenant_id=$1 AND invoice_id=$2 AND reversed_at IS NULL LIMIT 1",[tenantId,invoice.id]);
-    if (paid.rows.length) throw new BillingError("billing_invoice_already_received");
-    const refreshed = await client.query<InvoiceRow>(`UPDATE billing_invoices SET source_id=$3,description=$4,recipient=$5::jsonb,issuer=$6::jsonb,
-      contribution_cents=$7,fee_basis_points=$8,platform_fee_cents=$9,collection_notice=$10 WHERE tenant_id=$1 AND id=$2 RETURNING *`,
-      [tenantId,invoice.id,source.sourceId,source.description,JSON.stringify(source.recipient),JSON.stringify(source.issuer),source.contributionCents,source.feeBasisPoints,source.platformFeeCents,source.collectionNotice]);
-    await audit(client,tenantId,actor,"billing.draft_refreshed",invoice.id,{sourceKey});
-    return refreshed.rows[0];
-  }
+  if (existing.rows[0]) return existing.rows[0];
   // Earlier open-ended periods stay valid for existing documents; do not back-bill imported history.
   if (!source.canCreateDraft) throw new BillingError("billing_source_unavailable");
   if (source.periodStart && source.periodEnd) {
@@ -63,10 +58,48 @@ export async function draftInvoice(client: DatabaseClient, tenantId: string, act
   return result.rows[0];
 }
 
+const periodDate = (value: string | Date | null | undefined) => value instanceof Date ? value.toISOString().slice(0,10) : value?.slice(0,10) ?? null;
+
+/** Only confirmed sources from the same contract family and overlapping period can replace a draft. */
+export function invoiceRefreshSources(invoice: InvoiceRow, sources: InvoiceSource[]) {
+  return sources.filter(source => source.sourceKey === invoice.source_key || (
+    invoice.source_type === "contract" && source.sourceType === "contract"
+    && source.sourceKey.split(":")[1] === invoice.source_key.split(":")[1]
+    && invoice.period_start && invoice.period_end && source.periodStart && source.periodEnd
+    && source.periodStart <= periodDate(invoice.period_end)! && source.periodEnd >= periodDate(invoice.period_start)!
+  ));
+}
+
+/** Caller holds the tenant billing lock. Keep the invoice identity while replacing its draft snapshot. */
+export async function refreshInvoice(client: DatabaseClient, tenantId: string, actor: string, invoiceId: string, sourceKey?: string) {
+  const invoice=(await client.query<InvoiceRow>("SELECT * FROM billing_invoices WHERE tenant_id=$1 AND id=$2 FOR UPDATE",[tenantId,invoiceId])).rows[0];
+  if (!invoice) throw new BillingError("not_found",404);
+  if (invoice.status !== "draft") throw new BillingError("billing_invoice_locked");
+  const paid=await client.query("SELECT id FROM billing_receipts WHERE tenant_id=$1 AND invoice_id=$2 AND reversed_at IS NULL LIMIT 1",[tenantId,invoice.id]);
+  if (paid.rows.length) throw new BillingError("billing_invoice_already_received");
+  const candidates=invoiceRefreshSources(invoice,(await billingSources(client,tenantId)).sources);
+  const source=sourceKey ? candidates.find(row=>row.sourceKey===sourceKey)
+    : candidates.find(row=>row.sourceKey===invoice.source_key) ?? (candidates.length===1 ? candidates[0] : undefined);
+  if (!source) throw new BillingError(!sourceKey && candidates.length>1 ? "billing_refresh_selection_required" : "billing_source_unavailable");
+  if (source.periodStart && source.periodEnd) {
+    const familyPrefix=source.sourceKey.split(":").slice(0,2).join(":")+":%";
+    const overlap=await client.query("SELECT id FROM billing_invoices WHERE tenant_id=$1 AND id<>$2 AND source_key LIKE $3 AND period_start <= $5::date AND period_end >= $4::date",[tenantId,invoice.id,familyPrefix,source.periodStart,source.periodEnd]);
+    if (overlap.rows.length) throw new BillingError("billing_period_overlap");
+  }
+  const result=await client.query<InvoiceRow>(`UPDATE billing_invoices SET source_id=$3,description=$4,recipient=$5::jsonb,issuer=$6::jsonb,
+    contribution_cents=$7,fee_basis_points=$8,platform_fee_cents=$9,collection_notice=$10,source_key=$11,period_start=$12,period_end=$13
+    WHERE tenant_id=$1 AND id=$2 RETURNING *`,[tenantId,invoice.id,source.sourceId,source.description,JSON.stringify(source.recipient),JSON.stringify(source.issuer),
+    source.contributionCents,source.feeBasisPoints,source.platformFeeCents,source.collectionNotice,source.sourceKey,source.periodStart??null,source.periodEnd??null]);
+  await audit(client,tenantId,actor,"billing.draft_refreshed",invoice.id,{sourceKey:source.sourceKey,previousSourceKey:invoice.source_key,previousSourceId:invoice.source_id,sourceId:source.sourceId});
+  return result.rows[0];
+}
+
 export function sourceMatches(invoice: InvoiceRow, sources: InvoiceSource[]) {
   return invoice.status !== "cancelled" && sources.some((source) => source.sourceKey === invoice.source_key
     && source.sourceId === invoice.source_id && source.contributionCents === invoice.contribution_cents
-    && source.platformFeeCents === invoice.platform_fee_cents && source.feeBasisPoints === invoice.fee_basis_points);
+    && source.platformFeeCents === invoice.platform_fee_cents && source.feeBasisPoints === invoice.fee_basis_points
+    && (source.periodStart ?? null) === periodDate(invoice.period_start)
+    && (source.periodEnd ?? null) === periodDate(invoice.period_end));
 }
 
 // Once issued, the frozen invoice remains payable even after the underlying agreement changes.

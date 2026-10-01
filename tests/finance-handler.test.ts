@@ -140,13 +140,41 @@ test("finance routes enforce real PostgreSQL isolation, money allocation and ret
       const snapshot={name:"Jahrespaket",priceCents:10001,durationMonths:12,paymentPlan:"quarterly",validFrom:"2026-07-01",validUntil:"2027-06-30",rights:[]};
       const insert=async(id:string,parent:string|null,number:string,data:object)=>db.query(`INSERT INTO sponsorship_contracts
         (id,tenant_id,parent_contract_id,contract_number,sponsor_id,package_version_id,package_snapshot,sponsor_snapshot,organization_snapshot,status,snapshot_hash,released_at,created_by)
-        VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,'{"legalName":"Vertragssponsor"}'::jsonb,'{"legalName":"Verein A"}'::jsonb,'confirmed',$8,now(),'fixture')`,[id,tenantA,parent,number,sponsor,version,JSON.stringify(data),"a".repeat(64)]);
+        VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,'{"legalName":"Vertragssponsor","street":"Testweg 1","postalCode":"8000","city":"Zürich"}'::jsonb,'{"legalName":"Verein A","street":"Testweg 2","postalCode":"8000","city":"Zürich","country":"CH"}'::jsonb,'confirmed',$8,now(),'fixture')`,[id,tenantA,parent,number,sponsor,version,JSON.stringify(data),"a".repeat(64)]);
       await insert(root,null,"MT-2026-TEST1",snapshot);
       const created=await call(tenantA,"/invoices",{sourceKey:`contract:${root}:2026-07-01`},201);
       assert.equal(created.invoice.contribution_cents,2500);assert.equal(created.invoice.platform_fee_cents,0);
       await db.query("UPDATE sponsorship_contracts SET status='void',voided_at=now(),voided_by='fixture',void_reason='Korrektur' WHERE id=$1",[root]);
-      await insert(revision,root,"MT-2026-TEST2",{...snapshot,paymentPlan:"annual",validFrom:"2026-08-01",validUntil:"2027-07-31"});
+      await insert(revision,root,"MT-2026-TEST2",{...snapshot,paymentPlan:"annual",validFrom:"2026-08-01",validUntil:"2027-07-31",billing:{feeBasisPoints:250,collectionNotice:"Testgebühr"}});
       const rejected=await call(tenantA,"/invoices",{sourceKey:`contract:${root}:2026-08-01`},409);assert.equal(rejected.error,"billing_period_overlap");
+      assert.equal((await call(tenantA,`/invoices/${invoiceId}/refresh`,{},409)).error,"billing_invoice_already_received");
+      const path=`/invoices/${created.invoice.id}/refresh`;
+      const selected={sourceKey:`contract:${root}:2026-08-01`};
+      const before=(await call(tenantA)).invoices.find((row:{id:string})=>row.id===created.invoice.id);
+      assert.equal(before.sourceAvailable,false);assert.equal(before.refreshSources.length,1);
+      assert.equal(before.refreshSources[0].platformFeeCents,250);
+      await call(tenantB,path,selected,404);
+      user="reader";setTestUser({id:user});await call(tenantA,path,selected,403);
+      user="club-owner";setTestUser({id:user});
+      await call(tenantA,path,{sourceKey:`event:${bookingB}`},409);
+      const blocker=randomUUID();
+      await db.query(`INSERT INTO billing_invoices(id,tenant_id,source_type,source_id,source_key,reference,description,recipient,issuer,contribution_cents,fee_basis_points,platform_fee_cents,created_by,period_start,period_end)
+        SELECT $2,tenant_id,source_type,source_id,$3,'ENT-TEST-BLOCK','Other period',recipient,issuer,contribution_cents,fee_basis_points,platform_fee_cents,created_by,'2026-10-01','2026-12-31' FROM billing_invoices WHERE id=$1`,[created.invoice.id,blocker,`contract:${root}:2026-10-01`]);
+      assert.equal((await call(tenantA,path,selected,409)).error,"billing_period_overlap");
+      await db.query("DELETE FROM billing_invoices WHERE id=$1",[blocker]);
+      const refreshed=(await call(tenantA,path,selected)).invoice;
+      assert.equal(refreshed.id,created.invoice.id);assert.equal(refreshed.reference,created.invoice.reference);
+      assert.equal(refreshed.source_key,selected.sourceKey);assert.equal(refreshed.source_id,revision);
+      assert.equal(refreshed.period_start.slice(0,10),"2026-08-01");assert.equal(refreshed.period_end.slice(0,10),"2027-07-31");
+      assert.equal(refreshed.contribution_cents,10001);assert.equal(refreshed.platform_fee_cents,250);
+      assert.equal((await call(tenantA,path,selected)).invoice.id,created.invoice.id);
+      assert.equal((await call(tenantA)).invoices.find((row:{id:string})=>row.id===created.invoice.id).sourceAvailable,true);
+      assert.equal((await db.query("SELECT count(*)::integer count FROM billing_invoices WHERE tenant_id=$1 AND source_key LIKE $2",[tenantA,`contract:${root}:%`])).rows[0].count,1);
+      Object.assign(globalThis,{Netlify:{env:{get:(name:string)=>({BILLING_OPERATOR_USER_IDS:"operator",BILLING_QR_CREDITOR:JSON.stringify({iban:"CH4431999123000889012",name:"Test Inkasso",street:"",houseNumber:"",postalCode:"8000",city:"Zürich",country:"CH"})}[name])}}});
+      await call(tenantA,`/invoices/${created.invoice.id}/issue`,{detailsConfirmed:true});
+      await call(tenantA,path,selected,409);
+      user="operator";setTestUser({id:user});
+
     });
     await t.test("open-ended annual billing offers only the current year and retains earlier invoices across renewal",async()=>{
       user="operator";setTestUser({id:user});
@@ -264,10 +292,13 @@ test("finance routes enforce real PostgreSQL isolation, money allocation and ret
       const updated=(await contractCall("PATCH",`/${revision.id}`,edit)).detail.contract;
       assert.equal(updated.package_snapshot.billing.feeBasisPoints,250);assert.equal(updated.package_snapshot.priceCents,40000);
       assert.match(updated.package_snapshot.billing.collectionNotice,/2.5 %/);
+      assert.match(updated.package_snapshot.billing.contractNotice,/Infrastruktur/);
+      assert.doesNotMatch(updated.package_snapshot.billing.contractNotice,/Test Inkasso|2.5|monatlich|CHF/);
       const preserved=(await contractCall("PATCH",`/${revision.id}`,{...edit,enablePlatformFee:false})).detail.contract;
       assert.equal(preserved.package_snapshot.billing.feeBasisPoints,250);
       const released=(await contractCall("POST",`/${revision.id}/release`,{legalReviewAcknowledged:true})).detail.contract;
       assert.equal(released.package_snapshot.billing.feeBasisPoints,250);assert.ok(released.snapshot_hash);
+      assert.equal(released.package_snapshot.billing.contractNotice,updated.package_snapshot.billing.contractNotice);
       await contractCall("PATCH",`/${revision.id}`,edit,409);
       const prior=(await db.query("SELECT package_snapshot FROM sponsorship_contracts WHERE id=$1",[original.id])).rows[0];
       assert.equal((prior.package_snapshot as any).billing,undefined);
