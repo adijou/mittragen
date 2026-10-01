@@ -80,7 +80,7 @@ export function FinanceManagement({tenantId,accountId}:{tenantId:string;accountI
     if(bankAction.kind==="discard")void run(`/payouts/${bankAction.id}/discard`,{reason:reference},"Vorbereitung aufgehoben. Die Eingänge können erneut abgerechnet werden.");
     if(bankAction.kind==="reverse")void run(`/receipts/${bankAction.id}/reverse`,{reason:reference},"Zahlungserfassung storniert. Die ursprüngliche Erfassung bleibt nachvollziehbar.");
   };
-  if(!data)return <section className="workspace-panel"><h1>Finanzen</h1><p role={error?"alert":"status"}>{error || "Finanzen werden geladen …"}</p></section>;
+  if(!data)return <div className="finance-page"><section className="workspace-panel"><h1>Finanzen</h1><p role={error?"alert":"status"}>{error || "Finanzen werden geladen …"}</p></section></div>;
   const activeReceipts=data.receipts.filter(row=>!row.reversed_at);
   const received=activeReceipts.reduce((sum,row)=>sum+row.amount_cents,0);
   const club=activeReceipts.reduce((sum,row)=>sum+row.club_cents,0);
