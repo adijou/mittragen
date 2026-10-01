@@ -43,6 +43,8 @@ export async function draftInvoice(client: DatabaseClient, tenantId: string, act
     await audit(client,tenantId,actor,"billing.draft_refreshed",invoice.id,{sourceKey});
     return refreshed.rows[0];
   }
+  // Earlier open-ended periods stay valid for existing documents; do not back-bill imported history.
+  if (!source.canCreateDraft) throw new BillingError("billing_source_unavailable");
   if (source.periodStart && source.periodEnd) {
     const familyPrefix = source.sourceKey.split(":").slice(0,2).join(":") + ":%";
     const overlap = await client.query("SELECT id FROM billing_invoices WHERE tenant_id=$1 AND source_key LIKE $2 AND period_start <= $4::date AND period_end >= $3::date",[tenantId,familyPrefix,source.periodStart,source.periodEnd]);

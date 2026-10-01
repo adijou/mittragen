@@ -7,6 +7,9 @@ import { PGlite } from "@electric-sql/pglite";
 import { pgcrypto } from "@electric-sql/pglite/contrib/pgcrypto";
 import { PDFDocument } from "pdf-lib";
 import type { DatabaseClient } from "../netlify/functions/_shared/database.ts";
+import { billingSources } from "../netlify/functions/_shared/billing-sources.ts";
+import { sourceMatches } from "../netlify/functions/_shared/billing-ledger.ts";
+import { swissToday } from "../shared/billing.ts";
 
 const hooks=registerHooks({load(url,context,nextLoad){
   if(url.includes("/node_modules/@netlify/identity/"))return{shortCircuit:true,format:"module",source:`
@@ -143,6 +146,38 @@ test("finance routes enforce real PostgreSQL isolation, money allocation and ret
       await db.query("UPDATE sponsorship_contracts SET status='void',voided_at=now(),voided_by='fixture',void_reason='Korrektur' WHERE id=$1",[root]);
       await insert(revision,root,"MT-2026-TEST2",{...snapshot,paymentPlan:"annual",validFrom:"2026-08-01",validUntil:"2027-07-31"});
       const rejected=await call(tenantA,"/invoices",{sourceKey:`contract:${root}:2026-08-01`},409);assert.equal(rejected.error,"billing_period_overlap");
+    });
+    await t.test("open-ended annual billing offers only the current year and retains earlier invoices across renewal",async()=>{
+      user="operator";setTestUser({id:user});
+      const year=Number(swissToday().slice(0,4));
+      const sponsor=randomUUID(),pack=randomUUID(),version=randomUUID(),contract=randomUUID();
+      await db.query("INSERT INTO sponsors(id,tenant_id,legal_name) VALUES($1,$2,'Unbefristeter Testsponsor')",[sponsor,tenantA]);
+      await db.query("INSERT INTO sponsorship_packages(id,tenant_id,created_by) VALUES($1,$2,'fixture')",[pack,tenantA]);
+      await db.query("INSERT INTO sponsorship_package_versions(id,tenant_id,package_id,version_number,name,price_cents,duration_months,payment_plan,created_by) VALUES($1,$2,$3,1,'Jahrespaket',40000,12,'annual','fixture')",[version,tenantA,pack]);
+      const snapshot={name:"Jahrespaket",priceCents:40000,durationMonths:12,paymentPlan:"annual",validFrom:`${year-3}-01-01`,validUntil:null,rights:[],billing:{feeBasisPoints:250,collectionNotice:"Verein und 2.5 % Plattformgebühr"}};
+      await db.query(`INSERT INTO sponsorship_contracts
+        (id,tenant_id,contract_number,sponsor_id,package_version_id,package_snapshot,sponsor_snapshot,organization_snapshot,status,snapshot_hash,released_at,created_by)
+        VALUES($1,$2,'MT-TEST-ANNUAL',$3,$4,$5::jsonb,'{"legalName":"Unbefristeter Testsponsor"}'::jsonb,'{"legalName":"Verein A"}'::jsonb,'confirmed',$6,now(),'fixture')`,[contract,tenantA,sponsor,version,JSON.stringify(snapshot),"b".repeat(64)]);
+      const data=await call(tenantA);
+      const annualSources=data.sources.filter((row:{sourceId:string})=>row.sourceId===contract);
+      assert.equal(annualSources.length,1);
+      assert.equal(annualSources[0].periodStart,`${year}-01-01`);
+      assert.equal(annualSources[0].periodEnd,`${year}-12-31`);
+      assert.equal(data.unresolved.some((row:{reference:string})=>row.reference==='MT-TEST-ANNUAL'),false);
+      await call(tenantA,"/invoices",{sourceKey:`contract:${contract}:${year-1}-01-01`},409);
+      await call(tenantA,"/invoices",{sourceKey:`contract:${contract}:${year+1}-01-01`},409);
+      await call(tenantB,"/invoices",{sourceKey:annualSources[0].sourceKey},409);
+      const invoice=(await call(tenantA,"/invoices",{sourceKey:annualSources[0].sourceKey},201)).invoice;
+      assert.equal(invoice.contribution_cents,40000);assert.equal(invoice.platform_fee_cents,1000);
+      assert.equal((await call(tenantA,"/invoices",{sourceKey:annualSources[0].sourceKey},201)).invoice.id,invoice.id);
+      assert.equal((await call(tenantA)).sources.some((row:{sourceId:string})=>row.sourceId===contract),false);
+      const renewal=await session(user,tenantA,client=>billingSources(client,tenantA,`${year+1}-01-01`));
+      assert.equal(sourceMatches(invoice,renewal.sources),true);
+      const next=renewal.sources.filter(row=>row.sourceId===contract&&row.canCreateDraft);
+      assert.equal(next.length,1);assert.equal(next[0].periodStart,`${year+1}-01-01`);
+      assert.equal(next[0].contributionCents,40000);assert.equal(next[0].platformFeeCents,1000);
+      const missingStart=await db.query("SELECT package_snapshot FROM sponsorship_contracts WHERE id=$1",[contract]);
+      assert.equal((missingStart.rows[0].package_snapshot as typeof snapshot).validUntil,null);
     });
     await t.test("QR issuance is tenant-scoped, atomic, immutable and repeat-safe",async()=>{
       // SIX public example account: no actual customer account data in fixtures.

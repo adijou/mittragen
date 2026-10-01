@@ -1,6 +1,6 @@
 import type { DatabaseClient } from "./database.ts";
 import type { ContractPdfData } from "./contract-pdf.ts";
-import { feeCents, isDate } from "../../../shared/billing.ts";
+import { feeCents, isDate, swissToday } from "../../../shared/billing.ts";
 
 export type InvoiceParty = { name: string; street: string; postalCode: string; city: string; country: string };
 export type InvoiceSource = {
@@ -8,6 +8,7 @@ export type InvoiceSource = {
   recipient: InvoiceParty; issuer: InvoiceParty; contributionCents: number; feeBasisPoints: number;
   platformFeeCents: number; collectionNotice: string;
   periodStart?: string; periodEnd?: string;
+  canCreateDraft: boolean;
 };
 
 function addMonths(date: string, months: number) {
@@ -17,17 +18,19 @@ function addMonths(date: string, months: number) {
 }
 const previousDay = (date: string) => new Date(Date.parse(`${date}T12:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
 const paymentSteps: Record<string, number> = { annual: 12, semiannual: 6, quarterly: 3 };
+const isOpenEnded = (item: ContractPdfData["package"]) => item.validUntil == null || item.validUntil === "";
 
 /** Explain the saved agreement's gaps without guessing dates, instalments or amounts. */
 export function contractBillingIssues(item: ContractPdfData["package"]) {
   const issues: string[] = [];
-  if (!paymentSteps[item.paymentPlan]) issues.push(item.paymentPlan === "custom"
+  const openEnded = isOpenEnded(item);
+  if (!openEnded && !paymentSteps[item.paymentPlan]) issues.push(item.paymentPlan === "custom"
     ? "Individueller Zahlungsplan: Fälligkeiten und Teilbeträge sind nicht für die automatische Abrechnung festgelegt."
     : "Es fehlt ein unterstützter Zahlungsplan (jährlich, halbjährlich oder quartalsweise).");
   if (!isDate(item.validFrom)) issues.push("Der Vertragsbeginn fehlt oder ist ungültig.");
-  if (!isDate(item.validUntil)) issues.push("Das Vertragsende fehlt oder ist ungültig.");
+  if (!openEnded && !isDate(item.validUntil)) issues.push("Das Vertragsende ist ungültig.");
   const validDuration = Number.isInteger(item.durationMonths) && item.durationMonths >= 1 && item.durationMonths <= 120;
-  if (!validDuration) issues.push("Die Vertragsdauer muss zwischen 1 und 120 ganzen Monaten liegen.");
+  if (!openEnded && !validDuration) issues.push("Die Vertragsdauer muss zwischen 1 und 120 ganzen Monaten liegen.");
   if (!Number.isSafeInteger(item.priceCents) || item.priceCents <= 0) issues.push("Es fehlt ein gültiger positiver Jahresbeitrag.");
   if (validDuration && isDate(item.validFrom) && isDate(item.validUntil)) {
     const expectedEnd = previousDay(addMonths(item.validFrom, item.durationMonths));
@@ -39,9 +42,22 @@ export function contractBillingIssues(item: ContractPdfData["package"]) {
   return issues;
 }
 
-/** Only unambiguous, dated schedules. Legacy/custom agreements require review, never guessed billing. */
-export function contractInstallments(item: ContractPdfData["package"]) {
+/** Open-ended agreements renew annually from their start; fixed terms retain their saved instalments. */
+export function contractInstallments(item: ContractPdfData["package"], today = swissToday()) {
+  if (!isDate(today)) throw new Error("invalid_billing_date");
   if (contractBillingIssues(item).length || !isDate(item.validFrom)) return [];
+  if (isOpenEnded(item)) {
+    const periods = [];
+    // Keep earlier periods resolvable for existing drafts and receipts after a renewal.
+    // Only the current period may become a new draft (enforced below and in the ledger).
+    const lastMonth = 12 * (Number(today.slice(0, 4)) - Number(item.validFrom.slice(0, 4)));
+    for (let month = 0; month <= lastMonth; month += 12) {
+      const start = addMonths(item.validFrom, month);
+      if (start > today) break;
+      periods.push({ start, end: previousDay(addMonths(item.validFrom, month + 12)), contributionCents: item.priceCents });
+    }
+    return periods;
+  }
   const step = paymentSteps[item.paymentPlan];
   const result = [];
   for (let month = 0; month < item.durationMonths; month += step) {
@@ -52,7 +68,7 @@ export function contractInstallments(item: ContractPdfData["package"]) {
   return result;
 }
 
-export async function billingSources(client: DatabaseClient, tenantId: string) {
+export async function billingSources(client: DatabaseClient, tenantId: string, today = swissToday()) {
   const profile = await client.query<{ name: string; street: string | null; postal_code: string | null; city: string | null; country: string | null }>(
     `SELECT COALESCE(settings.legal_name, tenant.name) name, settings.street, settings.postal_code, settings.city, settings.country
      FROM tenants tenant LEFT JOIN tenant_contract_settings settings ON settings.tenant_id=tenant.id WHERE tenant.id=$1`, [tenantId]);
@@ -68,7 +84,7 @@ export async function billingSources(client: DatabaseClient, tenantId: string) {
     description: `${row.reference} · Matchball ${row.team_name} – ${row.opponent}`,
     recipient: { name: row.sponsor_name, street: row.address, postalCode: row.postal_code, city: row.city, country: "CH" }, issuer,
     contributionCents: row.amount_cents, feeBasisPoints: row.fee_basis_points,
-    platformFeeCents: feeCents(row.amount_cents, row.fee_basis_points), collectionNotice: row.collection_notice,
+    platformFeeCents: feeCents(row.amount_cents, row.fee_basis_points), collectionNotice: row.collection_notice, canCreateDraft: true,
   }));
   const contracts = await client.query<{ id: string; root_id: string; contract_number: string; package_snapshot: ContractPdfData["package"]; sponsor_snapshot: ContractPdfData["sponsor"]; organization_snapshot: ContractPdfData["organization"] }>(
     `WITH RECURSIVE family AS (
@@ -79,9 +95,11 @@ export async function billingSources(client: DatabaseClient, tenantId: string) {
      WHERE tenant_id=$1 AND status='confirmed' ORDER BY contract_number,version_number DESC FOR SHARE OF contract`, [tenantId]);
   const unresolved: Array<{ reference: string; reason: string }> = [];
   for (const row of contracts.rows) {
-    const periods = contractInstallments(row.package_snapshot);
+    const periods = contractInstallments(row.package_snapshot, today);
     if (!periods.length) {
       const issues = contractBillingIssues(row.package_snapshot);
+      // A future open-ended agreement becomes billable on its start date, without a review warning.
+      if (!issues.length && isOpenEnded(row.package_snapshot)) continue;
       unresolved.push({ reference: row.contract_number, reason: issues.length
         ? `${issues.join(" ")} Bitte die gespeicherten Vertragsangaben prüfen.`
         : "Für die gespeicherte Laufzeit ergibt sich kein abrechenbarer Betrag von mindestens einem Rappen. Bitte den Jahresbeitrag prüfen." });
@@ -94,6 +112,7 @@ export async function billingSources(client: DatabaseClient, tenantId: string) {
         // Corrective versions have new numbers; the original contract id stays the billing identity.
         sourceKey: `contract:${row.root_id}:${period.start}`,
         periodStart: period.start, periodEnd: period.end,
+        canCreateDraft: !isOpenEnded(row.package_snapshot) || (period.start <= today && period.end >= today),
         description: `${row.contract_number} · ${row.package_snapshot.name} · ${period.start} bis ${period.end}`,
         recipient: { name: sponsor.legalName, street: sponsor.street ?? "", postalCode: sponsor.postalCode ?? "", city: sponsor.city ?? "", country: "CH" },
         issuer: { name: club.legalName, street: club.street, postalCode: club.postalCode, city: club.city, country: club.country },

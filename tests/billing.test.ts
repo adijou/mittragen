@@ -77,9 +77,36 @@ test("contract review explains each missing input without producing a guessed sc
     assert.deepEqual(contractInstallments(invalid),[]);
   }
   const incomplete={...item,paymentPlan:"custom",validFrom:null,validUntil:null};
-  assert.equal(contractBillingIssues(incomplete).length,3);
+  assert.equal(contractBillingIssues(incomplete).length,1);
   assert.deepEqual(contractInstallments(incomplete),[]);
   assert.deepEqual(contractInstallments(item),[{start:"2026-07-01",end:"2027-06-30",contributionCents:100_000}]);
+});
+test("open-ended contracts renew annually at their anniversary without an artificial end",()=>{
+  const item={priceCents:10001,paymentPlan:"annual",validFrom:"2024-07-01",validUntil:null,durationMonths:12} as ContractPdfData["package"];
+  assert.deepEqual(contractBillingIssues(item),[]);
+  assert.deepEqual(contractInstallments(item,"2024-06-30"),[]);
+  const before=contractInstallments(item,"2026-06-30");
+  assert.equal(before.length,2);
+  assert.deepEqual(before.at(-1),{start:"2025-07-01",end:"2026-06-30",contributionCents:10001});
+  const after=contractInstallments(item,"2026-07-01");
+  assert.deepEqual(after.slice(0,-1),before);
+  assert.deepEqual(after.at(-1),{start:"2026-07-01",end:"2027-06-30",contributionCents:10001});
+  assert.deepEqual(contractInstallments({...item,paymentPlan:"custom",validUntil:"",durationMonths:36},"2026-07-01"),after);
+  assert.deepEqual(contractInstallments({...item,validFrom:null},"2026-07-01"),[]);
+  assert.deepEqual(contractInstallments({...item,priceCents:0},"2026-07-01"),[]);
+  assert.deepEqual(contractInstallments({...item,validUntil:"invalid"},"2026-07-01"),[]);
+  assert.throws(()=>contractInstallments(item,"invalid"),/invalid_billing_date/);
+});
+test("annual periods stay contiguous across leap days and use Swiss renewal dates",()=>{
+  const item={priceCents:100_000,paymentPlan:"annual",validFrom:"2024-02-29",validUntil:null,durationMonths:12} as ContractPdfData["package"];
+  const periods=contractInstallments(item,"2028-02-29");
+  assert.equal(periods.length,5);
+  assert.deepEqual(periods[0],{start:"2024-02-29",end:"2025-02-27",contributionCents:100_000});
+  assert.deepEqual(periods.at(-1),{start:"2028-02-29",end:"2029-02-27",contributionCents:100_000});
+  for(let i=1;i<periods.length;i++)assert.equal(Date.parse(periods[i].start)-Date.parse(periods[i-1].end),86_400_000);
+  const midnight={...item,validFrom:"2025-10-01"};
+  assert.equal(contractInstallments(midnight,swissToday(new Date("2026-09-30T21:59:59Z"))).length,1);
+  assert.equal(contractInstallments(midnight,swissToday(new Date("2026-09-30T22:00:00Z"))).length,2);
 });
 test("Pingen pricing defaults to sandbox and never uploads, creates, sends or exposes credentials",async()=>{
   const calls:Array<{url:string;init:RequestInit}>=[];

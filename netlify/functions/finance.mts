@@ -56,7 +56,7 @@ export default async (request: Request, context: Context) => {
           FROM billing_postal_costs cost JOIN billing_postal_dispatches dispatch ON dispatch.id=cost.dispatch_id AND dispatch.tenant_id=cost.tenant_id WHERE cost.tenant_id=$1 ORDER BY cost.created_at DESC`,[tenantId]);
         const postalItems=await client.query("SELECT * FROM billing_payout_postal_items WHERE tenant_id=$1",[tenantId]);
         return json({ dispatches:dispatches.rows,postalCosts:postalCosts.rows,postalItems:postalItems.rows,readiness:billingReadiness(), canWrite:hasPermission(role,"finance:write"),canRecordBankMovements,
-          sources:sources.filter((source) => !invoices.rows.some((row) => row.source_key === source.sourceKey)),unresolved,
+          sources:sources.filter((source) => source.canCreateDraft && !invoices.rows.some((row) => row.source_key === source.sourceKey)),unresolved,
           invoices:invoices.rows.map((row) => ({...row,sourceAvailable:sourceMatches(row,sources)})),receipts:receipts.rows,payouts:payouts.rows });
       }
       if (read && id) {
