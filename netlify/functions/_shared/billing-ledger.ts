@@ -5,6 +5,7 @@ import { billingSources, type InvoiceParty, type InvoiceSource } from "./billing
 import type { QrCreditor } from "./swiss-qr.ts";
 import { allocatePostalCosts, availablePostalCosts, requireConfirmedPostalCosts, requireFreshPayoutCosts } from "./postal-costs.ts";
 import { swissToday } from "../../../shared/billing.ts";
+import { availableFeeCharges, requireFreshFeeCharges } from "./fee-settlements.ts";
 
 export class BillingError extends Error {
   status: number;
@@ -85,6 +86,8 @@ export async function recordReceipt(client: DatabaseClient, tenantId: string, ac
   const rows = await client.query<InvoiceRow>("SELECT * FROM billing_invoices WHERE tenant_id=$1 AND id=$2 FOR UPDATE", [tenantId, invoiceId]);
   const invoice = rows.rows[0];
   if (!invoice || !canSettle(invoice, (await billingSources(client, tenantId)).sources)) throw new BillingError("billing_source_unavailable");
+  const settled=await client.query("SELECT id FROM billing_fee_settlements WHERE tenant_id=$1 AND invoice_id=$2 AND reversed_at IS NULL",[tenantId,invoiceId]);
+  if(settled.rows.length)throw new BillingError("billing_fee_already_settled");
   const sum = await client.query<{ paid: string }>("SELECT COALESCE(sum(amount_cents),0)::text paid FROM billing_receipts WHERE tenant_id=$1 AND invoice_id=$2 AND reversed_at IS NULL", [tenantId,invoiceId]);
   let allocation;
   try { allocation = splitReceipt(invoice.contribution_cents, invoice.platform_fee_cents, Number(sum.rows[0].paid), input.amountCents); }
@@ -100,6 +103,8 @@ export async function reverseReceipt(client: DatabaseClient, tenantId: string, a
   const receipt = await client.query<{ invoice_id: string; reversed_at: string | null }>("SELECT invoice_id,reversed_at FROM billing_receipts WHERE tenant_id=$1 AND id=$2", [tenantId,receiptId]);
   if (!receipt.rows[0]) throw new BillingError("billing_receipt_not_found",404);
   if (receipt.rows[0].reversed_at) return;
+  const settled=await client.query("SELECT id FROM billing_fee_settlements WHERE tenant_id=$1 AND invoice_id=$2 AND reversed_at IS NULL",[tenantId,receipt.rows[0].invoice_id]);
+  if(settled.rows.length)throw new BillingError("billing_fee_already_settled");
   const latest = await client.query<{ id: string }>(`SELECT id FROM billing_receipts WHERE tenant_id=$1 AND invoice_id=$2 AND reversed_at IS NULL ORDER BY recorded_at DESC,id DESC LIMIT 1`, [tenantId,receipt.rows[0].invoice_id]);
   const assigned = await client.query("SELECT receipt_id FROM billing_payout_items WHERE tenant_id=$1 AND receipt_id=$2", [tenantId,receiptId]);
   if (latest.rows[0]?.id !== receiptId || assigned.rows.length) throw new BillingError("billing_receipt_locked");
@@ -122,11 +127,13 @@ export async function preparePayout(client: DatabaseClient, tenantId: string, ac
   const id = randomUUID();
   const gross = receipts.rows.reduce((sum,row) => sum + row.club_cents,0);
   const allocation = allocatePostalCosts(gross,await availablePostalCosts(client,tenantId,month));
-  if (!receipts.rows.length && !allocation.items.length) throw new BillingError("billing_nothing_to_pay");
-  await client.query("INSERT INTO billing_payouts (id,tenant_id,through_month,amount_cents,created_by,gross_cents,postal_cents) VALUES ($1,$2,$3,$4,$5,$6,$7)",[id,tenantId,month,allocation.netCents,actor,gross,allocation.postalCents]);
+  const fees = allocatePostalCosts(allocation.netCents,await availableFeeCharges(client,tenantId,month));
+  if (!receipts.rows.length && !allocation.items.length && !fees.items.length) throw new BillingError("billing_nothing_to_pay");
+  await client.query("INSERT INTO billing_payouts (id,tenant_id,through_month,amount_cents,created_by,gross_cents,postal_cents,fee_cents) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",[id,tenantId,month,fees.netCents,actor,gross,allocation.postalCents,fees.postalCents]);
   for (const receipt of receipts.rows) await client.query("INSERT INTO billing_payout_items (tenant_id,payout_id,receipt_id,amount_cents) VALUES ($1,$2,$3,$4)",[tenantId,id,receipt.id,receipt.club_cents]);
   for (const item of allocation.items) await client.query("INSERT INTO billing_payout_postal_items (tenant_id,payout_id,cost_id,amount_cents) VALUES ($1,$2,$3,$4)",[tenantId,id,item.id,item.amountCents]);
-  await audit(client,tenantId,actor,"billing.payout_prepared",id,{ throughMonth: month, amountCents:allocation.netCents,grossCents:gross,postalCents:allocation.postalCents,receiptCount:receipts.rows.length });
+  for (const item of fees.items) await client.query("INSERT INTO billing_payout_fee_items (tenant_id,payout_id,settlement_id,amount_cents) VALUES ($1,$2,$3,$4)",[tenantId,id,item.id,item.amountCents]);
+  await audit(client,tenantId,actor,"billing.payout_prepared",id,{ throughMonth: month, amountCents:fees.netCents,grossCents:gross,postalCents:allocation.postalCents,feeCents:fees.postalCents,receiptCount:receipts.rows.length });
   return id;
 }
 
@@ -149,6 +156,7 @@ export async function recordPayout(client: DatabaseClient, tenantId: string, act
     return;
   }
   await requireFreshPayoutCosts(client,tenantId,payoutId);
+  await requireFreshFeeCharges(client,tenantId,payoutId);
   await requirePayoutSources(client,tenantId,payoutId);
   await client.query("UPDATE billing_payouts SET status='paid',paid_on=$3,bank_reference=$4,recorded_by=$5 WHERE tenant_id=$1 AND id=$2",[tenantId,payoutId,paidOn,bankReference,actor]);
   await audit(client,tenantId,actor,"billing.payout_recorded",payoutId,{ paidOn, bankReference });
@@ -160,6 +168,7 @@ export async function settlePayout(client:DatabaseClient,tenantId:string,actor:s
   if(row.status==='offset')return;
   if(row.status!=='prepared'||Number(row.amount_cents)!==0)throw new BillingError("billing_payout_locked");
   await requireFreshPayoutCosts(client,tenantId,payoutId);
+  await requireFreshFeeCharges(client,tenantId,payoutId);
   await requirePayoutSources(client,tenantId,payoutId);
   await client.query("UPDATE billing_payouts SET status='offset',settled_on=$3,recorded_by=$4 WHERE tenant_id=$1 AND id=$2",[tenantId,payoutId,swissToday(),actor]);
   await audit(client,tenantId,actor,"billing.payout_offset",payoutId);
@@ -171,7 +180,9 @@ export async function discardPayout(client: DatabaseClient, tenantId: string, ac
   if (payout.rows[0].status !== "prepared") throw new BillingError("billing_payout_locked");
   const items = await client.query("SELECT receipt_id,amount_cents FROM billing_payout_items WHERE tenant_id=$1 AND payout_id=$2",[tenantId,payoutId]);
   const postalItems = await client.query("SELECT cost_id,amount_cents FROM billing_payout_postal_items WHERE tenant_id=$1 AND payout_id=$2",[tenantId,payoutId]);
-  await audit(client,tenantId,actor,"billing.payout_preparation_discarded",payoutId,{...payout.rows[0],items:items.rows,postalItems:postalItems.rows,reason});
+  const feeItems = await client.query("SELECT settlement_id,amount_cents FROM billing_payout_fee_items WHERE tenant_id=$1 AND payout_id=$2",[tenantId,payoutId]);
+  await audit(client,tenantId,actor,"billing.payout_preparation_discarded",payoutId,{...payout.rows[0],items:items.rows,postalItems:postalItems.rows,feeItems:feeItems.rows,reason});
+  await client.query("DELETE FROM billing_payout_fee_items WHERE tenant_id=$1 AND payout_id=$2",[tenantId,payoutId]);
   await client.query("DELETE FROM billing_payout_postal_items WHERE tenant_id=$1 AND payout_id=$2",[tenantId,payoutId]);
   await client.query("DELETE FROM billing_payout_items WHERE tenant_id=$1 AND payout_id=$2",[tenantId,payoutId]);
   await client.query("DELETE FROM billing_payouts WHERE tenant_id=$1 AND id=$2",[tenantId,payoutId]);

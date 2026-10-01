@@ -47,7 +47,7 @@ export function parseContractSettings(body: unknown): Result<{
 
 export type ContractCreateInput =
   | { mode: "transition"; transitionSponsorId: string }
-  | { mode: "direct"; sponsorId: string; packageVersionId: string; annualValueCents: number };
+  | { mode: "direct"; sponsorId: string; packageVersionId: string; annualValueCents: number; usePackagePrice?: boolean };
 
 export function parseContractCreate(body: unknown): Result<ContractCreateInput> {
   if (!body || typeof body !== "object" || Array.isArray(body)) return { ok: false, error: "invalid_body" };
@@ -59,6 +59,7 @@ export function parseContractCreate(body: unknown): Result<ContractCreateInput> 
   }
   if (typeof record.sponsorId !== "string" || !isUuid(record.sponsorId)) return { ok: false, error: "invalid_sponsor" };
   if (typeof record.packageVersionId !== "string" || !isUuid(record.packageVersionId)) return { ok: false, error: "invalid_package_version" };
+  if (record.usePackagePrice !== undefined && typeof record.usePackagePrice !== "boolean") return { ok: false, error: "invalid_package_price_mode" };
   if (!Number.isSafeInteger(record.annualValueCents) || Number(record.annualValueCents) < 0 || Number(record.annualValueCents) > 2_147_483_647) {
     return { ok: false, error: "invalid_annual_value" };
   }
@@ -69,6 +70,7 @@ export function parseContractCreate(body: unknown): Result<ContractCreateInput> 
       sponsorId: record.sponsorId,
       packageVersionId: record.packageVersionId,
       annualValueCents: Number(record.annualValueCents),
+      ...(record.usePackagePrice !== undefined ? { usePackagePrice: record.usePackagePrice } : {}),
     },
   };
 }
@@ -77,6 +79,7 @@ export function parseContractUpdate(body: unknown): Result<Extract<ContractCreat
   title: string;
   specialAgreements: string;
   signingMethod: SigningMethod;
+  enablePlatformFee?: boolean;
 }> {
   if (!body || typeof body !== "object" || Array.isArray(body)) return { ok: false, error: "invalid_body" };
   const record = body as Record<string, unknown>;
@@ -88,7 +91,9 @@ export function parseContractUpdate(body: unknown): Result<Extract<ContractCreat
   if (!title) return { ok: false, error: "invalid_contract_title" };
   if (!specialAgreements) return { ok: false, error: "invalid_special_agreements" };
   if (!["click", "advanced", "qualified"].includes(String(record.signingMethod))) return { ok: false, error: "invalid_signing_method" };
-  return { ok: true, value: { ...selection.value, title, specialAgreements, signingMethod: record.signingMethod as SigningMethod } };
+  if (record.enablePlatformFee !== undefined && typeof record.enablePlatformFee !== "boolean") return { ok: false, error: "invalid_platform_fee" };
+  return { ok: true, value: { ...selection.value, title, specialAgreements, signingMethod: record.signingMethod as SigningMethod,
+    ...(record.enablePlatformFee !== undefined ? { enablePlatformFee: record.enablePlatformFee } : {}) } };
 }
 
 function parseReason(body: unknown, error: string): Result<{ reason: string }> {

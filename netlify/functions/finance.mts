@@ -9,6 +9,7 @@ import { closedMonth, isDate, swissToday } from "../../shared/billing.ts";
 import { createInvoiceDraftPdf } from "./_shared/invoice-pdf.ts";
 import { loadOrganizationPdfBrand } from "./_shared/organization-pdf-brand.ts";
 import { pingenSamplePrice } from "./_shared/pingen.ts";
+import { assumeFeeByClub, reverseFeeSettlement } from "./_shared/fee-settlements.ts";
 import { issueInvoice } from "./_shared/invoice-issuing.ts";
 
 function operator(userId: string) {
@@ -18,12 +19,12 @@ const bankReference = (value: unknown): value is string => typeof value === "str
 const dateInPast = (value: unknown): value is string => isDate(value) && value >= "2020-01-01" && value <= swissToday();
 
 export default async (request: Request, context: Context) => {
-  const match = new URL(request.url).pathname.match(/^\/api\/finance\/([0-9a-f-]+)(?:\/(invoices|receipts|payouts|pingen-price)(?:\/([0-9a-f-]+)(?:\/(pdf|issue|receipts|reverse|paid|discard|settle))?)?)?$/i);
+  const match = new URL(request.url).pathname.match(/^\/api\/finance\/([0-9a-f-]+)(?:\/(invoices|receipts|payouts|fee-settlements|pingen-price)(?:\/([0-9a-f-]+)(?:\/(pdf|issue|receipts|assume-fee|reverse|paid|discard|settle))?)?)?$/i);
   if (!match || !isUuid(match[1]) || (match[3] && !isUuid(match[3]))) return json({ error: "not_found" },404);
   const [,tenantId,resource,id,action] = match;
   const read = request.method === "GET" && ((!resource && !id) || (resource === "invoices" && id && action === "pdf"));
-  const write = request.method === "POST" && ((resource === "invoices" && ((!id && !action) || (id && (action === "receipts" || action === "issue"))))
-    || (resource === "receipts" && id && action === "reverse") || (resource === "pingen-price" && !id) || (resource === "payouts" && ((!id && !action) || (id && (action === "paid" || action === "discard" || action === "settle")))));
+  const write = request.method === "POST" && ((resource === "invoices" && ((!id && !action) || (id && (action === "receipts" || action === "issue" || action === "assume-fee"))))
+    || ((resource === "receipts" || resource === "fee-settlements") && id && action === "reverse") || (resource === "pingen-price" && !id) || (resource === "payouts" && ((!id && !action) || (id && (action === "paid" || action === "discard" || action === "settle")))));
   if (!read && !write) return json({ error: "method_not_allowed" },405);
   const user = await requireUser(request);
   if (isResponse(user)) return user;
@@ -55,9 +56,11 @@ export default async (request: Request, context: Context) => {
           (cost.amount_cents-COALESCE((SELECT sum(item.amount_cents) FROM billing_payout_postal_items item WHERE item.tenant_id=cost.tenant_id AND item.cost_id=cost.id),0))::text remaining_cents
           FROM billing_postal_costs cost JOIN billing_postal_dispatches dispatch ON dispatch.id=cost.dispatch_id AND dispatch.tenant_id=cost.tenant_id WHERE cost.tenant_id=$1 ORDER BY cost.created_at DESC`,[tenantId]);
         const postalItems=await client.query("SELECT * FROM billing_payout_postal_items WHERE tenant_id=$1",[tenantId]);
-        return json({ dispatches:dispatches.rows,postalCosts:postalCosts.rows,postalItems:postalItems.rows,readiness:billingReadiness(), canWrite:hasPermission(role,"finance:write"),canRecordBankMovements,
+        const feeSettlements=await client.query<{invoice_id:string;reversed_at:string|null;waived_cents:number}>(`SELECT fee.*,(fee.club_charge_cents-COALESCE((SELECT sum(item.amount_cents) FROM billing_payout_fee_items item WHERE item.tenant_id=fee.tenant_id AND item.settlement_id=fee.id),0))::text remaining_cents FROM billing_fee_settlements fee WHERE fee.tenant_id=$1 ORDER BY fee.created_at DESC`,[tenantId]);
+        const feeItems=await client.query("SELECT * FROM billing_payout_fee_items WHERE tenant_id=$1",[tenantId]);
+        return json({ feeSettlements:feeSettlements.rows,feeItems:feeItems.rows,dispatches:dispatches.rows,postalCosts:postalCosts.rows,postalItems:postalItems.rows,readiness:billingReadiness(), canWrite:hasPermission(role,"finance:write"),canRecordBankMovements,
           sources:sources.filter((source) => source.canCreateDraft && !invoices.rows.some((row) => row.source_key === source.sourceKey)),unresolved,
-          invoices:invoices.rows.map((row) => ({...row,sourceAvailable:sourceMatches(row,sources)})),receipts:receipts.rows,payouts:payouts.rows });
+          invoices:invoices.rows.map((row) => ({...row,sourceAvailable:sourceMatches(row,sources),fee_waived_cents:feeSettlements.rows.filter((fee)=>fee.invoice_id===row.id&&!fee.reversed_at).reduce((sum,fee)=>sum+fee.waived_cents,0)})),receipts:receipts.rows,payouts:payouts.rows });
       }
       if (read && id) {
         const invoice = await client.query<InvoiceRow>("SELECT * FROM billing_invoices WHERE tenant_id=$1 AND id=$2",[tenantId,id]);
@@ -77,6 +80,14 @@ export default async (request: Request, context: Context) => {
       if (resource === "invoices" && action === "issue" && id) {
         if (body.detailsConfirmed !== true) throw new BillingError("invalid_billing_input",422);
         return json({invoice:await issueInvoice(client,tenantId,user.id,id,context.requestId)});
+      }
+      if (resource === "invoices" && action === "assume-fee" && id) {
+        if(body.confirmed!==true || typeof body.reason!=="string" || body.reason.trim().length<5 || body.reason.length>500) throw new BillingError("invalid_billing_input",422);
+        return json({id:await assumeFeeByClub(client,tenantId,user.id,id,body.reason.trim())});
+      }
+      if(resource === "fee-settlements" && action === "reverse" && id) {
+        if(typeof body.reason!=="string" || body.reason.trim().length<5 || body.reason.length>500) throw new BillingError("invalid_billing_input",422);
+        await reverseFeeSettlement(client,tenantId,user.id,id,body.reason.trim());return json({reversed:true});
       }
       if (resource === "invoices" && action === "receipts" && id) {
         if (!isUuid(body.idempotencyKey) || !Number.isSafeInteger(body.amountCents) || body.amountCents <= 0 || !dateInPast(body.receivedOn)
@@ -120,4 +131,6 @@ export default async (request: Request, context: Context) => {
 };
 
 export const config: Config = { path:["/api/finance/:tenantId","/api/finance/:tenantId/invoices","/api/finance/:tenantId/invoices/:id/pdf",
-  "/api/finance/:tenantId/invoices/:id/issue","/api/finance/:tenantId/invoices/:id/receipts","/api/finance/:tenantId/receipts/:id/reverse","/api/finance/:tenantId/payouts","/api/finance/:tenantId/payouts/:id/paid","/api/finance/:tenantId/pingen-price","/api/finance/:tenantId/payouts/:id/discard","/api/finance/:tenantId/payouts/:id/settle"] };
+  "/api/finance/:tenantId/invoices/:id/issue","/api/finance/:tenantId/invoices/:id/receipts",
+    "/api/finance/:tenantId/invoices/:id/assume-fee",
+    "/api/finance/:tenantId/fee-settlements/:id/reverse","/api/finance/:tenantId/receipts/:id/reverse","/api/finance/:tenantId/payouts","/api/finance/:tenantId/payouts/:id/paid","/api/finance/:tenantId/pingen-price","/api/finance/:tenantId/payouts/:id/discard","/api/finance/:tenantId/payouts/:id/settle"] };

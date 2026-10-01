@@ -9,7 +9,7 @@ test("direct contracts preserve the negotiated value and reserve capacity only o
   const createFlow = source.slice(collectionStart, releaseStart);
   const releaseFlow = source.slice(releaseStart);
 
-  assert.match(source, /\$4::integer AS contract_value_cents/);
+  assert.match(source, /ELSE \$4::integer END AS contract_value_cents/);
   assert.match(source, /priceCents: source\.contract_value_cents/);
   assert.match(createFlow, /parsed\.value\.mode === "transition" \? parsed\.value\.transitionSponsorId : null/);
   assert.doesNotMatch(createFlow, /ensureDirectReservation/);

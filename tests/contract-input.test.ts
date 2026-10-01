@@ -161,3 +161,10 @@ test("legacy contracts can be created directly from a sponsor and package select
     acknowledged: false,
   }), { ok: false, error: "admin_contract_acknowledgement_required" });
 });
+
+test("package price and fee activation must be explicit booleans",()=>{
+  const draft={sponsorId,packageVersionId,annualValueCents:40000,title:"Vertrag",specialAgreements:"Keine.",signingMethod:"click"};
+  assert.equal(parseContractUpdate({...draft,usePackagePrice:true,enablePlatformFee:true}).ok,true);
+  assert.equal(parseContractUpdate({...draft,usePackagePrice:"true"}).ok,false);
+  assert.equal(parseContractUpdate({...draft,enablePlatformFee:250}).ok,false);
+});

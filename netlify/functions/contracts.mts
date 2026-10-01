@@ -184,7 +184,8 @@ async function buildSnapshots(client: DatabaseClient, tenantId: string, selectio
     : await client.query<SnapshotSource>(`
       SELECT sponsor.id AS sponsor_id, version.id AS package_version_id,
              sponsor.legal_name, sponsor.street, sponsor.postal_code, sponsor.city, sponsor.contact_name, sponsor.contact_email,
-             version.name AS package_name, version.description, $4::integer AS contract_value_cents,
+             version.name AS package_name, version.description,
+             CASE WHEN $7::boolean THEN version.price_cents ELSE $4::integer END AS contract_value_cents,
              version.duration_months, version.payment_plan, version.payment_terms,
              version.valid_from::text, version.valid_until::text
       FROM sponsors sponsor
@@ -194,7 +195,7 @@ async function buildSnapshots(client: DatabaseClient, tenantId: string, selectio
         AND (version.status = 'published' OR ($6::boolean AND version.status = 'draft' AND version.visibility = 'private'))
         AND ((sponsor.status <> 'inactive' AND package.status = 'active') OR $5::boolean)
       LIMIT 1
-    `, [tenantId, selection.sponsorId, selection.packageVersionId, selection.annualValueCents, allowArchivedDirect, allowInternalDraft]);
+    `, [tenantId, selection.sponsorId, selection.packageVersionId, selection.annualValueCents, allowArchivedDirect, allowInternalDraft, selection.usePackagePrice === true]);
   const source = sourceResult.rows[0];
   if (!source) return null;
   const settings = await getSettings(client, tenantId);
@@ -672,6 +673,11 @@ export default async (request: Request, context: Context) => {
         const snapshots = await buildSnapshots(client, tenantId, parsed.value, preservesExistingSelection);
         if (!snapshots) return { state: "selection_not_found" as const };
         if (current.contract.package_snapshot.billing) snapshots.package.billing = current.contract.package_snapshot.billing;
+        if (parsed.value.enablePlatformFee && !snapshots.package.billing?.feeBasisPoints) {
+          const billing = newBillingTerms();
+          if (!billing) return { state: "billing_unavailable" as const };
+          snapshots.package.billing = billing;
+        }
         const updated = await client.query<{ id: string }>(`
           UPDATE sponsorship_contracts SET
             sponsor_id = $3,
@@ -697,14 +703,17 @@ export default async (request: Request, context: Context) => {
         await client.query(`INSERT INTO sponsorship_contract_events
           (tenant_id, contract_id, event_type, actor_user_id, actor_email, evidence)
           VALUES ($1,$2,'updated',$3,$4,jsonb_build_object(
-            'fields',ARRAY['sponsor','package','annual_value','title','special_agreements','signing_method'],
-            'sponsor_id',$5::text,'package_version_id',$6::text,'annual_value_cents',$7::integer))`,
-          [tenantId, contractId, user.id, user.email ?? null, snapshots.sponsorId, snapshots.packageVersionId, snapshots.package.priceCents]);
+            'fields',ARRAY['sponsor','package','annual_value','title','special_agreements','signing_method','platform_fee'],
+            'sponsor_id',$5::text,'package_version_id',$6::text,'annual_value_cents',$7::integer,
+            'fee_basis_points',$8::integer,'previous_fee_basis_points',$9::integer))`,
+          [tenantId, contractId, user.id, user.email ?? null, snapshots.sponsorId, snapshots.packageVersionId, snapshots.package.priceCents,
+            snapshots.package.billing?.feeBasisPoints ?? 0, current.contract.package_snapshot.billing?.feeBasisPoints ?? 0]);
         return { state: "updated" as const, detail: await contractDetail(client, tenantId, contractId) };
       }, user.email ?? undefined);
       if (result.state === "denied") return json({ error: "permission_denied" }, 403);
       if (result.state === "selection_not_found") return json({ error: "contract_selection_not_found" }, 409);
       if (result.state === "locked") return json({ error: "contract_locked" }, 409);
+      if (result.state === "billing_unavailable") return json({ error: "billing_not_enabled" }, 409);
       return json({ detail: result.detail });
     } catch (error) {
       console.error("contract_update_failed", { requestId: context.requestId, tenantId, contractId, error });

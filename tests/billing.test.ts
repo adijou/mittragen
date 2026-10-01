@@ -6,6 +6,24 @@ import { contractBillingIssues, contractInstallments } from "../netlify/function
 import type { ContractPdfData } from "../netlify/functions/_shared/contract-pdf.ts";
 import { pingenSamplePrice } from "../netlify/functions/_shared/pingen.ts";
 import { invoicePostalAddress } from "../netlify/functions/_shared/invoice-pdf.ts";
+import { clubFeeSettlement } from "../netlify/functions/_shared/fee-settlements.ts";
+
+test("club assumption collects the fee exactly once without inventing bank receipts",()=>{
+  for(const contribution of [40000,100000,12345]){
+    const fee=feeCents(contribution);
+    for(const extra of [0,Math.floor(fee/2),fee-1]){
+      const paid=contribution+extra;
+      const received=splitReceipt(contribution,fee,0,paid);
+      const settlement=clubFeeSettlement(contribution,fee,paid,received.platformCents);
+      assert.equal(received.platformCents+settlement.clubChargeCents,fee);
+      assert.equal(received.clubCents-settlement.clubChargeCents,paid-fee);
+      assert.equal(paid+settlement.waivedCents,contribution+fee);
+    }
+  }
+  assert.deepEqual(clubFeeSettlement(40000,1000,40000,976),{waivedCents:1000,feeCents:1000,receivedPlatformCents:976,clubChargeCents:24});
+  for(const received of [39999,41000,41001])assert.throws(()=>clubFeeSettlement(40000,1000,received,976));
+  assert.throws(()=>clubFeeSettlement(40000,0,40000,0));
+});
 
 test("Swiss domestic invoice addresses end with postcode and city, without a country line",()=>{
   const recipient={name:"Muster Sponsor AG",street:"Hauptstrasse 1",postalCode:"3186",city:"Düdingen",country:"CH"};
