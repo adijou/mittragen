@@ -7,9 +7,12 @@ export function pingenConfig(read:(name:string)=>string|undefined=(name)=>Netlif
   if(!clientId||!secret||!organisationId)throw new BillingError("pingen_not_configured",422);
   return {clientId,secret,organisationId,environment:read("PINGEN_ENVIRONMENT")==="production"?"production":"staging",enabled:read("PINGEN_POSTAL_ENABLED")==="true"};
 }
-export function requirePostalEnabled(config:PingenConfig,deployContext:string|undefined) {
-  if(!config.enabled)throw new BillingError("pingen_postal_disabled",422);
+export function requirePostalPreparation(config:PingenConfig,deployContext:string|undefined) {
   if(config.environment==="production"&&deployContext!=="production")throw new BillingError("pingen_production_only",403);
+}
+export function requirePostalEnabled(config:PingenConfig,deployContext:string|undefined) {
+  requirePostalPreparation(config,deployContext);
+  if(!config.enabled)throw new BillingError("pingen_postal_disabled",422);
 }
 export function pingenCents(value:unknown):number {
   if(typeof value!=="number"||!Number.isFinite(value)||value<0||value>10000||Math.abs(value*100-Math.round(value*100))>0.000001)throw new BillingError("pingen_price_invalid",502);

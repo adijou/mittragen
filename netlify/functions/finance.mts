@@ -46,8 +46,12 @@ export default async (request: Request, context: Context) => {
       if (!resource) {
         const { sources,unresolved } = await billingSources(client,tenantId);
         const invoices = await client.query<InvoiceRow & { received_cents: string }>(`SELECT invoice.*,COALESCE((SELECT sum(amount_cents) FROM billing_receipts receipt
-          WHERE receipt.tenant_id=invoice.tenant_id AND receipt.invoice_id=invoice.id AND receipt.reversed_at IS NULL),0)::text received_cents
-          FROM billing_invoices invoice WHERE invoice.tenant_id=$1 ORDER BY invoice.created_at DESC`,[tenantId]);
+          WHERE receipt.tenant_id=invoice.tenant_id AND receipt.invoice_id=invoice.id AND receipt.reversed_at IS NULL),0)::text received_cents,
+          COALESCE(booking.contact_email,contract.sponsor_snapshot->>'contactEmail','') AS recipient_email
+          FROM billing_invoices invoice
+          LEFT JOIN event_sponsorship_bookings booking ON invoice.source_type='event_booking' AND booking.tenant_id=invoice.tenant_id AND booking.id=invoice.source_id
+          LEFT JOIN sponsorship_contracts contract ON invoice.source_type='contract' AND contract.tenant_id=invoice.tenant_id AND contract.id=invoice.source_id
+          WHERE invoice.tenant_id=$1 ORDER BY invoice.created_at DESC`,[tenantId]);
         const receipts = await client.query(`SELECT receipt.*,item.payout_id FROM billing_receipts receipt LEFT JOIN billing_payout_items item
           ON item.tenant_id=receipt.tenant_id AND item.receipt_id=receipt.id WHERE receipt.tenant_id=$1 ORDER BY receipt.recorded_at DESC,receipt.id DESC`,[tenantId]);
         const payouts = await client.query("SELECT *,amount_cents::text FROM billing_payouts WHERE tenant_id=$1 ORDER BY through_month DESC",[tenantId]);
@@ -58,7 +62,8 @@ export default async (request: Request, context: Context) => {
         const postalItems=await client.query("SELECT * FROM billing_payout_postal_items WHERE tenant_id=$1",[tenantId]);
         const feeSettlements=await client.query<{invoice_id:string;reversed_at:string|null;waived_cents:number}>(`SELECT fee.*,(fee.club_charge_cents-COALESCE((SELECT sum(item.amount_cents) FROM billing_payout_fee_items item WHERE item.tenant_id=fee.tenant_id AND item.settlement_id=fee.id),0))::text remaining_cents FROM billing_fee_settlements fee WHERE fee.tenant_id=$1 ORDER BY fee.created_at DESC`,[tenantId]);
         const feeItems=await client.query("SELECT * FROM billing_payout_fee_items WHERE tenant_id=$1",[tenantId]);
-        return json({ feeSettlements:feeSettlements.rows,feeItems:feeItems.rows,dispatches:dispatches.rows,postalCosts:postalCosts.rows,postalItems:postalItems.rows,readiness:billingReadiness(), canWrite:hasPermission(role,"finance:write"),canRecordBankMovements,
+        const emailDispatches=await client.query("SELECT id,invoice_id,recipient_email,status,provider_id,accepted_at,first_attempt_at,last_attempt_at,last_error FROM billing_email_dispatches WHERE tenant_id=$1 ORDER BY first_attempt_at DESC",[tenantId]);
+        return json({ emailDispatches:emailDispatches.rows,feeSettlements:feeSettlements.rows,feeItems:feeItems.rows,dispatches:dispatches.rows,postalCosts:postalCosts.rows,postalItems:postalItems.rows,readiness:billingReadiness(), canWrite:hasPermission(role,"finance:write"),canRecordBankMovements,
           sources:sources.filter((source) => source.canCreateDraft && !invoices.rows.some((row) => row.source_key === source.sourceKey)),unresolved,
           invoices:invoices.rows.map((row) => ({...row,sourceAvailable:sourceMatches(row,sources),refreshSources:row.status==="draft"?invoiceRefreshSources(row,sources):[],fee_waived_cents:feeSettlements.rows.filter((fee)=>fee.invoice_id===row.id&&!fee.reversed_at).reduce((sum,fee)=>sum+fee.waived_cents,0)})),receipts:receipts.rows,payouts:payouts.rows });
       }

@@ -34,6 +34,7 @@ export function billingReadiness(read: Env = env) {
     operatorConfigured: Boolean(config.operator),
     // A login email is not API access. Never expose secrets to the browser.
     pingenConfigured,
+    emailConfigured:Boolean(read("RESEND_API_KEY")),
     pingenEnvironment: read("PINGEN_ENVIRONMENT") === "production" ? "production" : "staging",
     invoiceIssuingEnabled: Boolean(creditor),
     qrAccountConfigured: Boolean(creditor),

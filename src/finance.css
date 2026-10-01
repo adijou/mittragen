@@ -74,3 +74,11 @@
 .finance-dialog form > div { display: flex; flex-wrap: wrap; gap: 10px; }
 .finance-dialog input:not([type="checkbox"]), .finance-dialog select { width: 100%; padding: 10px; }
 .finance-dialog .finance-checkbox { display: flex; gap: 10px; align-items: start; line-height: 1.5; }
+
+.delivery-actions { display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:16px 0; }
+.delivery-search { display:grid;gap:6px;max-width:420px; }
+.delivery-search input { width:100%;padding:10px; }
+.invoice-delivery input[type="checkbox"] { width:18px;height:18px;accent-color:var(--blue); }
+.delivery-results { display:grid;gap:8px;padding-left:22px;max-height:260px;overflow-y:auto; }
+.finance-dialog label:not(.finance-checkbox) { display:grid;gap:8px; }
+.finance-dialog article { border-bottom:1px solid var(--line);padding:10px 0; }

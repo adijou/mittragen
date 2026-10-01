@@ -138,10 +138,13 @@ export async function createInvoicePdf(invoice: InvoiceRow, brand: OrganizationP
     draw(label, RIGHT - mm(3) - regular.widthOfTextAtSize(label, 8.5), mm(111), 8.5);
   }
 
-  const notice = invoice.collection_notice || "Die Zahlungskonditionen und die vereinbarte Abrechnung des bestehenden Sponsorings bleiben unverändert.";
+  const collection = invoice.collection_notice || "Die Zahlungskonditionen und die vereinbarte Abrechnung des bestehenden Sponsorings bleiben unverändert.";
+  const notice = invoice.platform_fee_cents > 0
+    ? `Die Plattformgebühr finanziert die Infrastruktur von mittragen.ch. Sie wird von den Sponsoren getragen und entlastet die Klubs. ${collection}`
+    : collection;
   const instructions = issued
-    ? "Bitte verwenden Sie den untenstehenden QR-Zahlteil. Es gelten die vereinbarten Zahlungskonditionen. Dem Sponsor werden keine Versandkosten verrechnet."
-    : "Keine Zahlungsaufforderung. Die zahlbare QR-Rechnung entsteht erst bei der Freigabe. Versandkosten sind nicht enthalten; es wurde kein kostenpflichtiger Versand ausgelöst. Steuerangaben und allfällige Mehrwertsteuer werden vor der Rechnungsfreigabe geprüft.";
+    ? "Bitte verwenden Sie den untenstehenden QR-Zahlteil. Es gelten die vereinbarten Zahlungskonditionen."
+    : "Keine Zahlungsaufforderung. Die zahlbare QR-Rechnung entsteht erst bei der Freigabe. Steuerangaben und allfällige Mehrwertsteuer werden vor der Rechnungsfreigabe geprüft.";
   let bodySize = 10;
   const measure = (size: number) => {
     const description = wrap(invoice.description, CONTENT, size + 1, bold);

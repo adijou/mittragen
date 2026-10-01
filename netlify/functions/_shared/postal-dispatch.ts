@@ -3,7 +3,7 @@ import { PDFDocument } from "pdf-lib";
 import { withSession, type DatabaseClient } from "./database.ts";
 import { BillingError, lockBilling, sourceMatches, type InvoiceRow } from "./billing-ledger.ts";
 import { billingSources } from "./billing-sources.ts";
-import { pingenClient, pingenConfig, requirePostalEnabled, type PingenConfig, type PingenLetter } from "./pingen-client.ts";
+import { pingenClient, pingenConfig, requirePostalEnabled, requirePostalPreparation, type PingenConfig, type PingenLetter } from "./pingen-client.ts";
 import { swissToday } from "../../../shared/billing.ts";
 
 export type PostalDispatch={id:string;tenant_id:string;invoice_id:string;environment:"staging"|"production";organisation_id:string;
@@ -42,7 +42,7 @@ function validatedLetter(row:PostalDispatch,letter:PingenLetter) {
 
 /** A committed local job precedes every remote create; uncertain creates are recovered by their unique filename. */
 export async function preparePostal(s:Session,invoiceId:string,deployContext?:string) {
-  const config=pingenConfig();requirePostalEnabled(config,deployContext);
+  const config=pingenConfig();requirePostalPreparation(config,deployContext);
   const reservation=await session(s,async client=>{
     await invoiceForPost(client,s.tenantId,invoiceId);
     const prior=(await client.query<PostalDispatch>("SELECT * FROM billing_postal_dispatches WHERE tenant_id=$1 AND invoice_id=$2 AND environment=$3",[s.tenantId,invoiceId,config.environment])).rows[0];

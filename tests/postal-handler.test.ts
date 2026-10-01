@@ -88,20 +88,22 @@ test('postal workflow binds immutable invoices, confirms real costs, and deducts
       return response({data:wrongAddress?{...row,attributes:{...row.attributes,country:'DE'}}:row});
     }) as typeof fetch;
     let invoice='',id='',letterId='',ready:any;
-    await t.test('roles, origin, deployment, invoice status and feature flags gate every upload',async()=>{
+    await t.test('roles, origin and deployment protect invoice uploads',async()=>{
       invoice=await makeInvoice();
       user='reader';setTestUser({id:user});await post(`/invoices/${invoice}/prepare`,{},403);user='operator';setTestUser({id:user});
       assert.equal((await postal(request('postal',tenant,`/invoices/${invoice}/prepare`,{},'https://evil.invalid'),ctx)).status,403);
       await post(`/invoices/${invoice}/prepare`,{},404,other);
       await post(`/invoices/${invoice}/prepare`,{},403,tenant,{requestId:'preview',deploy:{context:'deploy-preview'}} as never);
-      env.PINGEN_POSTAL_ENABLED='false';await post(`/invoices/${invoice}/prepare`,{},422);env.PINGEN_POSTAL_ENABLED='true';
       assert.equal(uploadCount,0);assert.equal(sendCount,0);
     });
-    await t.test('one immutable PDF upload, QR paper selection, address review and server price',async()=>{
+    await t.test('preparation works before sending is enabled; one immutable PDF and reviewed price are retained',async()=>{
+      env.PINGEN_POSTAL_ENABLED='false';
       const a=(await post(`/invoices/${invoice}/prepare`)).dispatch;id=a.id;letterId=a.provider_letter_id;
       assert.equal((await post(`/invoices/${invoice}/prepare`)).dispatch.id,id);assert.equal(createCount,1);assert.equal(uploadCount,1);assert.equal(sendCount,0);
       ready=(await post(`/dispatches/${id}/sync`)).dispatch;assert.equal(ready.status,'ready');assert.equal(ready.page_count,1);assert.deepEqual(ready.paper_types,['qr']);assert.equal(ready.quoted_cents,150);
       assert.match(ready.provider_address,/Düdingen/);assert.equal((await db.query('SELECT id FROM billing_postal_costs')).rows.length,0);
+      await post(`/dispatches/${id}/send`,{quoteToken:ready.quote_token,quotedCents:ready.quoted_cents,costsAccepted:true},422);
+      assert.equal(sendCount,0);env.PINGEN_POSTAL_ENABLED='true';
       await post(`/dispatches/${id}/send`,{quoteToken:ready.quote_token,quotedCents:1,costsAccepted:true},409);
       wrongAddress=true;await post(`/dispatches/${id}/send`,{quoteToken:ready.quote_token,quotedCents:150,costsAccepted:true},409);wrongAddress=false;assert.equal(sendCount,0);
       quote=1.60;await post(`/dispatches/${id}/send`,{quoteToken:ready.quote_token,quotedCents:150,costsAccepted:true},409);assert.equal(sendCount,0);
