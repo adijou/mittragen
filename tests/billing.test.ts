@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { feeCents, splitReceipt, parseChf, closedMonth, swissToday } from "../shared/billing.ts";
 import { billingConfig, billingReadiness, newBillingTerms } from "../netlify/functions/_shared/billing-config.ts";
-import { contractInstallments } from "../netlify/functions/_shared/billing-sources.ts";
+import { contractBillingIssues, contractInstallments } from "../netlify/functions/_shared/billing-sources.ts";
 import type { ContractPdfData } from "../netlify/functions/_shared/contract-pdf.ts";
 import { pingenSamplePrice } from "../netlify/functions/_shared/pingen.ts";
 import { invoicePostalAddress } from "../netlify/functions/_shared/invoice-pdf.ts";
@@ -55,6 +55,31 @@ test("contract schedules split the annual contribution, including odd cents and 
   assert.equal(contractInstallments({...item,paymentPlan:"custom"}).length,0);
   assert.equal(contractInstallments({...item,validFrom:null}).length,0);
   assert.equal(contractInstallments({...item,validUntil:"2029-01-01"}).length,0);
+});
+test("contract review explains each missing input without producing a guessed schedule",()=>{
+  const item={priceCents:100_000,paymentPlan:"annual",validFrom:"2026-07-01",validUntil:"2027-06-30",durationMonths:12} as ContractPdfData["package"];
+  assert.deepEqual(contractBillingIssues(item),[]);
+  const invalidCases=[
+    [{paymentPlan:"custom"},/Individueller Zahlungsplan/],
+    [{paymentPlan:"unknown"},/unterstützter Zahlungsplan/],
+    [{validFrom:null},/Vertragsbeginn/],
+    [{validUntil:"2027-02-30"},/Vertragsende/],
+    [{durationMonths:0},/Vertragsdauer/],
+    [{durationMonths:121},/Vertragsdauer/],
+    [{durationMonths:1.5},/Vertragsdauer/],
+    [{priceCents:0},/Jahresbeitrag/],
+    [{priceCents:1.5},/Jahresbeitrag/],
+    [{validUntil:"2027-07-01"},/Beginn 01\.07\.2026 und 12 Monate ergeben als Ende 30\.06\.2027; gespeichert ist 01\.07\.2027/],
+  ] as const;
+  for(const [changes,reason] of invalidCases){
+    const invalid={...item,...changes};
+    assert.match(contractBillingIssues(invalid).join(" "),reason);
+    assert.deepEqual(contractInstallments(invalid),[]);
+  }
+  const incomplete={...item,paymentPlan:"custom",validFrom:null,validUntil:null};
+  assert.equal(contractBillingIssues(incomplete).length,3);
+  assert.deepEqual(contractInstallments(incomplete),[]);
+  assert.deepEqual(contractInstallments(item),[{start:"2026-07-01",end:"2027-06-30",contributionCents:100_000}]);
 });
 test("Pingen pricing defaults to sandbox and never uploads, creates, sends or exposes credentials",async()=>{
   const calls:Array<{url:string;init:RequestInit}>=[];

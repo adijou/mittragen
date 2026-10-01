@@ -16,13 +16,33 @@ function addMonths(date: string, months: number) {
   return new Date(Date.UTC(year, month - 1 + months, Math.min(day, lastDay))).toISOString().slice(0, 10);
 }
 const previousDay = (date: string) => new Date(Date.parse(`${date}T12:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
+const paymentSteps: Record<string, number> = { annual: 12, semiannual: 6, quarterly: 3 };
+
+/** Explain the saved agreement's gaps without guessing dates, instalments or amounts. */
+export function contractBillingIssues(item: ContractPdfData["package"]) {
+  const issues: string[] = [];
+  if (!paymentSteps[item.paymentPlan]) issues.push(item.paymentPlan === "custom"
+    ? "Individueller Zahlungsplan: Fälligkeiten und Teilbeträge sind nicht für die automatische Abrechnung festgelegt."
+    : "Es fehlt ein unterstützter Zahlungsplan (jährlich, halbjährlich oder quartalsweise).");
+  if (!isDate(item.validFrom)) issues.push("Der Vertragsbeginn fehlt oder ist ungültig.");
+  if (!isDate(item.validUntil)) issues.push("Das Vertragsende fehlt oder ist ungültig.");
+  const validDuration = Number.isInteger(item.durationMonths) && item.durationMonths >= 1 && item.durationMonths <= 120;
+  if (!validDuration) issues.push("Die Vertragsdauer muss zwischen 1 und 120 ganzen Monaten liegen.");
+  if (!Number.isSafeInteger(item.priceCents) || item.priceCents <= 0) issues.push("Es fehlt ein gültiger positiver Jahresbeitrag.");
+  if (validDuration && isDate(item.validFrom) && isDate(item.validUntil)) {
+    const expectedEnd = previousDay(addMonths(item.validFrom, item.durationMonths));
+    if (expectedEnd !== item.validUntil) {
+      const displayDate = (date: string) => date.split("-").reverse().join(".");
+      issues.push(`Laufzeit widersprüchlich: Beginn ${displayDate(item.validFrom)} und ${item.durationMonths} Monate ergeben als Ende ${displayDate(expectedEnd)}; gespeichert ist ${displayDate(item.validUntil)}.`);
+    }
+  }
+  return issues;
+}
 
 /** Only unambiguous, dated schedules. Legacy/custom agreements require review, never guessed billing. */
 export function contractInstallments(item: ContractPdfData["package"]) {
-  const step = ({ annual: 12, semiannual: 6, quarterly: 3 } as Record<string, number>)[item.paymentPlan];
-  if (!step || !isDate(item.validFrom) || !isDate(item.validUntil) || !Number.isInteger(item.durationMonths)
-    || item.durationMonths < 1 || item.durationMonths > 120 || !Number.isSafeInteger(item.priceCents) || item.priceCents <= 0
-    || previousDay(addMonths(item.validFrom, item.durationMonths)) !== item.validUntil) return [];
+  if (contractBillingIssues(item).length || !isDate(item.validFrom)) return [];
+  const step = paymentSteps[item.paymentPlan];
   const result = [];
   for (let month = 0; month < item.durationMonths; month += step) {
     const end = Math.min(month + step, item.durationMonths);
@@ -60,7 +80,13 @@ export async function billingSources(client: DatabaseClient, tenantId: string) {
   const unresolved: Array<{ reference: string; reason: string }> = [];
   for (const row of contracts.rows) {
     const periods = contractInstallments(row.package_snapshot);
-    if (!periods.length) { unresolved.push({ reference: row.contract_number, reason: "Laufzeit oder Zahlungsplan benötigt eine manuelle Prüfung. Es wird kein Betrag geschätzt." }); continue; }
+    if (!periods.length) {
+      const issues = contractBillingIssues(row.package_snapshot);
+      unresolved.push({ reference: row.contract_number, reason: issues.length
+        ? `${issues.join(" ")} Bitte die gespeicherten Vertragsangaben prüfen.`
+        : "Für die gespeicherte Laufzeit ergibt sich kein abrechenbarer Betrag von mindestens einem Rappen. Bitte den Jahresbeitrag prüfen." });
+      continue;
+    }
     const sponsor = row.sponsor_snapshot; const club = row.organization_snapshot;
     for (const period of periods) {
       const basisPoints = row.package_snapshot.billing?.feeBasisPoints ?? 0;
