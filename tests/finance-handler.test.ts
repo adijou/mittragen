@@ -25,6 +25,8 @@ const hooks=registerHooks({load(url,context,nextLoad){
 const {default:handler}=await import("../netlify/functions/finance.mts");
 const {default:contractHandler}=await import("../netlify/functions/contracts.mts");
 const {default:bookHandler}=await import("../netlify/functions/event-sponsoring-public.mts");
+const {preparePostal,sendPostal}=await import("../netlify/functions/_shared/postal-dispatch.ts");
+const {sendInvoiceEmail}=await import("../netlify/functions/_shared/invoice-email.ts");
 const {setTestSession}=await import("../netlify/functions/_shared/database.ts") as never as {setTestSession:(fn:unknown)=>void};
 const {setTestUser}=await import("@netlify/identity") as never as {setTestUser:(user:unknown)=>void};
 hooks.deregister();
@@ -173,6 +175,13 @@ test("finance routes enforce real PostgreSQL isolation, money allocation and ret
       Object.assign(globalThis,{Netlify:{env:{get:(name:string)=>({BILLING_OPERATOR_USER_IDS:"operator",BILLING_QR_CREDITOR:JSON.stringify({iban:"CH4431999123000889012",name:"Test Inkasso",street:"",houseNumber:"",postalCode:"8000",city:"Zürich",country:"CH"})}[name])}}});
       await call(tenantA,`/invoices/${created.invoice.id}/issue`,{detailsConfirmed:true});
       await call(tenantA,path,selected,409);
+      const replacement=(await call(tenantA,`/invoices/${created.invoice.id}/recreate`,{confirmed:true,reason:'Bestätigte Vertragskorrektur',...selected})).invoice;
+      assert.equal(replacement.source_id,revision);assert.equal(replacement.platform_fee_cents,250);
+      assert.equal(replacement.replacement_for,created.invoice.id);
+      await call(tenantA,`/invoices/${replacement.id}/refresh`,selected);
+      await call(tenantA,`/invoices/${replacement.id}/cancel`,{confirmed:true,reason:'Neue Abrechnung vorbereiten'});
+      // Both predecessor periods are cancelled, so the same confirmed period can be billed again.
+      await call(tenantA,'/invoices',selected,201);
       user="operator";setTestUser({id:user});
 
     });
@@ -207,6 +216,13 @@ test("finance routes enforce real PostgreSQL isolation, money allocation and ret
       assert.equal(next[0].contributionCents,40000);assert.equal(next[0].platformFeeCents,1000);
       const missingStart=await db.query("SELECT package_snapshot FROM sponsorship_contracts WHERE id=$1",[contract]);
       assert.equal((missingStart.rows[0].package_snapshot as typeof snapshot).validUntil,null);
+      // An imported prior-year invoice may be corrected, but cannot be created as new back-billing.
+      const historical=randomUUID(),historicalKey=`contract:${contract}:${year-1}-01-01`;
+      await db.query(`INSERT INTO billing_invoices(id,tenant_id,source_type,source_id,source_key,reference,description,recipient,issuer,contribution_cents,fee_basis_points,platform_fee_cents,created_by,period_start,period_end)
+        SELECT $2,tenant_id,source_type,source_id,$3,'ENT-HISTORICAL-TEST',description,recipient,issuer,contribution_cents,fee_basis_points,platform_fee_cents,created_by,$4,$5 FROM billing_invoices WHERE id=$1`,[invoice.id,historical,historicalKey,`${year-1}-01-01`,`${year-1}-12-31`]);
+      const replacement=(await call(tenantA,`/invoices/${historical}/recreate`,{confirmed:true,reason:'Historische Rechnung korrigieren',sourceKey:historicalKey})).invoice;
+      assert.equal(replacement.period_start.slice(0,10),`${year-1}-01-01`);assert.equal(replacement.replacement_for,historical);
+      assert.equal((await call(tenantA)).sources.some((row:{sourceKey:string})=>row.sourceKey===historicalKey),false);
     });
     await t.test("QR issuance is tenant-scoped, atomic, immutable and repeat-safe",async()=>{
       // SIX public example account: no actual customer account data in fixtures.
@@ -351,6 +367,127 @@ test("finance routes enforce real PostgreSQL isolation, money allocation and ret
       await call(tenant,`/payouts/${payout}/paid`,{paidOn:swissToday(),bankReference:"FEE-OUT",bankEvidenceConfirmed:true});
       assert.equal((await db.query("SELECT sha256 FROM billing_invoice_documents WHERE invoice_id=$1",[draft.id])).rows[0].sha256,originalPdf);
       assert.equal((await db.query("SELECT count(*)::integer count FROM audit_events WHERE action='billing.fee_assumed_by_club' AND tenant_id=$1",[tenant])).rows[0].count,2);
+    });
+    await t.test("invoice deletion and replacement preserve accounting and delivery evidence",async(t)=>{
+      const tenant=randomUUID(),event=randomUUID();
+      await db.query("INSERT INTO tenants(id,slug,name) VALUES($1,'invoice-correction','Testverein')",[tenant]);
+      await db.query("INSERT INTO tenant_memberships(tenant_id,identity_user_id,role) VALUES($1,'club-owner','owner'),($1,'reader','viewer'),($1,'operator','owner')",[tenant]);
+      await db.query("INSERT INTO sponsorship_events(id,tenant_id,team_name,opponent,starts_at,price_cents,status,created_by) VALUES($1,$2,'FC Test','FC Gast','2026-10-01',40000,'published','fixture')",[event,tenant]);
+      const env:Record<string,string>={BILLING_OPERATOR_USER_IDS:'operator',BILLING_QR_CREDITOR:JSON.stringify({iban:'CH4431999123000889012',name:'Test Inkasso',street:'',houseNumber:'',postalCode:'8000',city:'Zürich',country:'CH'}),PINGEN_CLIENT_ID:'fixture',PINGEN_CLIENT_SECRET:'fixture',PINGEN_ORGANISATION_ID:'fixture',PINGEN_ENVIRONMENT:'production',PINGEN_POSTAL_ENABLED:'true',RESEND_API_KEY:'fixture'};
+      Object.assign(globalThis,{Netlify:{env:{get:(name:string)=>env[name]}}});
+      const login=(id:string)=>{user=id;setTestUser({id});};login('club-owner');
+      const correction={confirmed:true,reason:'Rechnung im Test korrigieren'};
+      const make=async(issued=false)=>{
+        const booking=randomUUID();
+        await db.query(`INSERT INTO event_sponsorship_bookings(id,tenant_id,event_id,reference,sponsor_name,address,postal_code,city,contact_name,contact_email,payment_mode,amount_cents,fee_basis_points)
+          VALUES($1,$2,$3,$4,'Testsponsor AG','Testweg 1','3186','Düdingen','Test','test@example.invalid','invoice',40000,250)`,[booking,tenant,event,`MB-2026-${randomUUID().slice(0,8).toUpperCase()}`]);
+        const draft=(await call(tenant,'/invoices',{sourceKey:`event:${booking}`},201)).invoice;
+        return issued?(await call(tenant,`/invoices/${draft.id}/issue`,{detailsConfirmed:true})).invoice:draft;
+      };
+      const state=async(id:string)=>(await call(tenant)).invoices.find((row:{id:string})=>row.id===id);
+      const original=async(id:string)=>{
+        const response=await handler(request(tenant,`/invoices/${id}/pdf`),{requestId:'correction-pdf'} as never);
+        assert.equal(response.status,200);return {bytes:new Uint8Array(await response.arrayBuffer()),filename:response.headers.get('Content-Disposition')};
+      };
+      await t.test('owners may delete drafts, with origin, account, role and tenant checks',async()=>{
+        const draft=await make();const path=`/invoices/${draft.id}/cancel`;
+        login('reader');await call(tenant,path,correction,403);login('club-owner');
+        await call(tenantB,path,correction,403);
+        login('operator');await call(tenantB,path,correction,404);login('club-owner');
+        for(const headers of [{Origin:'https://evil.invalid'},{'X-Sponsor-Account':'other-user'}]){
+          const response=await handler(request(tenant,path,correction,headers),{requestId:'auth'} as never);assert.ok([403,409].includes(response.status));
+        }
+        await call(tenant,path,{...correction,confirmed:false},422);
+        await call(tenant,path,{...correction,reason:'x'},422);
+        assert.equal((await state(draft.id)).status,'draft');
+        const deleted=(await call(tenant,path,correction)).invoice;
+        assert.equal(deleted.status,'cancelled');assert.equal(deleted.cancelled_by,'club-owner');assert.ok(deleted.cancelled_at);
+        await call(tenant,path,correction);
+        assert.equal((await db.query("SELECT id FROM audit_events WHERE action='billing.invoice_cancelled' AND object_id=$1",[draft.id])).rows.length,1);
+        assert.ok((await call(tenant)).sources.some((row:{sourceKey:string})=>row.sourceKey===draft.source_key));
+        const fresh=(await call(tenant,'/invoices',{sourceKey:draft.source_key},201)).invoice;
+        assert.notEqual(fresh.id,draft.id);
+        assert.equal((await call(tenant,'/invoices',{sourceKey:draft.source_key},201)).invoice.id,fresh.id);
+        assert.equal((await call(tenant,`/invoices/${draft.id}/recreate`,correction,409)).error,'billing_period_overlap');
+      });
+      await t.test('recreation is atomic, idempotent and creates new QR details while archiving the original PDF',async()=>{
+        const invoice=await make(true),before=await original(invoice.id);
+        await assert.rejects(db.query("UPDATE billing_invoices SET status='cancelled',cancelled_at=now(),cancelled_by='x',cancellation_reason='Wrong amount',contribution_cents=1 WHERE id=$1",[invoice.id]),/immutable/);
+        await db.query("UPDATE event_sponsorship_bookings SET city='Bern',postal_code='3000' WHERE id=$1",[invoice.source_id]);
+        const path=`/invoices/${invoice.id}/recreate`;
+        const next=(await call(tenant,path,{...correction,sourceKey:invoice.source_key,contributionCents:1})).invoice;
+        assert.notEqual(next.id,invoice.id);assert.equal(next.replacement_for,invoice.id);assert.equal(next.status,'draft');assert.equal(next.invoice_number,null);
+        assert.equal(next.recipient.city,'Bern');assert.equal(next.contribution_cents,40000);assert.equal(next.platform_fee_cents,1000);
+        assert.equal((await call(tenant,path,correction)).invoice.id,next.id);
+        assert.equal((await state(invoice.id)).replacementId,next.id);
+        const archived=await original(invoice.id);assert.deepEqual(archived.bytes,before.bytes);assert.match(archived.filename!,/Storniert_RE-/);
+        const old=await state(invoice.id);assert.equal(old.status,'cancelled');assert.equal(old.qr_reference,invoice.qr_reference);assert.equal(old.invoice_number,invoice.invoice_number);assert.equal(old.sourceAvailable,false);
+        await assert.rejects(db.query("UPDATE billing_invoices SET status='issued' WHERE id=$1",[invoice.id]),/immutable/);
+        await assert.rejects(db.query("DELETE FROM billing_invoices WHERE id=$1",[invoice.id]),/immutable/);
+        await assert.rejects(db.query("DELETE FROM billing_invoice_documents WHERE invoice_id=$1",[invoice.id]),/immutable/);
+        await call(tenant,`/invoices/${invoice.id}/issue`,{detailsConfirmed:true},409);
+        const issued=(await call(tenant,`/invoices/${next.id}/issue`,{detailsConfirmed:true})).invoice;
+        assert.notEqual(issued.invoice_number,invoice.invoice_number);assert.notEqual(issued.qr_reference,invoice.qr_reference);
+        assert.equal((await PDFDocument.load((await original(next.id)).bytes)).getPageCount(),1);
+        assert.equal((await db.query("SELECT id FROM billing_invoices WHERE tenant_id=$1 AND source_key=$2 AND status<>'cancelled'",[tenant,invoice.source_key])).rows.length,1);
+        assert.equal((await call(tenant,path,correction)).invoice.id,next.id);
+      });
+      await t.test('missing sources leave the original untouched; cancelled drafts can be regenerated',async()=>{
+        const invoice=await make(true);
+        await db.query("UPDATE event_sponsorship_bookings SET status='cancelled' WHERE id=$1",[invoice.source_id]);
+        await call(tenant,`/invoices/${invoice.id}/recreate`,correction,409);
+        assert.equal((await state(invoice.id)).status,'issued');
+        const draft=await make();await call(tenant,`/invoices/${draft.id}/cancel`,correction);
+        const fresh=(await call(tenant,`/invoices/${draft.id}/recreate`,correction)).invoice;
+        assert.equal(fresh.replacement_for,draft.id);assert.equal(fresh.status,'draft');
+        await call(tenant,`/invoices/${fresh.id}/cancel`,correction);
+        assert.equal((await call(tenant,`/invoices/${draft.id}/recreate`,correction)).invoice.id,fresh.id);
+        const third=(await call(tenant,`/invoices/${fresh.id}/recreate`,correction)).invoice;
+        assert.notEqual(third.id,fresh.id);assert.equal(third.replacement_for,fresh.id);
+      });
+      await t.test('payments block both actions; reversed erroneous payments remain as evidence',async()=>{
+        const invoice=await make(true);login('operator');
+        const receipt=(await call(tenant,`/invoices/${invoice.id}/receipts`,{idempotencyKey:randomUUID(),amountCents:100,receivedOn:swissToday(),bankReference:randomUUID(),bankEvidenceConfirmed:true},201)).id;
+        for(const action of ['cancel','recreate'])assert.equal((await call(tenant,`/invoices/${invoice.id}/${action}`,correction,409)).error,'billing_cancellation_has_receipts');
+        assert.equal((await state(invoice.id)).status,'issued');
+        await call(tenant,`/receipts/${receipt}/reverse`,{reason:'Falsche Zuordnung im Test'});
+        await call(tenant,`/invoices/${invoice.id}/cancel`,correction);
+        assert.ok((await db.query("SELECT reversed_at FROM billing_receipts WHERE id=$1",[receipt])).rows[0].reversed_at);
+        await call(tenant,`/invoices/${invoice.id}/receipts`,{idempotencyKey:randomUUID(),amountCents:100,receivedOn:swissToday(),bankReference:randomUUID(),bankEvidenceConfirmed:true},409);
+        login('club-owner');
+      });
+      await t.test('in-flight mail blocks correction and uncertain delivery requires explicit acknowledgement',async()=>{
+        const invoice=await make(true);
+        await db.query(`INSERT INTO billing_email_dispatches(tenant_id,invoice_id,recipient_email,pdf_sha256,payload,status,created_by)
+          SELECT tenant_id,invoice_id,'test@example.invalid',sha256,'{}','sending','fixture' FROM billing_invoice_documents WHERE invoice_id=$1`,[invoice.id]);
+        const path=`/invoices/${invoice.id}/recreate`;
+        assert.equal((await call(tenant,path,{...correction,deliveryAcknowledged:true},409)).error,'billing_cancellation_sending');
+        await db.query("UPDATE billing_email_dispatches SET status='needs_review' WHERE invoice_id=$1",[invoice.id]);
+        assert.equal((await call(tenant,path,correction,409)).error,'billing_cancellation_delivery_confirmation');
+        const fresh=(await call(tenant,path,{...correction,deliveryAcknowledged:true})).invoice;
+        const mail=await db.query("SELECT invoice_id,status,pdf_sha256,payload FROM billing_email_dispatches WHERE invoice_id=ANY($1::uuid[])",[[invoice.id,fresh.id]]);
+        assert.equal(mail.rows.length,1);assert.equal(mail.rows[0].invoice_id,invoice.id);assert.equal(mail.rows[0].status,'needs_review');
+        await assert.rejects(sendInvoiceEmail({actor:'club-owner',tenantId:tenant},invoice.id,'test@example.invalid','production'),/invoice_email_not_issued/);
+        await assert.rejects(preparePostal({actor:'club-owner',tenantId:tenant},invoice.id,'production'),/pingen_invoice_not_issued/);
+      });
+      await t.test('Pingen preparation cannot send after cancellation; sent costs remain on the old invoice',async()=>{
+        const invoice=await make(true),job=randomUUID(),token=randomUUID();
+        await db.query(`INSERT INTO billing_postal_dispatches(id,tenant_id,invoice_id,environment,organisation_id,status,file_name,pdf_sha256,page_count,paper_types,quoted_cents,quote_token,quoted_at,provider_letter_id,created_by)
+          SELECT $2,tenant_id,invoice_id,'production','fixture','ready','fixture.pdf',sha256,1,'["qr"]',150,$3,now(),'fixture-letter','fixture' FROM billing_invoice_documents WHERE invoice_id=$1`,[invoice.id,job,token]);
+        await call(tenant,`/invoices/${invoice.id}/cancel`,correction);
+        await assert.rejects(sendPostal({actor:'club-owner',tenantId:tenant},job,{quoteToken:token,quotedCents:150,costsAccepted:true},'production'),/pingen_invoice_not_issued/);
+        const sent=await make(true),sentJob=randomUUID();
+        await db.query(`INSERT INTO billing_postal_dispatches(id,tenant_id,invoice_id,environment,organisation_id,status,file_name,pdf_sha256,page_count,paper_types,send_started_at,cost_confirmed,created_by)
+          SELECT $2,tenant_id,invoice_id,'production','fixture','sending','fixture-sent.pdf',sha256,1,'["qr"]',now(),true,'fixture' FROM billing_invoice_documents WHERE invoice_id=$1`,[sent.id,sentJob]);
+        assert.equal((await call(tenant,`/invoices/${sent.id}/cancel`,{...correction,deliveryAcknowledged:true},409)).error,'billing_cancellation_sending');
+        await db.query("UPDATE billing_postal_dispatches SET status='sent' WHERE id=$1",[sentJob]);
+        await db.query("INSERT INTO billing_postal_costs(tenant_id,dispatch_id,amount_cents,booked_on,provider_total_cents,provider_updated_at) VALUES($1,$2,150,current_date,150,now())",[tenant,sentJob]);
+        assert.equal((await call(tenant,`/invoices/${sent.id}/recreate`,correction,409)).error,'billing_cancellation_delivery_confirmation');
+        const next=(await call(tenant,`/invoices/${sent.id}/recreate`,{...correction,deliveryAcknowledged:true})).invoice;
+        const data=await call(tenant);assert.equal(data.postalCosts.find((row:{dispatch_id:string})=>row.dispatch_id===sentJob).amount_cents,150);
+        assert.equal(data.dispatches.some((row:{invoice_id:string})=>row.invoice_id===next.id),false);
+        assert.equal((await db.query("SELECT invoice_id FROM billing_postal_dispatches WHERE id=$1",[sentJob])).rows[0].invoice_id,sent.id);
+      });
     });
   }finally{await db.close();}
 });

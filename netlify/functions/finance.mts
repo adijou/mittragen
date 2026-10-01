@@ -10,6 +10,7 @@ import { createInvoiceDraftPdf } from "./_shared/invoice-pdf.ts";
 import { loadOrganizationPdfBrand } from "./_shared/organization-pdf-brand.ts";
 import { pingenSamplePrice } from "./_shared/pingen.ts";
 import { assumeFeeByClub, reverseFeeSettlement } from "./_shared/fee-settlements.ts";
+import { cancelInvoice, recreateInvoice } from "./_shared/invoice-replacement.ts";
 import { issueInvoice } from "./_shared/invoice-issuing.ts";
 
 function operator(userId: string) {
@@ -19,11 +20,11 @@ const bankReference = (value: unknown): value is string => typeof value === "str
 const dateInPast = (value: unknown): value is string => isDate(value) && value >= "2020-01-01" && value <= swissToday();
 
 export default async (request: Request, context: Context) => {
-  const match = new URL(request.url).pathname.match(/^\/api\/finance\/([0-9a-f-]+)(?:\/(invoices|receipts|payouts|fee-settlements|pingen-price)(?:\/([0-9a-f-]+)(?:\/(pdf|issue|refresh|receipts|assume-fee|reverse|paid|discard|settle))?)?)?$/i);
+  const match = new URL(request.url).pathname.match(/^\/api\/finance\/([0-9a-f-]+)(?:\/(invoices|receipts|payouts|fee-settlements|pingen-price)(?:\/([0-9a-f-]+)(?:\/(pdf|issue|refresh|cancel|recreate|receipts|assume-fee|reverse|paid|discard|settle))?)?)?$/i);
   if (!match || !isUuid(match[1]) || (match[3] && !isUuid(match[3]))) return json({ error: "not_found" },404);
   const [,tenantId,resource,id,action] = match;
   const read = request.method === "GET" && ((!resource && !id) || (resource === "invoices" && id && action === "pdf"));
-  const write = request.method === "POST" && ((resource === "invoices" && ((!id && !action) || (id && (action === "receipts" || action === "issue" || action === "refresh" || action === "assume-fee"))))
+  const write = request.method === "POST" && ((resource === "invoices" && ((!id && !action) || (id && (action === "receipts" || action === "issue" || action === "refresh" || action === "cancel" || action === "recreate" || action === "assume-fee"))))
     || ((resource === "receipts" || resource === "fee-settlements") && id && action === "reverse") || (resource === "pingen-price" && !id) || (resource === "payouts" && ((!id && !action) || (id && (action === "paid" || action === "discard" || action === "settle")))));
   if (!read && !write) return json({ error: "method_not_allowed" },405);
   const user = await requireUser(request);
@@ -39,7 +40,7 @@ export default async (request: Request, context: Context) => {
       const canRecordBankMovements = operator(user.id) && hasPermission(role,"finance:write");
       if (write) {
         // Finance writers can issue their club's invoices; only the collection operator attests bank movements.
-        if ((action && action !== "issue" && action !== "refresh" || resource === "payouts" || resource === "pingen-price") && !canRecordBankMovements) throw new BillingError("billing_operator_required",403);
+        if ((action && action !== "issue" && action !== "refresh" && action !== "cancel" && action !== "recreate" || resource === "payouts" || resource === "pingen-price") && !canRecordBankMovements) throw new BillingError("billing_operator_required",403);
         await lockBilling(client,tenantId);
       }
       if (resource === "pingen-price") return { pingenPrice: true as const };
@@ -64,16 +65,16 @@ export default async (request: Request, context: Context) => {
         const feeItems=await client.query("SELECT * FROM billing_payout_fee_items WHERE tenant_id=$1",[tenantId]);
         const emailDispatches=await client.query("SELECT id,invoice_id,recipient_email,status,provider_id,accepted_at,first_attempt_at,last_attempt_at,last_error FROM billing_email_dispatches WHERE tenant_id=$1 ORDER BY first_attempt_at DESC",[tenantId]);
         return json({ emailDispatches:emailDispatches.rows,feeSettlements:feeSettlements.rows,feeItems:feeItems.rows,dispatches:dispatches.rows,postalCosts:postalCosts.rows,postalItems:postalItems.rows,readiness:billingReadiness(), canWrite:hasPermission(role,"finance:write"),canRecordBankMovements,
-          sources:sources.filter((source) => source.canCreateDraft && !invoices.rows.some((row) => row.source_key === source.sourceKey)),unresolved,
-          invoices:invoices.rows.map((row) => ({...row,sourceAvailable:sourceMatches(row,sources),refreshSources:row.status==="draft"?invoiceRefreshSources(row,sources):[],fee_waived_cents:feeSettlements.rows.filter((fee)=>fee.invoice_id===row.id&&!fee.reversed_at).reduce((sum,fee)=>sum+fee.waived_cents,0)})),receipts:receipts.rows,payouts:payouts.rows });
+          sources:sources.filter((source) => source.canCreateDraft && !invoices.rows.some((row) => row.status!=="cancelled" && row.source_key === source.sourceKey)),unresolved,
+          invoices:invoices.rows.map((row) => ({...row,sourceAvailable:sourceMatches(row,sources),refreshSources:invoiceRefreshSources(row,sources),replacementId:invoices.rows.find(next=>next.replacement_for===row.id)?.id??null,fee_waived_cents:feeSettlements.rows.filter((fee)=>fee.invoice_id===row.id&&!fee.reversed_at).reduce((sum,fee)=>sum+fee.waived_cents,0)})),receipts:receipts.rows,payouts:payouts.rows });
       }
       if (read && id) {
         const invoice = await client.query<InvoiceRow>("SELECT * FROM billing_invoices WHERE tenant_id=$1 AND id=$2",[tenantId,id]);
         if (!invoice.rows[0]) throw new BillingError("not_found",404);
-        if (invoice.rows[0].status === "issued") {
+        if (invoice.rows[0].invoice_number) {
           const document = await client.query<{pdf_bytes:Buffer}>("SELECT pdf_bytes FROM billing_invoice_documents WHERE tenant_id=$1 AND invoice_id=$2",[tenantId,id]);
           if (!document.rows[0]) throw new BillingError("billing_document_missing",409);
-          return {bytes:document.rows[0].pdf_bytes,filename:invoice.rows[0].invoice_number!};
+          return {bytes:document.rows[0].pdf_bytes,filename:`${invoice.rows[0].status==="cancelled"?"Storniert_":""}${invoice.rows[0].invoice_number}`};
         }
         if (!sourceMatches(invoice.rows[0],(await billingSources(client,tenantId)).sources)) throw new BillingError("billing_source_unavailable");
         return { invoice:invoice.rows[0],brand:await loadOrganizationPdfBrand(client,tenantId,context.requestId) };
@@ -81,6 +82,12 @@ export default async (request: Request, context: Context) => {
       if (resource === "invoices" && !id) {
         if (typeof body.sourceKey !== "string" || body.sourceKey.length > 200) throw new BillingError("invalid_billing_input",422);
         return json({ invoice:await draftInvoice(client,tenantId,user.id,body.sourceKey,body.refresh === true) },201);
+      }
+      if (resource === "invoices" && (action === "cancel" || action === "recreate") && id) {
+        if(body.confirmed!==true || typeof body.reason!=="string" || body.reason.trim().length<5 || body.reason.length>500
+          || (body.sourceKey!==undefined && (typeof body.sourceKey!=="string" || body.sourceKey.length>200)))throw new BillingError("invalid_billing_input",422);
+        const input={reason:body.reason.trim(),deliveryAcknowledged:body.deliveryAcknowledged===true,sourceKey:body.sourceKey};
+        return json({invoice:await (action==="cancel"?cancelInvoice:recreateInvoice)(client,tenantId,user.id,id,input)});
       }
       if (resource === "invoices" && action === "refresh" && id) {
         if (body.sourceKey !== undefined && (typeof body.sourceKey !== "string" || body.sourceKey.length > 200)) throw new BillingError("invalid_billing_input",422);
@@ -140,6 +147,7 @@ export default async (request: Request, context: Context) => {
 };
 
 export const config: Config = { path:["/api/finance/:tenantId","/api/finance/:tenantId/invoices","/api/finance/:tenantId/invoices/:id/pdf",
+  "/api/finance/:tenantId/invoices/:id/cancel","/api/finance/:tenantId/invoices/:id/recreate",
   "/api/finance/:tenantId/invoices/:id/issue","/api/finance/:tenantId/invoices/:id/refresh","/api/finance/:tenantId/invoices/:id/receipts",
     "/api/finance/:tenantId/invoices/:id/assume-fee",
     "/api/finance/:tenantId/fee-settlements/:id/reverse","/api/finance/:tenantId/receipts/:id/reverse","/api/finance/:tenantId/payouts","/api/finance/:tenantId/payouts/:id/paid","/api/finance/:tenantId/pingen-price","/api/finance/:tenantId/payouts/:id/discard","/api/finance/:tenantId/payouts/:id/settle"] };

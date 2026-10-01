@@ -17,6 +17,7 @@ export type InvoiceRow = {
   fee_basis_points: number; collection_notice: string; status: "draft" | "issued" | "cancelled"; created_at: string;
   invoice_number?: string | null; qr_reference?: string | null; payment_creditor?: QrCreditor | null;
   issued_on?: string | null; issued_by?: string | null;
+  replacement_for?: string | null; cancelled_at?: string | null; cancelled_by?: string | null; cancellation_reason?: string | null;
   period_start?: string | Date | null; period_end?: string | Date | null;
 };
 
@@ -30,31 +31,36 @@ async function audit(client: DatabaseClient, tenantId: string, actor: string, ac
 
 export async function draftInvoice(client: DatabaseClient, tenantId: string, actor: string, sourceKey: string, refresh = false) {
   if (refresh) {
-    const existing = await client.query<InvoiceRow>("SELECT * FROM billing_invoices WHERE tenant_id=$1 AND source_key=$2", [tenantId, sourceKey]);
+    const existing = await client.query<InvoiceRow>("SELECT * FROM billing_invoices WHERE tenant_id=$1 AND source_key=$2 AND status<>'cancelled'", [tenantId, sourceKey]);
     if (!existing.rows[0]) throw new BillingError("not_found",404);
     return refreshInvoice(client,tenantId,actor,existing.rows[0].id);
   }
   const { sources } = await billingSources(client, tenantId);
   const source = sources.find((item) => item.sourceKey === sourceKey);
   if (!source) throw new BillingError("billing_source_unavailable");
-  const existing = await client.query<InvoiceRow>("SELECT * FROM billing_invoices WHERE tenant_id=$1 AND source_key=$2", [tenantId, sourceKey]);
+  const existing = await client.query<InvoiceRow>("SELECT * FROM billing_invoices WHERE tenant_id=$1 AND source_key=$2 AND status<>'cancelled'", [tenantId, sourceKey]);
   if (existing.rows[0]) return existing.rows[0];
   // Earlier open-ended periods stay valid for existing documents; do not back-bill imported history.
   if (!source.canCreateDraft) throw new BillingError("billing_source_unavailable");
   if (source.periodStart && source.periodEnd) {
     const familyPrefix = source.sourceKey.split(":").slice(0,2).join(":") + ":%";
-    const overlap = await client.query("SELECT id FROM billing_invoices WHERE tenant_id=$1 AND source_key LIKE $2 AND period_start <= $4::date AND period_end >= $3::date",[tenantId,familyPrefix,source.periodStart,source.periodEnd]);
+    const overlap = await client.query("SELECT id FROM billing_invoices WHERE tenant_id=$1 AND status<>'cancelled' AND source_key LIKE $2 AND period_start <= $4::date AND period_end >= $3::date",[tenantId,familyPrefix,source.periodStart,source.periodEnd]);
     if (overlap.rows.length) throw new BillingError("billing_period_overlap");
   }
+  return insertInvoiceDraft(client,tenantId,actor,source);
+}
+
+/** Caller validates the source and holds the tenant billing lock. */
+export async function insertInvoiceDraft(client:DatabaseClient,tenantId:string,actor:string,source:InvoiceSource,replacementFor:string|null=null) {
   const id = randomUUID();
   const reference = `ENT-${new Date().getUTCFullYear()}-${id.replaceAll("-", "").slice(0, 12).toUpperCase()}`;
   const result = await client.query<InvoiceRow>(`INSERT INTO billing_invoices
     (id,tenant_id,source_type,source_id,source_key,reference,description,recipient,issuer,contribution_cents,
-     fee_basis_points,platform_fee_cents,collection_notice,created_by,period_start,period_end)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10,$11,$12,$13,$14,$15,$16) RETURNING *`,
+     fee_basis_points,platform_fee_cents,collection_notice,created_by,period_start,period_end,replacement_for)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10,$11,$12,$13,$14,$15,$16,$17) RETURNING *`,
   [id,tenantId,source.sourceType,source.sourceId,source.sourceKey,reference,source.description,JSON.stringify(source.recipient),
-    JSON.stringify(source.issuer),source.contributionCents,source.feeBasisPoints,source.platformFeeCents,source.collectionNotice,actor,source.periodStart ?? null,source.periodEnd ?? null]);
-  await audit(client, tenantId, actor, "billing.draft_created", id, { sourceKey });
+    JSON.stringify(source.issuer),source.contributionCents,source.feeBasisPoints,source.platformFeeCents,source.collectionNotice,actor,source.periodStart ?? null,source.periodEnd ?? null,replacementFor]);
+  await audit(client, tenantId, actor, "billing.draft_created", id, { sourceKey:source.sourceKey,replacementFor });
   return result.rows[0];
 }
 
@@ -83,7 +89,7 @@ export async function refreshInvoice(client: DatabaseClient, tenantId: string, a
   if (!source) throw new BillingError(!sourceKey && candidates.length>1 ? "billing_refresh_selection_required" : "billing_source_unavailable");
   if (source.periodStart && source.periodEnd) {
     const familyPrefix=source.sourceKey.split(":").slice(0,2).join(":")+":%";
-    const overlap=await client.query("SELECT id FROM billing_invoices WHERE tenant_id=$1 AND id<>$2 AND source_key LIKE $3 AND period_start <= $5::date AND period_end >= $4::date",[tenantId,invoice.id,familyPrefix,source.periodStart,source.periodEnd]);
+    const overlap=await client.query("SELECT id FROM billing_invoices WHERE tenant_id=$1 AND status<>'cancelled' AND id<>$2 AND source_key LIKE $3 AND period_start <= $5::date AND period_end >= $4::date",[tenantId,invoice.id,familyPrefix,source.periodStart,source.periodEnd]);
     if (overlap.rows.length) throw new BillingError("billing_period_overlap");
   }
   const result=await client.query<InvoiceRow>(`UPDATE billing_invoices SET source_id=$3,description=$4,recipient=$5::jsonb,issuer=$6::jsonb,

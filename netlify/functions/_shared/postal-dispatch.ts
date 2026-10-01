@@ -139,7 +139,11 @@ export async function syncPostal(s:Session,id:string) {
 
 export async function sendPostal(s:Session,id:string,input:{quoteToken:string;quotedCents:number;costsAccepted:boolean},deployContext?:string) {
   const config=pingenConfig();requirePostalEnabled(config,deployContext);
-  const row=await session(s,client=>dispatch(client,s.tenantId,id));sameAccount(row,config);
+  const row=await session(s,async client=>{
+    const row=await dispatch(client,s.tenantId,id);
+    if(!row.send_started_at)await invoiceForPost(client,s.tenantId,row.invoice_id);
+    return row;
+  });sameAccount(row,config);
   if(row.send_started_at)return row; // Unknown outcomes are reconciled, never re-sent on a retry.
   if(row.status!=='ready'||!row.provider_letter_id||!input.costsAccepted||row.quote_token!==input.quoteToken||row.quoted_cents!==input.quotedCents
     ||Date.now()-dateValue(row.quoted_at)>900000)throw new BillingError("pingen_quote_expired");
