@@ -84,3 +84,13 @@
 .finance-dialog article { border-bottom:1px solid var(--line);padding:10px 0; }
 
 .finance-page .finance-history-toggle { display:flex;align-items:center;gap:10px;margin:18px 0;font-weight:400; }
+
+.finance-icon-actions { display:flex;align-items:center;gap:4px;margin-top:6px; }
+.finance-table .finance-icon-action { display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:34px;height:34px;margin:0;padding:8px;border:0;border-radius:6px;background:transparent;color:#145baf;cursor:pointer; }
+.finance-icon-action svg { flex:none; }
+.finance-table .finance-icon-action:hover:not(:disabled) { background:#eaf1fb; }
+.finance-table .finance-icon-action-danger { color:#b43d36; }
+.finance-table .finance-icon-action-danger:hover:not(:disabled) { background:#fff0ee; }
+.finance-table .finance-icon-action:focus-visible { outline:2px solid currentColor;outline-offset:2px; }
+.finance-table .finance-icon-action:disabled { opacity:.45;cursor:wait; }
+@media (pointer:coarse) { .finance-table .finance-icon-action { width:44px;height:44px; } }
