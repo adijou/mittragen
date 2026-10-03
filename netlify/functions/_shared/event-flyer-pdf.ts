@@ -1,5 +1,6 @@
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFImage, type PDFPage } from "pdf-lib";
 import type { OrganizationPdfBrand } from "./organization-pdf-brand.ts";
+import { matchInfoPartnerLevel } from "./event-partners.ts";
 import { drawPlatformCredit } from "./pdf-platform-brand.ts";
 
 export type EventFlyerPdfData = {
@@ -213,25 +214,47 @@ export async function createEventFlyerPdf(data: EventFlyerPdfData): Promise<Uint
     drawLines(page, limitedLines(`Anmeldung: ${shortUrl(data.publicUrl)}`, bold, 7.6, A4.width - MARGIN * 2, 2), { x: MARGIN, y: sponsorTop - 40, font: bold, size: 7.6, lineHeight: 9.5, color: ACCENT });
   }
 
-  const partnerTop = 198;
-  page.drawLine({ start: { x: MARGIN, y: partnerTop + 14 }, end: { x: A4.width - MARGIN, y: partnerTop + 14 }, color: LINE, thickness: 0.7 });
-  page.drawText("VEREINSPARTNER", { x: MARGIN, y: partnerTop, font: bold, size: 8, color: ACCENT });
-  const groups = ["Gold", "Silber"].map((level) => ({
+  const sponsorRows = sponsorNames.length ? Math.min(Math.ceil(sponsorNames.length / (sponsorNames.length > 10 ? 3 : 2)),8) : 2;
+  const partnerTop = Math.min(310,sponsorTop - 22 - (sponsorRows - 1) * 16 - 42);
+  const groups = (["Gold", "Silber"] as const).map(level => ({
     level,
-    names: partners.filter((item) => item.packageName.toLocaleLowerCase("de-CH").includes(level.toLocaleLowerCase("de-CH"))).map((item) => safe(item.sponsorName)).slice(0, 7),
+    names: partners.filter(item => matchInfoPartnerLevel(item.packageName)===level).map(item => safe(item.sponsorName)),
   }));
-  groups.forEach((group, index) => {
-    const x = MARGIN + index * (teamWidth + 12);
-    page.drawText(`${group.level.toUpperCase()}SPONSOREN`, { x, y: partnerTop - 21, font: bold, size: 7, color: PRIMARY });
-    if (!group.names.length) page.drawText("-", { x, y: partnerTop - 38, font: regular, size: 8, color: MUTED });
-    group.names.forEach((name, row) => drawLines(page, limitedLines(name, regular, 7.5, teamWidth, 1), { x, y: partnerTop - 38 - row * 12, font: regular, size: 7.5, lineHeight: 9, color: MUTED }));
-  });
-
-  page.drawRectangle({ x: 0, y: 0, width: A4.width, height: 52, color: PRIMARY });
-  page.drawText("Wir wünschen ein faires und spannendes Spiel.", { x: MARGIN, y: 29, font: bold, size: 9, color: WHITE });
-  const footer = limitedLines(safe(data.organization.contactName || data.organization.name), regular, 7, 205, 1)[0] ?? safe(data.organization.name);
-  page.drawText(footer, { x: A4.width - MARGIN - 205, y: 29, font: regular, size: 7, color: ACCENT_ON_DARK });
-  drawPlatformCredit(page, { right: A4.width - MARGIN, y: 16, regular, bold, color: rgb(190 / 255, 198 / 255, 209 / 255) });
+  const drawFooter = (sheet:PDFPage) => {
+    sheet.drawRectangle({ x: 0, y: 0, width: A4.width, height: 52, color: PRIMARY });
+    sheet.drawText("Wir wünschen ein faires und spannendes Spiel.", { x: MARGIN, y: 29, font: bold, size: 9, color: WHITE });
+    const footer = limitedLines(safe(data.organization.contactName || data.organization.name), regular, 7, 205, 1)[0] ?? safe(data.organization.name);
+    sheet.drawText(footer, { x: A4.width - MARGIN - 205, y: 29, font: regular, size: 7, color: ACCENT_ON_DARK });
+    drawPlatformCredit(sheet, { right: A4.width - MARGIN, y: 16, regular, bold, color: rgb(190 / 255, 198 / 255, 209 / 255) });
+  };
+  const positions=[0,0];
+  let partnerPage=page,top=partnerTop;
+  do {
+    partnerPage.drawLine({ start: { x: MARGIN, y: top + 14 }, end: { x: A4.width - MARGIN, y: top + 14 }, color: LINE, thickness: 0.7 });
+    partnerPage.drawText(partnerPage===page?"VEREINSPARTNER":"VEREINSPARTNER - FORTSETZUNG", { x: MARGIN, y: top, font: bold, size: 8, color: ACCENT });
+    groups.forEach((group,index) => {
+      const x=MARGIN+index*(teamWidth+12);
+      partnerPage.drawText(`${group.level.toUpperCase()}SPONSOREN`, { x, y:top-21, font:bold, size:7, color:PRIMARY });
+      let y=top-38;
+      if(!group.names.length)partnerPage.drawText("-", { x,y,font:regular,size:8,color:MUTED });
+      while(positions[index]<group.names.length){
+        const lines=wrap(group.names[positions[index]],regular,7.5,teamWidth);
+        if(y-(lines.length-1)*9.5<70)break;
+        drawLines(partnerPage,lines,{x,y,font:regular,size:7.5,lineHeight:9.5,color:MUTED});
+        y-=lines.length*9.5+3;positions[index]++;
+      }
+    });
+    drawFooter(partnerPage);
+    if(groups.every((group,index)=>positions[index]>=group.names.length))break;
+    // Preserve every sponsor if the first page is full, rather than silently dropping names.
+    partnerPage=pdf.addPage([A4.width,A4.height]);
+    partnerPage.drawRectangle({x:0,y:A4.height-9,width:A4.width,height:9,color:ACCENT});
+    drawLines(partnerPage,limitedLines(data.organization.name,bold,11,A4.width-MARGIN*2,2),{x:MARGIN,y:792,font:bold,size:11,lineHeight:14,color:PRIMARY});
+    partnerPage.drawText("MATCHINFO",{x:MARGIN,y:741,font:bold,size:25,color:PRIMARY});
+    drawLines(partnerPage,limitedLines(`${data.event.teamName} gegen ${data.event.opponent}`,bold,11,A4.width-MARGIN*2,2),{x:MARGIN,y:716,font:bold,size:11,lineHeight:14,color:PRIMARY});
+    partnerPage.drawText(`${safe(when.date)} · ${safe(when.time)}`,{x:MARGIN,y:680,font:regular,size:9,color:MUTED});
+    top=644;
+  } while(true);
 
   return pdf.save();
 }

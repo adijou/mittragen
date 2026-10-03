@@ -5,6 +5,7 @@ import { hasPermission, isResponse, json, requireUser, type MembershipRole } fro
 import { isUuid, withSession, type DatabaseClient } from "./_shared/database.ts";
 import { parseBookingCancellation, parseEventSponsoringSettings, parsePackageAllocation, parseSponsorshipEvent } from "./_shared/event-sponsoring-input.ts";
 import { createEventFlyerPdf, type EventFlyerPdfData } from "./_shared/event-flyer-pdf.ts";
+import { listMatchInfoPartners } from "./_shared/event-partners.ts";
 import { loadOrganizationPdfBrand } from "./_shared/organization-pdf-brand.ts";
 import { getOrganizationProfile, mapOrganizationProfile } from "./_shared/organization-profile.ts";
 
@@ -103,14 +104,6 @@ async function listEntitlements(client: DatabaseClient, tenantId: string, curren
   return result.rows.map((row) => ({ sponsorId: row.sponsor_id, sponsorName: row.sponsor_name, packageVersionId: row.package_version_id, packageName: row.package_name, rightId: row.right_id, rightName: row.right_name, allowance: row.allowance, usedCount: Number(row.used_count), remainingCount: Math.max(0, row.allowance - Number(row.used_count)) }));
 }
 
-async function listPartners(client: DatabaseClient, tenantId: string) {
-  const result = await client.query<{ sponsor_name: string; package_name: string }>(`SELECT sponsor.legal_name AS sponsor_name, version.name AS package_name FROM sponsors sponsor
-    JOIN sponsorship_package_versions version ON version.id = sponsor.assigned_package_version_id AND version.tenant_id = sponsor.tenant_id
-    WHERE sponsor.tenant_id = $1 AND sponsor.status <> 'inactive'
-    ORDER BY CASE WHEN lower(version.name) LIKE '%gold%' THEN 1 WHEN lower(version.name) LIKE '%silber%' THEN 2 WHEN lower(version.name) LIKE '%bronze%' THEN 3 ELSE 4 END, lower(sponsor.legal_name)`, [tenantId]);
-  return result.rows.map((row) => ({ sponsorName: row.sponsor_name, packageName: row.package_name }));
-}
-
 function mapSettings(row: SettingsRow, request: Request) {
   return { publicKey: row.public_key, publicUrl: publicUrl(request, row.public_key), headline: row.headline, seasonLabel: row.season_label, introduction: row.introduction, termsText: row.terms_text, isPublished: row.is_published, updatedAt: row.updated_at };
 }
@@ -170,7 +163,7 @@ export default async (request: Request, context: Context) => {
           organization: { name: tenant.rows[0].name, contactName: organization?.contactName ?? null, contactEmail: organization?.contactEmail ?? null, contactPhone: organization?.contactPhone ?? null, website: organization?.website ?? null },
           event: { teamName: event.teamName, opponent: event.opponent, competition: event.competition, venue: event.venue, startsAt: event.startsAt, timeTbd: event.timeTbd, homeCoach: event.homeCoach, opponentCoach: event.opponentCoach, refereeName: event.refereeName, matchInfoUrl: event.matchInfoUrl, speakerNote: event.speakerNote },
           matchballSponsors: event.sponsors.map((sponsor) => ({ sponsorName: sponsor.sponsorName, source: sponsor.kind, detail: sponsor.kind === "package" ? `${sponsor.packageName} · ${sponsor.rightName}` : sponsor.reference })),
-          partners: await listPartners(client, tenantId), publicUrl: publicUrl(request, settings.public_key),
+          partners: await listMatchInfoPartners(client, tenantId), publicUrl: publicUrl(request, settings.public_key),
         };
         return { state: "ready" as const, bytes: await createEventFlyerPdf(data) };
       }, user.email ?? undefined);

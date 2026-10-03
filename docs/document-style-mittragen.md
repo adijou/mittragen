@@ -66,6 +66,12 @@ Die Rechnung und ihr QR-Zahlteil stehen auf derselben A4-Seite. Der Zahlteil ble
 
 Rechnungen verwenden dieselbe Dokumentfamilie. Positionstabelle, Summenblock und Schweizer QR-Zahlteil folgen den jeweils geltenden fachlichen Vorgaben. Zahlungsdaten, MWST und QR-Referenz dürfen nicht aus Annahmen erzeugt werden.
 
+## Matchinfoblatt
+
+Gold- und Silbersponsoren stammen aus bestätigten Verträgen; nur ohne bestätigten Vertrag gilt die direkte Paketzuweisung am Sponsor als Rückfall. Massgeblich ist der Paketname im Vertragssnapshot, ersatzweise jener der Paketversion. «Silver» wird ebenfalls als Silber erkannt. Inaktive Sponsoren bleiben ausgeschlossen. Mehrere passende Verträge erzeugen einen einzigen Eintrag pro Sponsor; Gold hat Vorrang vor Silber.
+
+Die Partnerliste nutzt den verfügbaren Platz unter den Matchballsponsoren und kürzt weder die Liste auf sieben Einträge noch lange Namen. Reicht eine Seite nicht, folgen weitere Seiten in den Organisationsfarben mit Spielangaben und Plattformhinweis. Die PDF-Prüfung umfasst 12 Gold- und 12 Silbersponsoren auf einer Seite sowie vollständige mehrseitige Listen mit 65 Sponsoren pro Kategorie.
+
 ## Qualitätskontrolle
 
 Vor Freigabe werden PDF-Öffnung, Textsuche, Seitenzahl, Links, A4-Format, lange Namen, fünfzeilige Adressen, lange Sondervereinbarungen und jede gerenderte Seite geprüft. Ein sauberer zusätzlicher Seitenumbruch ist einer unleserlichen Verdichtung vorzuziehen.
