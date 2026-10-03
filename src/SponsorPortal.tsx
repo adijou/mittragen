@@ -8,6 +8,8 @@ import { SponsorContactForm, type SponsorContact } from "./SponsorContactForm";
 import { clearSponsorEntry, prepareSponsorAccess, readSponsorEntry } from "./sponsorAccess";
 import { readSponsorTarget, sponsorTargetQuery } from "../shared/sponsor-space-link";
 import { identityErrorMessage } from "./identityFeedback";
+import { openAreaPicker } from "./accountAreas";
+import "./AccountAreas.css";
 import { accountScopedFetch, createSponsorLoadGuard } from "./sponsorSession";
 
 type Right = {
@@ -273,16 +275,16 @@ export function SponsorPortal({ onHome, onLogin }: { onHome: () => void; onLogin
     <p className="eyebrow">Sponsor-Space öffnen</p><h1>Mit welchem Konto möchten Sie fortfahren?</h1>
     <p>Sie sind als <strong>{user.email}</strong> angemeldet. Wenn die Einladung an eine andere E-Mail-Adresse ging, melden Sie sich bitte mit dieser Adresse an.</p>
     {error && <p className="form-error" role="alert">{error}</p>}
-    <div className="sponsor-space-entry-actions"><button className="access-primary" disabled={busy !== ""} onClick={() => { setLoading(true); setAccountChoice(false); setAccountApproved(true); setLoadAttempt((value) => value + 1); }}>Mit {user.email} fortfahren</button>
+    <div className="sponsor-space-entry-actions"><button className="access-secondary" onClick={openAreaPicker}>Bereich wechseln</button><button className="access-primary" disabled={busy !== ""} onClick={() => { setLoading(true); setAccountChoice(false); setAccountApproved(true); setLoadAttempt((value) => value + 1); }}>Mit {user.email} fortfahren</button>
     <button className="access-secondary" disabled={busy !== ""} onClick={() => { setBusy("logout"); void logout().then(() => { discardAccount(); setUser(null); goToLogin(); }).catch(() => { setBusy(""); setError("Die Abmeldung ist fehlgeschlagen. Bitte versuchen Sie es erneut."); }); }}>Mit anderem Konto anmelden</button></div>
   </main></div>;
 
   return <div className="sponsor-portal">
-    <header><button onClick={onHome} className="access-brand-button"><Brand/></button><div><span>{user.email}</span><button className="access-link" onClick={() => void logout().then(() => setUser(null))}>Abmelden</button></div></header>
+    <header><button onClick={onHome} className="access-brand-button"><Brand/></button><div className="sponsor-portal__header-actions"><span>{user.email}</span><button className="access-secondary" onClick={openAreaPicker}>Bereich wechseln</button><button className="access-link" onClick={() => void logout().then(() => setUser(null))}>Abmelden</button></div></header>
     <main>
       {error && <p className="form-error" role="alert">{error}</p>}{message && <p className="form-success" role="status">{message}</p>}
       {!space && error ? <section className="sponsor-portal__welcome"><h1>Ihr Space konnte gerade nicht geöffnet werden.</h1><button className="access-primary" onClick={() => setLoadAttempt((value) => value + 1)}>Zugang erneut prüfen</button><button className="access-secondary" onClick={() => void logout().then(() => { setSpaces([]); setUser(null); goToLogin(); })}>Erneut anmelden</button></section> : !space ? <section className="sponsor-portal__welcome"><p className="eyebrow">Noch kein Zugang</p><h1>Noch kein Sponsoring zugeordnet.</h1><p>Verwenden Sie die Empfängeradresse Ihrer Einladung oder die E-Mail-Adresse, mit der Sie Ihren Vertrag bestätigt haben. Falls Ihre Einladung abgelaufen ist, bitten Sie die Organisation um eine neue Einladung.</p><button className="access-secondary" onClick={() => void logout().then(() => { setSpaces([]); setUser(null); goToLogin(); })}>Mit anderem Konto anmelden</button></section> : <>
-        <section className="sponsor-portal__hero"><div><p className="eyebrow">{space.sponsor.tenant_name}</p><h1>Guten Tag {space.sponsor.legal_name}</h1><p>{"Ihre Dokumente, Ihre Angaben und Ihr Auftritt."}</p></div>{spaces.length > 1 && <select aria-label="Sponsoring auswählen" disabled={busy !== ""} value={selectedSpaceKey} onChange={(event) => setSelectedSpaceKey(event.target.value)}>{spaces.map((item) => <option value={`${item.tenantId}:${item.sponsor.id}`} key={`${item.tenantId}:${item.sponsor.id}`}>{item.sponsor.tenant_name} · {item.sponsor.legal_name}</option>)}</select>}</section>
+        <section className="sponsor-portal__hero"><div><p className="eyebrow">{space.sponsor.tenant_name} · Sponsor</p><h1>Guten Tag {space.sponsor.legal_name}</h1><p>{"Ihre Dokumente, Ihre Angaben und Ihr Auftritt."}</p></div>{spaces.length > 1 && <select aria-label="Sponsoring auswählen" disabled={busy !== ""} value={selectedSpaceKey} onChange={(event) => setSelectedSpaceKey(event.target.value)}>{spaces.map((item) => <option value={`${item.tenantId}:${item.sponsor.id}`} key={`${item.tenantId}:${item.sponsor.id}`}>{item.sponsor.tenant_name} · {item.sponsor.legal_name}</option>)}</select>}</section>
         <nav className="sponsor-space-nav" aria-label="Bereiche im Sponsor-Space">
           {([['documents', 'Dokumente'], ['address', 'Meine Angaben'], ['logo', 'Logo']] as const).map(([value, label]) => <button key={value} type="button" aria-pressed={section === value} disabled={busy !== ""} onClick={() => { setSection(value); setError(""); setMessage(""); }}>{label}</button>)}
         </nav>

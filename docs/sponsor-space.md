@@ -6,7 +6,7 @@ Bei einem neuen Konto erfolgt die E-Mail-Bestätigung über Netlify Identity. Er
 
 Der dauerhafte Einstieg ist `/sponsor`. Nach einem normalen Login werden vorhandene Sponsorzugänge ebenfalls erkannt. Nach einer E-Mail-Bestätigung erscheint **E-Mail-Adresse erfolgreich bestätigt** mit **Weiter zu meinem Space**. Die Zuordnung wird auch dann erkannt, wenn der Bestätigungslink in einem neuen Tab ohne den ursprünglichen Formularzustand geöffnet wurde.
 
-Sponsorinnen und Sponsoren benötigen einen geschützten Login für ihren Space, aber keine eigene Organisation und keine Verwaltungsrolle. Der Einstieg heisst **Sponsor-Zugang einrichten**. Nach Login oder Passwort-Wiederherstellung sowie beim direkten Aufruf von `/workspace` werden reine Sponsorzugänge nach `/sponsor` geführt. Eine fehlgeschlagene Zugangsprüfung zeigt einen erneuten Prüfversuch und öffnet keine Organisationserfassung. Konten mit einer zusätzlichen Organisationsrolle behalten ihren bisherigen Workspace-Einstieg, sofern kein Sponsor-Einstieg gewählt wurde.
+Sponsorinnen und Sponsoren benötigen einen geschützten Login für ihren Space, aber keine eigene Organisation und keine Verwaltungsrolle. Ein bestätigtes Konto wird bei weiteren Einladungen wiederverwendet; ein neues Konto wird nur über eine Einladung aktiviert. Bei genau einem Zugang führt der allgemeine Login direkt in den passenden Bereich. Bei mehreren Zugängen öffnet sich **Meine Bereiche** (`/areas`) – auch für mehrere Organisationen oder mehrere Sponsor-Firmen. Persönliche Sponsor- und Vertragslinks behalten ihr konkretes Ziel. Eine fehlgeschlagene Zugangsprüfung öffnet keine Organisationserfassung.
 
 Netlify Identity kann serverseitig ein verkürztes, geprüftes JWT-Benutzerobjekt ohne `confirmedAt` liefern. In diesem Fall liest der Claim-Endpunkt das Identity-Profil über `/user` mit dem eigenen Sitzungstoken des angemeldeten Kontos. Benutzer-ID und E-Mail müssen übereinstimmen, und das Profil muss `confirmed_at` enthalten. Ein Operator-Token und vom Benutzer änderbare Metadaten werden dafür nicht verwendet. Eine nicht erreichbare Identity-Prüfung wird getrennt von einer tatsächlich unbestätigten E-Mail behandelt.
 
@@ -20,11 +20,21 @@ Bei Identity-Bestätigungs-, Einladungs- und Wiederherstellungslinks wird eine v
 
 Portal-Anfragen, Änderungen, Logoabrufe und Vertragsdownloads prüfen zusätzlich, ob das serverseitig angemeldete Konto noch dem angezeigten Konto entspricht. Bei einem Kontowechsel werden geladene Daten verworfen; verspätete Antworten stellen sie nicht wieder her. Beim Zurückkehren aus einem anderen Tab wird die Sitzung erneut geprüft. Browsernavigation zu einem neuen Link startet die Zugangsprüfung erneut.
 
+## Ein Konto mit mehreren Rollen
+
+**Bereich wechseln** ist sowohl in der Vereinsverwaltung als auch im Sponsor-Space verfügbar und erfordert keine Abmeldung. Die Übersicht zeigt pro Zugang Organisation und Rolle bzw. Sponsor-Firma. Ein Sponsorzugang bleibt von einer Verwaltungsrolle im selben oder einem anderen Verein getrennt. Der Organisationsname und die aktive Rolle sind im jeweiligen Bereich sichtbar.
+
+`GET /api/account/areas` liefert nur die eigenen Organisationsmitgliedschaften und ausdrücklich zugeordneten Sponsorzugänge. Es liest keine Verträge, öffnet keine Überführungsvorschläge und verändert keine Einladungen. Die Anmeldung übernimmt zuvor gültige Einladungen über die bestehenden geprüften Abläufe. Der Bereichswechsel erweitert keine Rechte. Alle geschützten Fachendpunkte prüfen weiterhin den angemeldeten Benutzer und den jeweiligen Organisations-/Sponsorbezug.
+
+Die Auswahl enthält konkrete Ziele (`/workspace?tenant=…` bzw. `/sponsor?tenant=…&sponsor=…`). Ein ungültiger oder entzogener Verwaltungszugang führt nicht ersatzweise zu einem anderen Verein. Die letzte Vereinsauswahl ist je Benutzer getrennt gespeichert; beim Wechsel der Identität werden Workspace-Komponenten neu aufgebaut. Bereichsabfragen sind an die angezeigte Konto-ID gebunden, werden nicht gecacht und bei Rückkehr ins Browserfenster erneuert.
+
+Prüfstand dieses Ausbaus: 248 Tests erfolgreich. Die zusätzlichen Tests verwenden die echte API und PostgreSQL-RLS: bestehender Admin nimmt eine Sponsor-Einladung in einem anderen Verein an, mehrere Sponsor-Firmen, fremde Zugänge, unveränderte Adminrolle nach Entfernen des Sponsorzugangs, Kontoabweichung, Direktlinks und verweigerte/fehlgeschlagene Bereichsabfragen. Es wurden keine produktiven Konten oder Einladungen für diese Tests angelegt.
+
 ## Bestehenden Sponsor aus der Administration einladen
 
 1. Im Workspace **Sponsoren** öffnen und beim gewünschten Sponsor **Zugang einrichten** wählen. Derselbe Bereich steht im Bearbeitungsformular unter den Stammdaten bereit.
 2. Die vorausgefüllte Kontakt-E-Mail prüfen oder eine andere berechtigte Empfängeradresse eintragen. Eine abweichende Einladungsadresse ändert die Stammdaten nicht.
-3. **Einladung senden** wählen. Die E-Mail führt zum Sponsor-Space. Dort erstellt die Person ihr Konto und bestätigt die E-Mail-Adresse oder meldet sich mit ihrem bestehenden Konto an.
+3. **Einladung senden** wählen. Die E-Mail führt zum Sponsor-Space. Dort aktiviert die Person ihren eingeladenen Zugang oder meldet sich mit ihrem bestehenden Konto an.
 
 Die Einladung funktioniert ohne Vertrag, bei importierten Altverträgen und unabhängig von Überführungsvorschlägen. Sie berechtigt zum Space genau dieses Sponsors und verleiht keine Organisations- oder Teamrolle. Der Empfänger erhält keinen neuen Vertragsabschluss durch die Einladung.
 

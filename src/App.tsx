@@ -7,7 +7,7 @@ import { ContractSigning } from "./ContractSigning";
 import { EventSponsoringPublic } from "./EventSponsoringPublic";
 import { SponsoringCheckoutPublic } from "./SponsoringCheckoutPublic";
 
-type Route = "/" | "/admin" | "/space" | "/sponsor" | "/ueberfuehren" | "/login" | "/workspace" | "/unterzeichnen" | "/matchball" | "/sponsoring";
+type Route = "/areas" | "/" | "/admin" | "/space" | "/sponsor" | "/ueberfuehren" | "/login" | "/workspace" | "/unterzeichnen" | "/matchball" | "/sponsoring";
 type IconName =
   | "arrow"
   | "bell"
@@ -98,7 +98,7 @@ const routeFromPath = (): Route => {
   const path = window.location.pathname.replace(/\/$/, "") || "/";
   if (/^\/matchball\/[0-9a-f]{36}$/i.test(path)) return "/matchball";
   if (/^\/sponsoring\/[0-9a-f]{36}$/i.test(path)) return "/sponsoring";
-  if (path === "/admin" || path === "/space" || path === "/sponsor" || path === "/ueberfuehren" || path === "/login" || path === "/workspace" || path === "/unterzeichnen") return path;
+  if (path === "/areas" || path === "/admin" || path === "/space" || path === "/sponsor" || path === "/ueberfuehren" || path === "/login" || path === "/workspace" || path === "/unterzeichnen") return path;
   return "/";
 };
 
@@ -603,7 +603,7 @@ export default function App() {
     setAuditEvents([{ id: `${Date.now()}-reset`, time: new Date().toISOString(), action: "Demo-Daten zurückgesetzt", detail: "Sieben Testszenarien auf Ausgangsstand gesetzt" }, ...initialAuditEvents]);
   };
 
-  if (route === "/login" || route === "/workspace") return <ProductiveAccess key={entryVersion} page={route === "/login" ? "login" : "workspace"} onHome={() => navigate("/")} onLogin={() => navigate("/login")} onWorkspace={() => navigate("/workspace")} onSponsor={() => navigate("/sponsor")} onPrototype={() => navigate("/ueberfuehren")}/>;
+  if (route === "/areas" || route === "/login" || route === "/workspace") return <ProductiveAccess key={entryVersion} page={route === "/areas" ? "areas" : route === "/login" ? "login" : "workspace"} onHome={() => navigate("/")} onLogin={() => navigate("/login")} onWorkspace={() => navigate("/workspace")} onSponsor={() => navigate("/sponsor")} onPrototype={() => navigate("/ueberfuehren")}/>;
   if (route === "/sponsor") return <SponsorPortal key={entryVersion} onHome={() => navigate("/")} onLogin={() => navigate("/login")}/>;
   if (route === "/unterzeichnen") return <ContractSigning key={entryVersion} onHome={() => navigate("/")}/>;
   if (route === "/matchball") return <EventSponsoringPublic onHome={() => navigate("/")}/>;

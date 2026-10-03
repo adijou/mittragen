@@ -251,7 +251,7 @@ async function updateMember(tenantId: string, membershipId: string, userId: stri
 }
 
 export default async (request: Request, context: Context) => {
-  const user = await requireUser();
+  const user = await requireUser(request);
   if (isResponse(user)) return user;
   const pathname = new URL(request.url).pathname;
 
