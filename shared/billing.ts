@@ -3,6 +3,12 @@ export const PLATFORM_FEE_BASIS_POINTS = 250;
 export type BillingTerms = { feeBasisPoints: number; collectionNotice: string; contractNotice?: string };
 export const CONTRACT_PLATFORM_FEE_NOTICE = "Mit der Plattformgebühr tragen die Sponsoren zur Finanzierung der Infrastruktur von mittragen.ch bei und entlasten damit die Klubs.";
 
+/** Cash is collected locally; do not show the central bank-collection instructions. */
+export function matchballCollectionNotice(paymentMode:"invoice"|"cash",billing:BillingTerms) {
+  return paymentMode==="invoice"?billing.collectionNotice
+    :`Der Gesamtbetrag${billing.feeBasisPoints>0?" inklusive Plattformgebühr":""} wird vom Verein oder dem vermittelnden Klubmitglied bar einkassiert.`;
+}
+
 /** Freeze the contract wording separately from payment/collection instructions. */
 export function contractBillingTerms(billing: BillingTerms): BillingTerms {
   return { ...billing, contractNotice: CONTRACT_PLATFORM_FEE_NOTICE };

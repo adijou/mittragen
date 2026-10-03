@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
-import { feeCents } from "../shared/billing";
+import { feeCents, matchballCollectionNotice } from "../shared/billing";
 import { Brand } from "./ProductBrand";
 
 type PublicEvent = {
@@ -77,7 +77,7 @@ export function EventSponsoringPublic({ onHome }: { onHome: () => void }) {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [booking, setBooking] = useState<{ reference: string; amountCents: number } | null>(null);
+  const [booking, setBooking] = useState<{ reference: string; amountCents: number; paymentMode: "invoice" | "cash" } | null>(null);
 
   useEffect(() => {
     if (!key) { setError("Dieser Matchball-Link ist ungültig."); setLoading(false); return; }
@@ -98,7 +98,7 @@ export function EventSponsoringPublic({ onHome }: { onHome: () => void }) {
     if (!selected) return;
     setBusy(true); setError("");
     try {
-      const result = await request<{ booking: { reference: string; amountCents: number } }>(`/api/event-sponsoring-public/${key}/book`, {
+      const result = await request<{ booking: { reference: string; amountCents: number; paymentMode: "invoice" | "cash" } }>(`/api/event-sponsoring-public/${key}/book`, {
         method: "POST",
         body: JSON.stringify({ ...form, eventId: selected.id, startedAt, idempotencyKey, expectedTotalCents: total, expectedFeeBasisPoints: data?.billing.feeBasisPoints ?? 0 }),
       });
@@ -118,7 +118,7 @@ export function EventSponsoringPublic({ onHome }: { onHome: () => void }) {
 
   if (booking && selected) return <main className="event-public-page" style={style}>
     <header className="event-public-header"><button onClick={onHome} aria-label="Zur Startseite"><Brand compact/></button>{data.organization.logoAvailable ? <img src={`/api/event-sponsoring-public/${key}/logo`} alt={`${data.organization.name} Logo`}/> : <strong>{data.organization.name}</strong>}</header>
-    <section className="event-public-success"><span>✓</span><p className="eyebrow">Anmeldung gespeichert</p><h1>Vielen Dank für das Matchball-Sponsoring.</h1><p><strong>{selected.teamName} gegen {selected.opponent}</strong><br/>{formatDate(selected.startsAt)}</p><dl><div><dt>Referenz</dt><dd>{booking.reference}</dd></div><div><dt>Betrag</dt><dd>{formatChf(booking.amountCents)}</dd></div><div><dt>Abrechnung</dt><dd>{form.paymentMode === "invoice" ? "Der Verein stellt eine Rechnung." : "Barzahlung wurde gewählt."}</dd></div></dl><p>Die Anmeldung ist gespeichert. Es ist keine Konto- oder E-Mail-Bestätigung notwendig.</p></section>
+    <section className="event-public-success"><span>✓</span><p className="eyebrow">Anmeldung gespeichert</p><h1>Vielen Dank für das Matchball-Sponsoring.</h1><p><strong>{selected.teamName} gegen {selected.opponent}</strong><br/>{formatDate(selected.startsAt)}</p><dl><div><dt>Referenz</dt><dd>{booking.reference}</dd></div><div><dt>Betrag</dt><dd>{formatChf(booking.amountCents)}</dd></div><div><dt>Abrechnung</dt><dd>{booking.paymentMode === "invoice" ? "Die Rechnung wird vom Verein separat erstellt und zugestellt. Mit der Anmeldung wurde noch keine Rechnung versandt." : "Barinkasso gewählt: Der Betrag wird vom Verein oder dem vermittelnden Klubmitglied einkassiert. Die Anmeldung bestätigt noch keinen Zahlungseingang."}</dd></div></dl><p>Die Anmeldung ist gespeichert. Es ist keine Konto- oder E-Mail-Bestätigung notwendig.</p></section>
   </main>;
 
   return <main className="event-public-page" style={style}>
@@ -144,8 +144,9 @@ export function EventSponsoringPublic({ onHome }: { onHome: () => void }) {
         <label className="event-public-honeypot" aria-hidden="true"><span>Website</span><input tabIndex={-1} autoComplete="off" value={form.website} onChange={(event) => update("website", event.target.value)}/></label>
       </div>
       {selected.fnSupplementCents > 0 && <label className="event-public-choice"><input type="checkbox" checked={form.includeFnMention} onChange={(event) => update("includeFnMention", event.target.checked)}/><span><strong>Verdankung in den Freiburger Nachrichten</strong><small>Zusätzlich {formatChf(selected.fnSupplementCents)}</small></span></label>}
-      {data.billing.enabled && <aside className="event-public-terms"><strong>Sponsoringbeitrag {formatChf(contribution)} + Plattformgebühr (2.5 %) {formatChf(platformFee)}</strong><p>Gesamtbetrag: {formatChf(total)}</p><p>{data.billing.collectionNotice}</p></aside>}
-      <fieldset className="event-public-payment"><legend>Abrechnung</legend><label><input type="radio" name="payment" checked={form.paymentMode === "invoice"} onChange={() => update("paymentMode", "invoice")}/><span>Rechnung an Sponsor</span></label>{!data.billing.enabled && <label><input type="radio" name="payment" checked={form.paymentMode === "cash"} onChange={() => update("paymentMode", "cash")}/><span>Barzahlung</span></label>}</fieldset>
+      <fieldset className="event-public-payment" aria-describedby="matchball-payment-note"><legend>Abrechnung</legend><label><input type="radio" name="payment" checked={form.paymentMode === "invoice"} onChange={() => update("paymentMode", "invoice")}/><span>Rechnung an Sponsor</span></label><label><input type="radio" name="payment" checked={form.paymentMode === "cash"} onChange={() => update("paymentMode", "cash")}/><span>Barzahlung / Bargeld einkassieren</span></label></fieldset>
+      <p id="matchball-payment-note" role="status">{form.paymentMode === "invoice" ? "Die Rechnung wird vom Verein separat erstellt und zugestellt. Mit der Anmeldung wird noch keine Rechnung versandt." : "Der Betrag wird vom Verein oder dem vermittelnden Klubmitglied bar einkassiert. Es wird keine Rechnung erstellt. Die Anmeldung bestätigt noch keinen Zahlungseingang."}</p>
+      {data.billing.enabled && <aside className="event-public-terms"><strong>Sponsoringbeitrag {formatChf(contribution)} + Plattformgebühr (2.5 %) {formatChf(platformFee)}</strong><p>Gesamtbetrag: {formatChf(total)}</p><p>{matchballCollectionNotice(form.paymentMode,data.billing)}</p></aside>}
       <aside className="event-public-terms"><strong>Hinweise</strong><p>{data.settings.termsText}</p></aside>
       <label className="event-public-confirm"><input required type="checkbox" checked={form.termsAccepted} onChange={(event) => update("termsAccepted", event.target.checked)}/><span>Ich melde dieses Matchball-Sponsoring verbindlich an. Die Angaben dürfen für Abrechnung und Spieltagskommunikation verwendet werden.</span></label>
       <button className="event-public-submit" disabled={busy}>{busy ? "Anmeldung wird gespeichert …" : `Jetzt für ${formatChf(total)} anmelden`}</button>

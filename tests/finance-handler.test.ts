@@ -277,12 +277,42 @@ test("finance routes enforce real PostgreSQL isolation, money allocation and ret
       const body={eventId:eventA,sponsorName:"Neuer Sponsor",address:"Teststrasse 10",postalCode:"3186",city:"Düdingen",contactName:"Test Person",contactEmail:"test@example.invalid",contactPhone:"",referredByMember:"",includeFnMention:false,paymentMode:"invoice",termsAccepted:true,website:"",startedAt:Date.now()-5000,idempotencyKey:randomUUID(),expectedTotalCents:102500,expectedFeeBasisPoints:250};
       const post=async(value:object)=>bookHandler(new Request(`https://test.invalid/api/event-sponsoring-public/${key}/book`,{method:"POST",headers:{Origin:"https://test.invalid"},body:JSON.stringify(value)}),{requestId:"booking-test"} as never);
       assert.equal((await post({...body,expectedTotalCents:100000})).status,409);
-      assert.equal((await post({...body,paymentMode:"cash"})).status,409);
-      const result=await post(body);assert.equal(result.status,201);assert.equal((await result.json()).booking.amountCents,102500);
+      const result=await post(body);assert.equal(result.status,201);const saved=(await result.json()).booking;
+      assert.equal(saved.amountCents,102500);assert.equal(saved.paymentMode,"invoice");
       assert.equal((await post(body)).status,201);
       assert.equal((await post({...body,sponsorName:"Another Sponsor"})).status,409);
-      const rows=await db.query<{fee_basis_points:number;amount_cents:number;collection_notice:string}>("SELECT fee_basis_points,amount_cents,collection_notice FROM event_sponsorship_bookings WHERE checkout_key=$1",[body.idempotencyKey]);
+      assert.equal((await post({...body,paymentMode:"cash"})).status,409);
+      assert.equal((await post({...body,includeFnMention:true})).status,409);
+      const rows=await db.query<{id:string;fee_basis_points:number;amount_cents:number;collection_notice:string}>("SELECT id,fee_basis_points,amount_cents,collection_notice FROM event_sponsorship_bookings WHERE checkout_key=$1",[body.idempotencyKey]);
       assert.equal(rows.rows.length,1);assert.equal(rows.rows[0].fee_basis_points,250);assert.equal(rows.rows[0].amount_cents,100000);assert.match(rows.rows[0].collection_notice,/Test Inkasso/);
+      const finance=await call(tenantA);
+      assert.ok(finance.sources.some((row:{sourceId:string})=>row.sourceId===rows.rows[0].id));
+      assert.equal(finance.invoices.some((row:{source_id:string})=>row.source_id===rows.rows[0].id),false);
+    });
+    await t.test("cash matchball collection retains disclosed fees without automatic invoices, dispatches or bank credits",async()=>{
+      const key="a".repeat(36),checkoutKey=randomUUID();
+      const body={eventId:eventA,sponsorName:"Barsponsor",address:"Testweg 1",postalCode:"3186",city:"Düdingen",contactName:"Test Person",contactEmail:"cash@example.invalid",contactPhone:"",referredByMember:"Test Mitglied",includeFnMention:false,paymentMode:"cash",termsAccepted:true,website:"",startedAt:Date.now()-5000,idempotencyKey:checkoutKey,expectedTotalCents:102500,expectedFeeBasisPoints:250};
+      const post=(value:object)=>bookHandler(new Request(`https://test.invalid/api/event-sponsoring-public/${key}/book`,{method:"POST",headers:{Origin:"https://test.invalid"},body:JSON.stringify(value)}),{requestId:"cash-booking-test"} as never);
+      const before=await call(tenantA);
+      const originalFetch=globalThis.fetch;let networkCalls=0;
+      globalThis.fetch=(async()=>{networkCalls++;throw new Error("Booking must not send mail or post");}) as typeof fetch;
+      try{
+        for(const invalid of [{expectedTotalCents:100000},{expectedFeeBasisPoints:0},{idempotencyKey:null}])assert.equal((await post({...body,...invalid})).status,409);
+        const response=await post(body);assert.equal(response.status,201);
+        const first=(await response.json()).booking;assert.equal(first.paymentMode,"cash");assert.equal(first.amountCents,102500);
+        const replay=await post(body);assert.equal(replay.status,201);assert.deepEqual((await replay.json()).booking,first);
+        for(const change of [{paymentMode:"invoice"},{includeFnMention:true}])assert.equal((await post({...body,...change})).status,409);
+        const rows=await db.query<{id:string;payment_mode:string;fee_basis_points:number;amount_cents:number;collection_notice:string;referred_by_member:string}>("SELECT id,payment_mode,fee_basis_points,amount_cents,collection_notice,referred_by_member FROM event_sponsorship_bookings WHERE checkout_key=$1",[checkoutKey]);
+        assert.equal(rows.rows.length,1);const booking=rows.rows[0];
+        assert.equal(booking.payment_mode,"cash");assert.equal(booking.amount_cents,100000);assert.equal(booking.fee_basis_points,250);assert.equal(booking.referred_by_member,"Test Mitglied");
+        assert.match(booking.collection_notice,/inklusive Plattformgebühr/);assert.match(booking.collection_notice,/bar einkassiert/);assert.doesNotMatch(booking.collection_notice,/Test Inkasso|monatlich/);
+        const after=await call(tenantA);
+        assert.equal(after.sources.some((row:{sourceId:string})=>row.sourceId===booking.id),false);
+        assert.deepEqual(after.invoices,before.invoices);assert.deepEqual(after.receipts,before.receipts);
+        assert.deepEqual(after.dispatches,before.dispatches);assert.deepEqual(after.emailDispatches,before.emailDispatches);
+        assert.equal((await call(tenantA,"/invoices",{sourceKey:`event:${booking.id}`},409)).error,"billing_source_unavailable");
+        assert.equal(networkCalls,0);
+      }finally{globalThis.fetch=originalFetch;}
     });
     await t.test("package-based correction drafts can add a disclosed fee and retain it on release",async()=>{
       user="operator";setTestUser({id:user,email:"operator@example.invalid"});
